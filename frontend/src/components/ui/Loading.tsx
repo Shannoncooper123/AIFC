@@ -11,11 +11,11 @@ const sizeClasses = {
 
 export function Loading({ size = 'md', text }: LoadingProps) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-8">
+    <div className="flex flex-col items-center justify-center gap-3 py-8 animate-fade-in">
       <div
-        className={`animate-spin rounded-full border-2 border-gray-600 border-t-blue-500 ${sizeClasses[size]}`}
+        className={`animate-spin rounded-full border-2 border-[#2a2a2a] border-t-white ${sizeClasses[size]}`}
       />
-      {text && <span className="text-sm text-gray-400">{text}</span>}
+      {text && <span className="text-sm text-neutral-500">{text}</span>}
     </div>
   );
 }

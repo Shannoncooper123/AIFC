@@ -29,14 +29,14 @@ export function AlertsPage() {
   const hasFilters = selectedSymbol !== '' || limit !== 50;
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
+    <div className="min-h-screen p-6">
       <div className="mx-auto max-w-7xl space-y-6">
         <PageHeader
           title="Alerts"
-          icon={<Bell className="h-6 w-6 text-yellow-400" />}
+          icon={<Bell className="h-6 w-6 text-neutral-400" />}
           badge={
             alertsData && (
-              <span className="rounded-full bg-gray-700 px-3 py-1 text-sm text-gray-300">
+              <span className="rounded-full bg-[#1a1a1a] border border-[#2a2a2a] px-3 py-1 text-sm text-neutral-300">
                 {alertsData.total} total
               </span>
             )
@@ -45,7 +45,7 @@ export function AlertsPage() {
             <button
               onClick={() => refetch()}
               disabled={isFetching}
-              className="flex items-center gap-2 rounded-lg bg-gray-800 px-4 py-2 text-sm text-gray-300 transition-colors hover:bg-gray-700 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] px-4 py-2 text-sm text-neutral-300 transition-all duration-200 hover:bg-[#222222] hover:border-[#3a3a3a] disabled:opacity-50"
             >
               <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
               Refresh

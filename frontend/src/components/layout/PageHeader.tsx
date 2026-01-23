@@ -9,10 +9,10 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, icon, badge, action }: PageHeaderProps) {
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between animate-slide-up">
       <div className="flex items-center gap-3">
-        {icon}
-        <h1 className="text-2xl font-bold text-gray-100">{title}</h1>
+        {icon && <span className="text-neutral-500">{icon}</span>}
+        <h1 className="text-xl font-semibold tracking-tight text-white">{title}</h1>
         {badge}
       </div>
       {action}

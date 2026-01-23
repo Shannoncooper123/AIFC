@@ -26,35 +26,35 @@ export function PositionsTabs({
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-4">
-      <div className="flex rounded-lg border border-gray-700 bg-gray-800/50 p-1">
+      <div className="flex rounded-lg border border-neutral-800 bg-[#1a1a1a] p-1">
         <button
           onClick={() => onTabChange('open')}
-          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
             activeTab === 'open'
-              ? 'bg-gray-700 text-gray-100'
-              : 'text-gray-400 hover:text-gray-200'
+              ? 'bg-neutral-800 text-white'
+              : 'text-neutral-400 hover:text-white'
           }`}
         >
           <Briefcase className="h-4 w-4" />
           Open Positions
           {openPositionsCount !== undefined && (
-            <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs">
+            <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
               {openPositionsCount}
             </span>
           )}
         </button>
         <button
           onClick={() => onTabChange('history')}
-          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
             activeTab === 'history'
-              ? 'bg-gray-700 text-gray-100'
-              : 'text-gray-400 hover:text-gray-200'
+              ? 'bg-neutral-800 text-white'
+              : 'text-neutral-400 hover:text-white'
           }`}
         >
           <History className="h-4 w-4" />
           History
           {historyCount !== undefined && (
-            <span className="rounded-full bg-gray-600 px-2 py-0.5 text-xs">
+            <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
               {historyCount}
             </span>
           )}
@@ -66,19 +66,19 @@ export function PositionsTabs({
           <div
             className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
               pnlIsPositive
-                ? 'border-green-500/30 bg-green-500/10'
-                : 'border-red-500/30 bg-red-500/10'
+                ? 'border-emerald-500/30 bg-emerald-500/10'
+                : 'border-rose-500/30 bg-rose-500/10'
             }`}
           >
             {pnlIsPositive ? (
-              <TrendingUp className="h-4 w-4 text-green-400" />
+              <TrendingUp className="h-4 w-4 text-emerald-500/80" />
             ) : (
-              <TrendingDown className="h-4 w-4 text-red-400" />
+              <TrendingDown className="h-4 w-4 text-rose-500/80" />
             )}
-            <span className="text-sm text-gray-400">Total PnL:</span>
+            <span className="text-sm text-neutral-400">Total PnL:</span>
             <span
               className={`font-semibold ${
-                pnlIsPositive ? 'text-green-400' : 'text-red-400'
+                pnlIsPositive ? 'text-emerald-500/80' : 'text-rose-500/80'
               }`}
             >
               {pnlIsPositive ? '+' : ''}
@@ -87,14 +87,14 @@ export function PositionsTabs({
           </div>
 
           <div className="flex items-center gap-2">
-            <label htmlFor="historyLimit" className="text-sm text-gray-400">
+            <label htmlFor="historyLimit" className="text-sm text-neutral-400">
               Show:
             </label>
             <select
               id="historyLimit"
               value={historyLimit}
               onChange={(e) => onHistoryLimitChange(Number(e.target.value))}
-              className="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-white transition-all duration-200 focus:border-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
             >
               <option value={25}>25</option>
               <option value={50}>50</option>

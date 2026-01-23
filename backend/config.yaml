@@ -95,12 +95,14 @@ agent:
   # Agent 运行配置（从 config.yaml 读取）
   default_interval_min: 30  # 默认唤醒间隔（分钟）
   
-  # 文件路径配置
-  alerts_jsonl_path: "data/alerts.jsonl"
-  reports_json_path: "logs/agent_reports.json"
-  position_history_path: "logs/position_history.json"
-  state_path: "modules/agent/state.json"
-  trade_state_path: "modules/agent/trade_state.json"
+  # 文件路径配置（统一存放在 modules/data 目录下，相对于 backend 目录）
+  alerts_jsonl_path: "modules/data/alerts.jsonl"
+  reports_json_path: "modules/data/agent_reports.json"
+  position_history_path: "modules/data/position_history.json"
+  state_path: "modules/data/state.json"
+  trade_state_path: "modules/data/trade_state.json"
+  workflow_trace_path: "modules/data/workflow_trace.jsonl"
+  workflow_artifacts_dir: "modules/data/artifacts"
   
   # 模拟交易引擎配置
   simulator:

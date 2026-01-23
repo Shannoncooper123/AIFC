@@ -35,13 +35,13 @@ export function getNodeDisplayName(node: string): string {
 export function getStatusColor(status: string): string {
   switch (status) {
     case 'success':
-      return 'text-green-400';
+      return 'text-emerald-500/80';
     case 'error':
-      return 'text-red-400';
+      return 'text-rose-500/80';
     case 'running':
-      return 'text-yellow-400';
+      return 'text-yellow-400/80';
     default:
-      return 'text-slate-400';
+      return 'text-neutral-400';
   }
 }
 
@@ -53,12 +53,12 @@ export function getStatusColor(status: string): string {
 export function getStatusBgColor(status: string): string {
   switch (status) {
     case 'success':
-      return 'bg-green-500/20 border-green-500/30';
+      return 'bg-emerald-500/20 border-emerald-500/30';
     case 'error':
-      return 'bg-red-500/20 border-red-500/30';
+      return 'bg-rose-500/20 border-rose-500/30';
     case 'running':
       return 'bg-yellow-500/20 border-yellow-500/30';
     default:
-      return 'bg-slate-500/20 border-slate-500/30';
+      return 'bg-neutral-500/20 border-neutral-500/30';
   }
 }

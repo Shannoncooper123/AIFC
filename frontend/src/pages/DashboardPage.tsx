@@ -19,7 +19,7 @@ export function DashboardPage() {
   } = useDashboardData();
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
+    <div className="min-h-screen p-6">
       <div className="mx-auto max-w-7xl space-y-6">
         <PageHeader
           title="Dashboard"
@@ -27,7 +27,7 @@ export function DashboardPage() {
             <button
               onClick={() => refetchSystem()}
               disabled={isLoading}
-              className="flex items-center gap-2 rounded-lg bg-gray-800 px-4 py-2 text-sm text-gray-300 transition-colors hover:bg-gray-700 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] px-4 py-2 text-sm text-neutral-300 transition-all duration-200 hover:bg-[#222222] hover:border-[#3a3a3a] disabled:opacity-50"
             >
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
               Refresh
@@ -45,13 +45,13 @@ export function DashboardPage() {
         </div>
 
         <div>
-          <h2 className="mb-4 text-lg font-semibold text-gray-100">Services</h2>
+          <h2 className="mb-4 text-lg font-semibold text-white">Services</h2>
           {isLoading ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3].map((i) => (
                 <div
                   key={i}
-                  className="h-32 animate-pulse rounded-xl border border-gray-700 bg-gray-800/50"
+                  className="h-32 animate-pulse rounded-xl border border-[#1a1a1a] bg-[#141414]"
                 />
               ))}
             </div>
@@ -62,12 +62,12 @@ export function DashboardPage() {
               ))}
             </div>
           ) : (
-            <p className="text-gray-500">No services available</p>
+            <p className="text-neutral-500">No services available</p>
           )}
         </div>
 
         {systemStatus && (
-          <div className="text-right text-xs text-gray-500">
+          <div className="text-right text-xs text-neutral-500">
             Last updated: {new Date(systemStatus.timestamp).toLocaleString()}
           </div>
         )}

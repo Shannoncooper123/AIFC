@@ -39,18 +39,18 @@ export function ServiceCard({ service }: ServiceCardProps) {
     <Card>
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <h4 className="text-base font-medium capitalize text-gray-100">
+          <h4 className="text-base font-medium capitalize text-white">
             {service.name.replace(/_/g, ' ')}
           </h4>
           <StatusBadge status={service.status} size="sm" />
           {isRunning && service.started_at && (
-            <div className="flex items-center gap-1.5 text-xs text-gray-400">
+            <div className="flex items-center gap-1.5 text-xs text-neutral-400">
               <Clock className="h-3 w-3" />
               <span>Uptime: {formatUptime(service.started_at)}</span>
             </div>
           )}
           {service.error && (
-            <p className="text-xs text-red-400">{service.error}</p>
+            <p className="text-xs text-rose-500/80">{service.error}</p>
           )}
         </div>
 
@@ -58,7 +58,7 @@ export function ServiceCard({ service }: ServiceCardProps) {
           <button
             onClick={() => mutation.mutate('start')}
             disabled={isLoading || isRunning}
-            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-700 hover:text-green-400 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg p-2 text-neutral-400 transition-all duration-200 hover:bg-neutral-800 hover:text-emerald-500/80 disabled:cursor-not-allowed disabled:opacity-50"
             title="Start"
           >
             <Play className="h-4 w-4" />
@@ -66,7 +66,7 @@ export function ServiceCard({ service }: ServiceCardProps) {
           <button
             onClick={() => mutation.mutate('stop')}
             disabled={isLoading || isStopped}
-            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-700 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg p-2 text-neutral-400 transition-all duration-200 hover:bg-neutral-800 hover:text-rose-500/80 disabled:cursor-not-allowed disabled:opacity-50"
             title="Stop"
           >
             <Square className="h-4 w-4" />
@@ -74,7 +74,7 @@ export function ServiceCard({ service }: ServiceCardProps) {
           <button
             onClick={() => mutation.mutate('restart')}
             disabled={isLoading || isStopped}
-            className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-700 hover:text-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg p-2 text-neutral-400 transition-all duration-200 hover:bg-neutral-800 hover:text-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
             title="Restart"
           >
             <RotateCcw className="h-4 w-4" />

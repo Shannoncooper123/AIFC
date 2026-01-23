@@ -27,37 +27,37 @@ export function AccountCard({ account }: AccountCardProps) {
     <Card title="Account">
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-sm text-gray-400">
+          <div className="flex items-center gap-2 text-sm text-neutral-400">
             <Wallet className="h-4 w-4" />
             <span>Total Balance</span>
           </div>
-          <p className="text-xl font-semibold text-gray-100">
+          <p className="text-xl font-semibold text-white">
             {formatCurrency(account.total_balance)}
           </p>
         </div>
 
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-sm text-gray-400">
+          <div className="flex items-center gap-2 text-sm text-neutral-400">
             <Wallet className="h-4 w-4" />
             <span>Available</span>
           </div>
-          <p className="text-xl font-semibold text-gray-100">
+          <p className="text-xl font-semibold text-white">
             {formatCurrency(account.available_balance)}
           </p>
         </div>
 
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-sm text-gray-400">
+          <div className="flex items-center gap-2 text-sm text-neutral-400">
             {pnlIsPositive ? (
-              <TrendingUp className="h-4 w-4 text-green-400" />
+              <TrendingUp className="h-4 w-4 text-emerald-500/80" />
             ) : (
-              <TrendingDown className="h-4 w-4 text-red-400" />
+              <TrendingDown className="h-4 w-4 text-rose-500/80" />
             )}
             <span>Unrealized PnL</span>
           </div>
           <p
             className={`text-xl font-semibold ${
-              pnlIsPositive ? 'text-green-400' : 'text-red-400'
+              pnlIsPositive ? 'text-emerald-500/80' : 'text-rose-500/80'
             }`}
           >
             {pnlIsPositive ? '+' : ''}
@@ -66,15 +66,15 @@ export function AccountCard({ account }: AccountCardProps) {
         </div>
 
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-sm text-gray-400">
+          <div className="flex items-center gap-2 text-sm text-neutral-400">
             <Shield className="h-4 w-4" />
             <span>Margin Used</span>
           </div>
-          <p className="text-xl font-semibold text-gray-100">
+          <p className="text-xl font-semibold text-white">
             {formatCurrency(account.margin_used)}
           </p>
           {account.margin_ratio !== undefined && (
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-neutral-500">
               Ratio: {formatPercent(account.margin_ratio)}
             </p>
           )}

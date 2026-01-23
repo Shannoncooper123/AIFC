@@ -22,13 +22,13 @@ export function Select({
   return (
     <div className="flex items-center gap-2">
       {label && (
-        <label htmlFor={id} className="text-sm text-gray-400">
+        <label htmlFor={id} className="text-sm text-neutral-500">
           {label}
         </label>
       )}
       <select
         id={id}
-        className={`rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 ${className}`}
+        className={`rounded-lg border border-[#2a2a2a] bg-[#141414] px-3 py-1.5 text-sm text-neutral-200 transition-all duration-200 focus:border-[#3a3a3a] focus:outline-none focus:ring-1 focus:ring-[#3a3a3a] hover:border-[#3a3a3a] ${className}`}
         {...props}
       >
         {placeholder && (

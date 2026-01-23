@@ -21,21 +21,21 @@ export function AlertsFilter({
 }: AlertsFilterProps) {
 
   return (
-    <div className="flex flex-wrap items-center gap-4 rounded-xl border border-gray-700 bg-gray-800/50 p-4">
-      <div className="flex items-center gap-2 text-gray-400">
+    <div className="flex flex-wrap items-center gap-4 rounded-xl border border-neutral-800 bg-[#1a1a1a] p-4">
+      <div className="flex items-center gap-2 text-neutral-400">
         <Filter className="h-4 w-4" />
         <span className="text-sm font-medium">Filters</span>
       </div>
 
       <div className="flex items-center gap-2">
-        <label htmlFor="symbol" className="text-sm text-gray-400">
+        <label htmlFor="symbol" className="text-sm text-neutral-400">
           Symbol:
         </label>
         <select
           id="symbol"
           value={selectedSymbol}
           onChange={(e) => onSymbolChange(e.target.value)}
-          className="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-white transition-all duration-200 focus:border-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
         >
           <option value="">All Symbols</option>
           {symbols.map((symbol) => (
@@ -47,14 +47,14 @@ export function AlertsFilter({
       </div>
 
       <div className="flex items-center gap-2">
-        <label htmlFor="limit" className="text-sm text-gray-400">
+        <label htmlFor="limit" className="text-sm text-neutral-400">
           Show:
         </label>
         <select
           id="limit"
           value={limit}
           onChange={(e) => onLimitChange(Number(e.target.value))}
-          className="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-white transition-all duration-200 focus:border-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
         >
           <option value={25}>25</option>
           <option value={50}>50</option>
@@ -66,7 +66,7 @@ export function AlertsFilter({
       {hasFilters && (
         <button
           onClick={onClear}
-          className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-200"
+          className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-neutral-400 transition-all duration-200 hover:bg-neutral-800 hover:text-white"
         >
           <X className="h-4 w-4" />
           Clear

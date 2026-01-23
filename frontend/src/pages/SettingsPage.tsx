@@ -62,7 +62,7 @@ export function SettingsPage() {
         <PageHeader title="Settings" />
         <div className="animate-pulse space-y-4">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-20 bg-slate-800 rounded-lg" />
+            <div key={i} className="h-20 bg-[#141414] rounded-lg" />
           ))}
         </div>
       </div>
@@ -77,7 +77,7 @@ export function SettingsPage() {
           <button
             onClick={() => reloadMutation.mutate()}
             disabled={reloadMutation.isPending}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-white transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-neutral-100 disabled:opacity-50 rounded-lg text-black transition-all duration-200"
           >
             <RefreshCw
               size={16}
@@ -124,11 +124,11 @@ export function SettingsPage() {
       </div>
 
       <Card>
-        <div className="text-center text-slate-400 py-4">
-          <p className="text-green-400 mb-2">✓ Hot Reload Enabled</p>
+        <div className="text-center text-neutral-400 py-4">
+          <p className="text-white mb-2">Hot Reload Enabled</p>
           <p className="text-sm">
             Click on any value to edit. Changes are saved to{' '}
-            <code className="bg-slate-700 px-2 py-1 rounded">config.yaml</code> and
+            <code className="bg-[#1a1a1a] px-2 py-1 rounded border border-[#2a2a2a]">config.yaml</code> and
             hot-reloaded to running services.
           </p>
         </div>

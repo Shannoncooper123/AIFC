@@ -30,17 +30,17 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   return (
     <>
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-64 bg-slate-800 transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 w-64 bg-[#0a0a0a] border-r border-[#1a1a1a] transform transition-all duration-300 ease-out lg:translate-x-0 ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         <div className="flex flex-col h-full">
-          <div className="flex items-center justify-center h-16 border-b border-slate-700">
-            <h1 className="text-xl font-bold text-white">Crypto Monitor</h1>
+          <div className="flex items-center justify-center h-16 border-b border-[#1a1a1a]">
+            <h1 className="text-lg font-semibold tracking-tight text-white">Crypto Monitor</h1>
           </div>
 
-          <nav className="flex-1 px-4 py-6 space-y-2">
-            {navItems.map((item) => {
+          <nav className="flex-1 px-3 py-6 space-y-1">
+            {navItems.map((item, index) => {
               const isActive = location.pathname === item.path;
               const Icon = item.icon;
               return (
@@ -48,30 +48,42 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                   key={item.path}
                   to={item.path}
                   onClick={onClose}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                  style={{ animationDelay: `${index * 50}ms` }}
+                  className={`group flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all duration-200 animate-slide-in ${
                     isActive
-                      ? 'bg-blue-600 text-white'
-                      : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                      ? 'bg-white text-black'
+                      : 'text-neutral-400 hover:bg-[#1a1a1a] hover:text-white'
                   }`}
                 >
-                  <Icon size={20} />
-                  <span>{item.label}</span>
+                  <Icon 
+                    size={18} 
+                    className={`transition-transform duration-200 ${!isActive && 'group-hover:scale-110'}`}
+                  />
+                  <span className="font-medium text-sm">{item.label}</span>
+                  {isActive && (
+                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-black" />
+                  )}
                 </Link>
               );
             })}
           </nav>
 
-          <div className="px-4 py-4 border-t border-slate-700">
+          <div className="px-4 py-4 border-t border-[#1a1a1a]">
             <div className="flex items-center gap-2 text-sm">
               {isConnected ? (
                 <>
-                  <Wifi size={16} className="text-green-400" />
-                  <span className="text-green-400">Connected</span>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <Wifi size={14} className="text-neutral-500" />
+                  <span className="text-neutral-400 text-xs">Connected</span>
                 </>
               ) : (
                 <>
-                  <WifiOff size={16} className="text-red-400" />
-                  <span className="text-red-400">Disconnected</span>
+                  <span className="h-2 w-2 rounded-full bg-neutral-600" />
+                  <WifiOff size={14} className="text-neutral-600" />
+                  <span className="text-neutral-500 text-xs">Disconnected</span>
                 </>
               )}
             </div>
@@ -81,7 +93,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
       {isOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden animate-fade-in"
           onClick={onClose}
         />
       )}
