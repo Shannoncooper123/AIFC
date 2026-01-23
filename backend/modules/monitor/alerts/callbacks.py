@@ -25,7 +25,7 @@ def create_send_alerts_callback(notifier: EmailNotifier, config: Dict):
         
         # 使用普通监控的告警路径（规则策略使用独立的实时告警）
         agent_cfg = config.get('agent', {})
-        jsonl_path = agent_cfg.get('alerts_jsonl_path', '/home/sunfayao/monitor/data/alerts.jsonl')
+        jsonl_path = agent_cfg.get('alerts_jsonl_path', 'modules/data/alerts.jsonl')
         
         os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)
         now_utc = datetime.now(timezone.utc)

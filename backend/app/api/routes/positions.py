@@ -125,7 +125,7 @@ async def get_position_history(
 ):
     """获取历史持仓"""
     agent_config = get_config("agent")
-    history_path = BASE_DIR / agent_config.get("position_history_path", "logs/position_history.json")
+    history_path = BASE_DIR / agent_config.get("position_history_path", "modules/data/position_history.json")
     
     data = load_position_history(str(history_path))
     positions_data = data.get("positions", [])

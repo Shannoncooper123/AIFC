@@ -59,7 +59,7 @@ async def get_alerts(
 ):
     """获取告警历史"""
     agent_config = get_config("agent")
-    alerts_path = BASE_DIR / agent_config.get("alerts_jsonl_path", "data/alerts.jsonl")
+    alerts_path = BASE_DIR / agent_config.get("alerts_jsonl_path", "modules/data/alerts.jsonl")
     
     alerts = load_alerts_from_jsonl(alerts_path, limit=limit * 2)
     
@@ -85,7 +85,7 @@ async def get_alerts(
 async def get_latest_alert():
     """获取最新告警"""
     agent_config = get_config("agent")
-    alerts_path = BASE_DIR / agent_config.get("alerts_jsonl_path", "data/alerts.jsonl")
+    alerts_path = BASE_DIR / agent_config.get("alerts_jsonl_path", "modules/data/alerts.jsonl")
     
     alerts = load_alerts_from_jsonl(alerts_path, limit=1)
     
@@ -99,7 +99,7 @@ async def get_latest_alert():
 async def get_alert_symbols():
     """获取所有出现过告警的币种列表"""
     agent_config = get_config("agent")
-    alerts_path = BASE_DIR / agent_config.get("alerts_jsonl_path", "data/alerts.jsonl")
+    alerts_path = BASE_DIR / agent_config.get("alerts_jsonl_path", "modules/data/alerts.jsonl")
     
     alerts = load_alerts_from_jsonl(alerts_path, limit=500)
     
