@@ -68,10 +68,17 @@ hs_err_pid*
 *.swp
 *.swo
 
-data/
+# 数据目录（排除代码模块中的 data 目录）
+/data/
+/backend/data/
+/backend/modules/data/
+!/backend/modules/monitor/data/
+
 analysis/output/
 logs/
 *.png
 *.svg
-*.jsonl
+
+# 数据文件（排除代码模块）
+/backend/modules/data/*.jsonl
 *.pid
