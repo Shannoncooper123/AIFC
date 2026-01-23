@@ -60,20 +60,21 @@ class ConfigLoader:
         agent_cfg['report_email'] = config['env']['alert_email']
         
         # 路径配置（从 config.yaml 读取，转换为绝对路径）
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # base_dir 应该是 backend 目录（settings.py 在 backend/modules/config/ 下，需要向上 3 层）
+        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         path_keys = ['alerts_jsonl_path', 'reports_json_path', 'position_history_path', 
                      'state_path', 'trade_state_path']
         for key in path_keys:
             if key not in agent_cfg:
                 raise ValueError(f"config.yaml 的 agent 节缺少 '{key}' 配置")
-            # 将相对路径转换为绝对路径
+            # 将相对路径转换为绝对路径（相对于 backend 目录）
             if not os.path.isabs(agent_cfg[key]):
-                agent_cfg[key] = os.path.join(base_dir, agent_cfg[key])
+                agent_cfg[key] = os.path.join(backend_dir, agent_cfg[key])
         
         optional_path_keys = ['workflow_trace_path', 'workflow_artifacts_dir']
         for key in optional_path_keys:
             if key in agent_cfg and not os.path.isabs(agent_cfg[key]):
-                agent_cfg[key] = os.path.join(base_dir, agent_cfg[key])
+                agent_cfg[key] = os.path.join(backend_dir, agent_cfg[key])
         
         # 验证 simulator 配置存在（数值配置从 config.yaml 读取）
         if 'simulator' not in agent_cfg:

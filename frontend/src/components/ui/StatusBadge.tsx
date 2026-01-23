@@ -1,5 +1,4 @@
 import type { ServiceStatus } from '../../types';
-import { SERVICE_STATUS_CONFIG } from '../../utils';
 
 interface StatusBadgeProps {
   status: ServiceStatus;
@@ -12,24 +11,47 @@ const sizeClasses = {
   lg: 'px-3 py-1.5 text-base',
 };
 
+const statusConfig: Record<ServiceStatus, { label: string; dotClass: string; textClass: string; bgClass: string }> = {
+  stopped: {
+    label: 'Stopped',
+    dotClass: 'bg-neutral-500',
+    textClass: 'text-neutral-400',
+    bgClass: 'bg-neutral-500/10',
+  },
+  starting: {
+    label: 'Starting',
+    dotClass: 'bg-neutral-400 animate-pulse-subtle',
+    textClass: 'text-neutral-300',
+    bgClass: 'bg-neutral-400/10',
+  },
+  running: {
+    label: 'Running',
+    dotClass: 'bg-white animate-pulse-subtle',
+    textClass: 'text-white',
+    bgClass: 'bg-white/10',
+  },
+  stopping: {
+    label: 'Stopping',
+    dotClass: 'bg-neutral-400 animate-pulse-subtle',
+    textClass: 'text-neutral-300',
+    bgClass: 'bg-neutral-400/10',
+  },
+  error: {
+    label: 'Error',
+    dotClass: 'bg-neutral-400',
+    textClass: 'text-neutral-400',
+    bgClass: 'bg-neutral-500/10',
+  },
+};
+
 export function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
-  const config = SERVICE_STATUS_CONFIG[status];
+  const config = statusConfig[status];
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full font-medium ${config.bgColor} ${config.color} ${sizeClasses[size]}`}
+      className={`inline-flex items-center gap-1.5 rounded-full font-medium border border-[#2a2a2a] ${config.bgClass} ${config.textClass} ${sizeClasses[size]}`}
     >
-      <span
-        className={`h-2 w-2 rounded-full ${
-          status === 'running'
-            ? 'animate-pulse bg-green-400'
-            : status === 'starting' || status === 'stopping'
-            ? 'animate-pulse bg-yellow-400'
-            : status === 'error'
-            ? 'bg-red-400'
-            : 'bg-gray-400'
-        }`}
-      />
+      <span className={`h-1.5 w-1.5 rounded-full ${config.dotClass}`} />
       {config.label}
     </span>
   );

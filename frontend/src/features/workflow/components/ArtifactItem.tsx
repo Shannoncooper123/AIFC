@@ -11,14 +11,14 @@ export function ArtifactItem({ artifact }: ArtifactItemProps) {
   return (
     <div className="border-l-2 border-purple-500/50 pl-3 py-1">
       <div
-        className="flex items-center gap-2 cursor-pointer hover:bg-slate-800/30 rounded px-2 py-1"
+        className="flex items-center gap-2 cursor-pointer hover:bg-neutral-800/30 rounded px-2 py-1 transition-all duration-200"
         onClick={() => setShowImage(!showImage)}
       >
         <span className="text-sm">🖼️</span>
-        <span className="text-sm text-purple-300">
+        <span className="text-sm text-purple-300/80">
           {artifact.symbol} · {artifact.interval}
         </span>
-        <span className="text-xs text-slate-500 ml-auto">
+        <span className="text-xs text-neutral-500 ml-auto">
           {showImage ? '▼' : '▶'}
         </span>
       </div>
@@ -28,7 +28,7 @@ export function ArtifactItem({ artifact }: ArtifactItemProps) {
           <img
             src={`/api/workflow/artifacts/${artifact.artifact_id}`}
             alt={artifact.artifact_id}
-            className="max-w-full rounded border border-slate-700"
+            className="max-w-full rounded border border-neutral-700"
           />
         </div>
       )}

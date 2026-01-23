@@ -25,12 +25,12 @@ export function ConfigSection({
     <>
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between text-left"
+        className="w-full flex items-center justify-between text-left transition-all duration-200"
       >
         <h3 className="text-lg font-semibold text-white capitalize">
           {displayName}
         </h3>
-        <span className="text-slate-400">{isExpanded ? '−' : '+'}</span>
+        <span className="text-neutral-400">{isExpanded ? '−' : '+'}</span>
       </button>
 
       {isExpanded && children}

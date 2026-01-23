@@ -108,7 +108,7 @@ def parse_account(account_data: Dict[str, Any]) -> AccountSummary:
 async def get_positions():
     """获取当前持仓"""
     agent_config = get_config("agent")
-    trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/agent/trade_state.json")
+    trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/data/trade_state.json")
     
     data = load_json_file(trade_state_path)
     positions_data = data.get("positions", [])
@@ -125,7 +125,7 @@ async def get_position_history(
 ):
     """获取历史持仓"""
     agent_config = get_config("agent")
-    history_path = BASE_DIR / agent_config.get("position_history_path", "logs/position_history.json")
+    history_path = BASE_DIR / agent_config.get("position_history_path", "modules/data/position_history.json")
     
     data = load_position_history(str(history_path))
     positions_data = data.get("positions", [])
@@ -169,7 +169,7 @@ async def get_position_history(
 async def get_trade_state():
     """获取完整交易状态"""
     agent_config = get_config("agent")
-    trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/agent/trade_state.json")
+    trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/data/trade_state.json")
     
     data = load_json_file(trade_state_path)
     
@@ -193,8 +193,8 @@ async def get_trade_state():
 async def get_positions_summary():
     """获取持仓摘要统计"""
     agent_config = get_config("agent")
-    trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/agent/trade_state.json")
-    history_path = BASE_DIR / agent_config.get("position_history_path", "logs/position_history.json")
+    trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/data/trade_state.json")
+    history_path = BASE_DIR / agent_config.get("position_history_path", "modules/data/position_history.json")
     
     trade_data = load_json_file(trade_state_path)
     history_data = load_json_file(history_path)

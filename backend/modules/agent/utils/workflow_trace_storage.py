@@ -106,26 +106,9 @@ def _now_timestamp_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _trim_text(value: Any, limit: int = 4000) -> Any:
-    if isinstance(value, str):
-        if len(value) <= limit:
-            return value
-        return value[:limit] + "..."
-    return value
-
-
-def _sanitize_payload(payload: Dict[str, Any], text_limit: int = 4000) -> Dict[str, Any]:
-    result: Dict[str, Any] = {}
-    for key, value in payload.items():
-        if isinstance(value, str):
-            result[key] = _trim_text(value, text_limit)
-        elif isinstance(value, dict):
-            result[key] = _sanitize_payload(value, text_limit)
-        elif isinstance(value, list):
-            result[key] = [_trim_text(v, text_limit) if isinstance(v, str) else v for v in value]
-        else:
-            result[key] = value
-    return result
+def _sanitize_payload(payload: Dict[str, Any], text_limit: int = 0) -> Dict[str, Any]:
+    """直接返回 payload，不做任何截断"""
+    return payload
 
 
 def append_event(event: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> None:
@@ -162,7 +145,7 @@ def end_run(run_id: str, status: str, cfg: Optional[Dict[str, Any]] = None, erro
         "run_id": run_id,
         "ts": _now_iso(),
         "status": status,
-        "error": _trim_text(error, 2000) if error else None,
+        "error": error,
     }
     append_event(event, cfg)
 
@@ -224,8 +207,8 @@ def end_span(
         "status": status,
         "duration_ms": duration_ms,
         "ts": _now_iso(),
-        "output_summary": _sanitize_payload(output_summary, 1000) if output_summary else None,
-        "error": _trim_text(error, 2000) if error else None,
+        "output_summary": output_summary,
+        "error": error,
     }
     append_event(event, cfg)
 
@@ -274,6 +257,7 @@ def record_tool_call(
     """记录工具调用"""
     tool_name = tool_record.get("tool_name", "unknown")
     tool_input = tool_record.get("input", {})
+    model_span_id = tool_record.get("model_span_id")
     
     inferred_symbol = symbol or get_current_symbol()
     if not inferred_symbol and isinstance(tool_input, dict):
@@ -283,6 +267,7 @@ def record_tool_call(
         "type": "tool_call",
         "run_id": run_id,
         "span_id": get_current_span_id(),
+        "model_span_id": model_span_id,
         "node": node,
         "symbol": inferred_symbol,
         "tool_name": tool_name,

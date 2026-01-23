@@ -31,12 +31,10 @@ interface SpanItemProps {
 export function SpanItem({
   span,
   totalDuration,
-  // startOffset, // 暂时未使用
   depth = 0,
   expandedSpans,
   toggleSpan,
   selectedSymbol,
-  // timelineStartTime, // 暂时未使用
   selectedNode,
   onSelectNode,
   allArtifacts,
@@ -48,55 +46,62 @@ export function SpanItem({
 
   const isFiltered = selectedSymbol && span.symbol && span.symbol !== selectedSymbol;
 
-  // 合并模型调用的逻辑
   const mergedChildren = useMemo(() => {
     const children = span.children || [];
     
-    // 重新实现的 clean 版本
     const cleanResult: (WorkflowSpanChild | { type: 'model_call_group', before: WorkflowSpanChild, after?: WorkflowSpanChild, children: WorkflowSpanChild[] })[] = [];
     const processedIndices = new Set<number>();
     
+    const modelCallGroups = new Map<string, { before: WorkflowSpanChild; after?: WorkflowSpanChild; children: WorkflowSpanChild[]; beforeIdx: number }>();
+    
     for (let idx = 0; idx < children.length; idx++) {
-      if (processedIndices.has(idx)) continue;
-      
       const child = children[idx];
       const payload = child.payload as Record<string, unknown> | undefined;
       
       if (child.type === 'model_call' && payload?.phase === 'before') {
-        const modelSpanId = payload.model_span_id;
-        let afterIdx = -1;
-        
-        for (let k = idx + 1; k < children.length; k++) {
-          const nextChild = children[k];
-          const nextPayload = nextChild.payload as Record<string, unknown> | undefined;
-          if (nextChild.type === 'model_call' && nextPayload?.phase === 'after' && nextPayload?.model_span_id === modelSpanId) {
-            afterIdx = k;
-            break;
-          }
-        }
-        
-        if (afterIdx !== -1) {
-          processedIndices.add(afterIdx);
-          cleanResult.push({
-            type: 'model_call_group',
+        const modelSpanId = payload.model_span_id as string;
+        if (modelSpanId) {
+          modelCallGroups.set(modelSpanId, {
             before: child,
-            after: children[afterIdx],
-            children: []
+            children: [],
+            beforeIdx: idx
           });
-        } else {
-          // 只有 before 没有 after
-          cleanResult.push({
-            type: 'model_call_group',
-            before: child,
-            children: []
-          });
+          processedIndices.add(idx);
         }
       } else if (child.type === 'model_call' && payload?.phase === 'after') {
-        // 孤立的 after（理论上不应该发生，除非 before 丢失）
-        // 忽略或显示
-      } else {
-        cleanResult.push(child);
+        const modelSpanId = payload.model_span_id as string;
+        if (modelSpanId && modelCallGroups.has(modelSpanId)) {
+          modelCallGroups.get(modelSpanId)!.after = child;
+          processedIndices.add(idx);
+        }
+      } else if (child.type === 'tool_call') {
+        const modelSpanId = child.model_span_id || (child.payload as Record<string, unknown> | undefined)?.model_span_id as string;
+        if (modelSpanId && modelCallGroups.has(modelSpanId)) {
+          modelCallGroups.get(modelSpanId)!.children.push(child);
+          processedIndices.add(idx);
+        }
       }
+    }
+    
+    const sortedGroups = Array.from(modelCallGroups.entries())
+      .sort((a, b) => a[1].beforeIdx - b[1].beforeIdx);
+    
+    let groupIndex = 0;
+    for (let idx = 0; idx < children.length; idx++) {
+      if (processedIndices.has(idx)) {
+        if (groupIndex < sortedGroups.length && sortedGroups[groupIndex][1].beforeIdx === idx) {
+          const [, group] = sortedGroups[groupIndex];
+          cleanResult.push({
+            type: 'model_call_group',
+            before: group.before,
+            after: group.after,
+            children: group.children
+          });
+          groupIndex++;
+        }
+        continue;
+      }
+      cleanResult.push(children[idx]);
     }
     
     return cleanResult;
@@ -108,18 +113,18 @@ export function SpanItem({
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'success': return <CheckCircle2 size={14} className="text-emerald-500" />;
-      case 'error': return <XCircle size={14} className="text-red-500" />;
-      case 'running': return <Loader2 size={14} className="text-blue-500 animate-spin" />;
-      default: return <div className="w-3.5 h-3.5 rounded-full bg-zinc-700" />;
+      case 'success': return <CheckCircle2 size={14} className="text-emerald-500/80" />;
+      case 'error': return <XCircle size={14} className="text-rose-500/80" />;
+      case 'running': return <Loader2 size={14} className="text-neutral-400 animate-spin" />;
+      default: return <div className="w-3.5 h-3.5 rounded-full bg-neutral-700" />;
     }
   };
 
   return (
     <div className="select-none">
       <div
-        className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer transition-colors group ${
-          isSelected ? 'bg-zinc-800 border-l-2 border-blue-500' : 'hover:bg-zinc-900 border-l-2 border-transparent'
+        className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer transition-all duration-200 group ${
+          isSelected ? 'bg-neutral-800 border-l-2 border-neutral-400' : 'hover:bg-neutral-900 border-l-2 border-transparent'
         }`}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={(e) => {
@@ -129,7 +134,7 @@ export function SpanItem({
         }}
       >
         <div 
-          className="flex-shrink-0 w-4 h-4 flex items-center justify-center text-zinc-500 hover:text-zinc-300"
+          className="flex-shrink-0 w-4 h-4 flex items-center justify-center text-neutral-500 hover:text-neutral-300 transition-all duration-200"
           onClick={(e) => {
             e.stopPropagation();
             if (isExpandable) toggleSpan(span.span_id);
@@ -141,12 +146,12 @@ export function SpanItem({
         </div>
 
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <Workflow size={14} className="text-zinc-400" />
-          <span className={`text-sm font-medium truncate ${isSelected ? 'text-zinc-100' : 'text-zinc-300'}`}>
+          <Workflow size={14} className="text-neutral-400" />
+          <span className={`text-sm font-medium truncate ${isSelected ? 'text-white' : 'text-neutral-300'}`}>
             {getNodeDisplayName(span.node)}
           </span>
           {span.symbol && (
-            <span className="px-1.5 py-0.5 text-[10px] rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+            <span className="px-1.5 py-0.5 text-[10px] rounded bg-neutral-800 text-neutral-400 border border-neutral-700">
               {span.symbol}
             </span>
           )}
@@ -154,7 +159,7 @@ export function SpanItem({
 
         <div className="flex items-center gap-3">
           {span.duration_ms && (
-            <span className="text-xs text-zinc-500 flex items-center gap-1">
+            <span className="text-xs text-neutral-500 flex items-center gap-1">
               <Clock size={10} />
               {formatDuration(span.duration_ms)}
             </span>
@@ -168,24 +173,16 @@ export function SpanItem({
           {hasNestedSpans && (
             <div>
               {span.nested_spans.map((nestedSpan) => {
-                // 计算相对时间偏移用于显示（如果需要）
-                // const nestedStartTime = nestedSpan.start_time
-                //   ? new Date(nestedSpan.start_time).getTime()
-                //   : 0;
-                // const baseTime = timelineStartTime || (span.start_time ? new Date(span.start_time).getTime() : 0);
-                // const nestedOffset = nestedStartTime - baseTime;
-
                 return (
                   <SpanItem
                     key={nestedSpan.span_id}
                     span={nestedSpan}
                     totalDuration={totalDuration}
-                    startOffset={0} // 暂时未使用
+                    startOffset={0}
                     depth={depth + 1}
                     expandedSpans={expandedSpans}
                     toggleSpan={toggleSpan}
                     selectedSymbol={selectedSymbol}
-                    // timelineStartTime={timelineStartTime} // 暂时未使用
                     selectedNode={selectedNode}
                     onSelectNode={onSelectNode}
                     allArtifacts={allArtifacts}
@@ -196,9 +193,8 @@ export function SpanItem({
           )}
 
           <div className="flex flex-col relative">
-            {/* Tree line */}
             <div 
-              className="absolute top-0 bottom-0 border-l border-zinc-800" 
+              className="absolute top-0 bottom-0 border-l border-neutral-800" 
               style={{ left: `${depth * 12 + 15}px` }} 
             />
             

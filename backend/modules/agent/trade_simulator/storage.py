@@ -85,5 +85,5 @@ class ConfigFacade:
         self.ws_interval = sim_cfg.get('ws_interval', '1m')
         self.taker_fee_rate = float(sim_cfg.get('taker_fee_rate', 0.0005))
         self.max_leverage = int(sim_cfg.get('max_leverage', 10))
-        self.trade_state_path = config.get('agent', {}).get('trade_state_path', '/home/sunfayao/monitor/agent/trade_state.json')
-        self.position_history_path = config.get('agent', {}).get('position_history_path', '/home/sunfayao/monitor/logs/position_history.json')
+        self.trade_state_path = config.get('agent', {}).get('trade_state_path', 'modules/data/trade_state.json')
+        self.position_history_path = config.get('agent', {}).get('position_history_path', 'modules/data/position_history.json')

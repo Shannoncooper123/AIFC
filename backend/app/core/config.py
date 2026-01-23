@@ -76,11 +76,13 @@ class TradingConfig(BaseModel):
 class AgentConfig(BaseModel):
     """Agent配置"""
     default_interval_min: int = 30
-    alerts_jsonl_path: str = "data/alerts.jsonl"
-    reports_json_path: str = "logs/agent_reports.json"
-    position_history_path: str = "logs/position_history.json"
-    state_path: str = "modules/agent/state.json"
-    trade_state_path: str = "modules/agent/trade_state.json"
+    alerts_jsonl_path: str = "modules/data/alerts.jsonl"
+    reports_json_path: str = "modules/data/agent_reports.json"
+    position_history_path: str = "modules/data/position_history.json"
+    state_path: str = "modules/data/state.json"
+    trade_state_path: str = "modules/data/trade_state.json"
+    workflow_trace_path: str = "modules/data/workflow_trace.jsonl"
+    workflow_artifacts_dir: str = "modules/data/artifacts"
 
 
 class Settings(BaseSettings):

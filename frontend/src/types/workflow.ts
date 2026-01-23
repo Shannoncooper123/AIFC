@@ -45,6 +45,7 @@ export interface WorkflowSpanChild {
   status?: string;
   error?: string;
   payload?: Record<string, unknown>;
+  model_span_id?: string;
 }
 
 export interface WorkflowArtifact {

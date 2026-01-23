@@ -25,7 +25,7 @@ class HistoryWriter:
         """
         self.config = config
         agent_cfg = config.get('agent', {})
-        self.history_path = agent_cfg.get('position_history_path', 'logs/position_history.json')
+        self.history_path = agent_cfg.get('position_history_path', 'modules/data/position_history.json')
         self.write_queue = WriteQueue.get_instance()
         
         # 确保目录存在

@@ -25,6 +25,7 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const connectRef = useRef<() => void>(() => {});
   const [isConnected, setIsConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState<WebSocketEvent | null>(null);
 
@@ -49,7 +50,7 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
       if (reconnectAttemptsRef.current < maxReconnectAttempts) {
         reconnectTimeoutRef.current = window.setTimeout(() => {
           reconnectAttemptsRef.current += 1;
-          connect();
+          connectRef.current();
         }, reconnectInterval);
       }
     };
@@ -70,6 +71,10 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
 
     wsRef.current = ws;
   }, [url, onOpen, onClose, onError, onMessage, reconnectInterval, maxReconnectAttempts]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {

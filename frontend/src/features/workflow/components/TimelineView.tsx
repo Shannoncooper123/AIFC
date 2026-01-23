@@ -6,6 +6,8 @@ import { DetailPanel, type SelectedNode } from './DetailPanel';
 interface TimelineViewProps {
   timeline: WorkflowTimeline;
   selectedSymbol: string | null;
+  uniqueSymbols?: string[];
+  onSymbolSelect?: (symbol: string | null) => void;
 }
 
 function collectAllSpanIds(spans: WorkflowSpan[]): string[] {
@@ -30,7 +32,7 @@ function collectAllArtifacts(spans: WorkflowSpan[]): WorkflowArtifact[] {
   return artifacts;
 }
 
-export function TimelineView({ timeline, selectedSymbol }: TimelineViewProps) {
+export function TimelineView({ timeline, selectedSymbol, uniqueSymbols, onSymbolSelect }: TimelineViewProps) {
   const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
 
@@ -79,26 +81,56 @@ export function TimelineView({ timeline, selectedSymbol }: TimelineViewProps) {
   }, [timeline]);
 
   return (
-    <div className="flex h-[calc(100vh-200px)] min-h-[500px] bg-zinc-950 rounded-lg overflow-hidden border border-zinc-800">
-      <div className="w-[420px] flex-shrink-0 border-r border-zinc-800 flex flex-col">
-        <div className="flex justify-end p-2 border-b border-zinc-800 bg-zinc-900/50">
+    <div className="flex h-[calc(100vh-200px)] min-h-[500px] bg-[#141414] rounded-lg overflow-hidden border border-neutral-800">
+      <div className="w-[420px] flex-shrink-0 border-r border-neutral-800 flex flex-col">
+        <div className="flex items-center justify-between p-2 border-b border-neutral-800 bg-[#1a1a1a]">
+          {uniqueSymbols && uniqueSymbols.length > 0 && onSymbolSelect ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-neutral-500">筛选:</span>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => onSymbolSelect(null)}
+                  className={`px-2 py-1 text-xs rounded border transition-all duration-200 ${
+                    selectedSymbol === null
+                      ? 'bg-neutral-700/50 border-neutral-500 text-white'
+                      : 'border-neutral-700 text-neutral-400 hover:border-neutral-600'
+                  }`}
+                >
+                  全部
+                </button>
+                {uniqueSymbols.map((symbol) => (
+                  <button
+                    key={symbol}
+                    onClick={() => onSymbolSelect(symbol)}
+                    className={`px-2 py-1 text-xs rounded border transition-all duration-200 ${
+                      selectedSymbol === symbol
+                        ? 'bg-neutral-700/50 border-neutral-500 text-white'
+                        : 'border-neutral-700 text-neutral-400 hover:border-neutral-600'
+                    }`}
+                  >
+                    {symbol}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : <div />}
           <div className="flex gap-1">
             <button
               onClick={expandAll}
-              className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 rounded text-zinc-300 transition-colors"
+              className="px-2 py-1 text-xs bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-all duration-200"
             >
               Expand All
             </button>
             <button
               onClick={collapseAll}
-              className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 rounded text-zinc-300 transition-colors"
+              className="px-2 py-1 text-xs bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-all duration-200"
             >
               Collapse All
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2 bg-zinc-950">
+        <div className="flex-1 overflow-y-auto p-2 bg-[#141414]">
           {spansWithOffset.map(({ span, offset }) => (
             <SpanItem
               key={span.span_id}
@@ -117,8 +149,8 @@ export function TimelineView({ timeline, selectedSymbol }: TimelineViewProps) {
         </div>
       </div>
 
-      <div className="flex-1 bg-zinc-900 overflow-hidden">
-        <DetailPanel selectedNode={selectedNode} />
+      <div className="flex-1 bg-[#1a1a1a] overflow-hidden">
+        <DetailPanel selectedNode={selectedNode} allArtifacts={allArtifacts} />
       </div>
     </div>
   );

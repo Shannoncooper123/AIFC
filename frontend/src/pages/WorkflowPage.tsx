@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { Card } from '../components/ui';
+import { Activity } from 'lucide-react';
+import { Card, Loading } from '../components/ui';
 import {
   RunsList,
-  RunOverview,
   TimelineView,
   useWorkflowRuns,
   useWorkflowTimeline,
-  useWorkflowArtifacts,
   useUniqueSymbols,
 } from '../features/workflow';
 
@@ -16,7 +15,6 @@ export function WorkflowPage() {
 
   const runsQuery = useWorkflowRuns(50);
   const timelineQuery = useWorkflowTimeline(selectedRunId);
-  const artifactsQuery = useWorkflowArtifacts(selectedRunId);
 
   const timeline = timelineQuery.data?.timeline;
   const uniqueSymbols = useUniqueSymbols(timeline);
@@ -29,12 +27,12 @@ export function WorkflowPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Workflow Trace</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-white">Workflow Trace</h1>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <Card className="lg:col-span-1">
-          <div className="text-sm text-slate-400 mb-4">最近运行</div>
+          <div className="text-sm text-neutral-400 mb-4">Recent Runs</div>
           <RunsList
             runs={runsQuery.data?.runs ?? []}
             selectedRunId={selectedRunId}
@@ -45,39 +43,28 @@ export function WorkflowPage() {
         <div className="lg:col-span-3 space-y-4">
           {!selectedRunId && (
             <Card>
-              <div className="text-slate-400 text-center py-12">
-                <div className="text-4xl mb-4">📊</div>
-                <div>选择一条运行记录查看详细追踪</div>
+              <div className="text-neutral-500 text-center py-12">
+                <Activity className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                <div>Select a run to view detailed trace</div>
               </div>
             </Card>
           )}
 
           {selectedRunId && timeline && (
-            <>
-              <Card>
-                <RunOverview
-                  runId={selectedRunId}
-                  timeline={timeline}
-                  artifactsCount={artifactsQuery.data?.length || 0}
-                  uniqueSymbols={uniqueSymbols}
-                  selectedSymbol={selectedSymbol}
-                  onSymbolSelect={setSelectedSymbol}
-                />
-              </Card>
-
-              <Card>
-                <div className="text-white font-semibold mb-4">执行时间线</div>
-                <TimelineView timeline={timeline} selectedSymbol={selectedSymbol} />
-              </Card>
-            </>
+            <Card>
+              <div className="text-white font-medium mb-4">Execution Timeline</div>
+              <TimelineView 
+                timeline={timeline} 
+                selectedSymbol={selectedSymbol}
+                uniqueSymbols={uniqueSymbols}
+                onSymbolSelect={setSelectedSymbol}
+              />
+            </Card>
           )}
 
           {selectedRunId && timelineQuery.isLoading && (
             <Card>
-              <div className="text-slate-400 text-center py-8">
-                <div className="animate-spin text-2xl mb-2">⏳</div>
-                <div>加载中...</div>
-              </div>
+              <Loading text="Loading..." />
             </Card>
           )}
         </div>
