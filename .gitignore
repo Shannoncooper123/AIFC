@@ -67,3 +67,10 @@ hs_err_pid*
 *.iml
 *.swp
 *.swo
+
+data/
+analysis/output/
+logs/
+*.png
+*.svg
+*.jsonl

@@ -1,0 +1,135 @@
+{
+  "account": {
+    "balance": 425.086056,
+    "equity": 426.180425,
+    "positions_count": 3,
+    "realized_pnl": -332.0236,
+    "reserved_margin_sum": 43.183354,
+    "total_fees": 121.969301,
+    "unrealized_pnl": 1.094369
+  },
+  "positions": [
+    {
+      "close_price": null,
+      "close_reason": null,
+      "close_time": null,
+      "entry_price": 0.1712,
+      "fees_close": 0.0,
+      "fees_open": 0.01091677155,
+      "id": "8307037d479c",
+      "latest_mark_price": 0.1698,
+      "leverage": 10,
+      "margin_used": 2.18335431,
+      "notional_usdt": 21.8335431,
+      "open_time": "2026-01-05T12:35:23.732969+00:00",
+      "operation_history": [
+        {
+          "details": {
+            "entry_price": 0.1712,
+            "leverage": 10,
+            "margin_usdt": 2.18335431,
+            "notional": 21.8335431,
+            "sl_price": 0.16737142857142856,
+            "tp_price": 0.17482857142857144
+          },
+          "operation": "open",
+          "timestamp": "2026-01-05T12:35:23.732948+00:00"
+        },
+        {
+          "details": {
+            "new_sl": 0.167,
+            "new_tp": 0.174829,
+            "old_sl": 0.16737142857142856,
+            "old_tp": 0.17482857142857144
+          },
+          "operation": "update_tp_sl",
+          "timestamp": "2026-01-23T09:55:14.476611+00:00"
+        }
+      ],
+      "original_sl_price": 0.16737142857142856,
+      "original_tp_price": 0.17482857142857144,
+      "qty": 127.53237792056075,
+      "realized_pnl": 0.0,
+      "side": "long",
+      "sl_price": 0.167,
+      "status": "open",
+      "symbol": "WLFIUSDT",
+      "tp_price": 0.174829
+    },
+    {
+      "close_price": null,
+      "close_reason": null,
+      "close_time": null,
+      "entry_price": 2.1676,
+      "fees_close": 0.0,
+      "fees_open": 0.105,
+      "id": "d330cb872ec4",
+      "latest_mark_price": 2.1733,
+      "leverage": 10,
+      "margin_used": 21.0,
+      "notional_usdt": 210.0,
+      "open_time": "2026-01-23T09:55:37.849756+00:00",
+      "operation_history": [
+        {
+          "details": {
+            "entry_price": 2.1676,
+            "leverage": 10,
+            "margin_usdt": 21.0,
+            "notional": 210.0,
+            "sl_price": 2.08,
+            "tp_price": 2.35
+          },
+          "operation": "open",
+          "timestamp": "2026-01-23T09:55:37.849731+00:00"
+        }
+      ],
+      "original_sl_price": 2.08,
+      "original_tp_price": 2.35,
+      "qty": 96.88134342129543,
+      "realized_pnl": 0.0,
+      "side": "long",
+      "sl_price": 2.08,
+      "status": "open",
+      "symbol": "ZROUSDT",
+      "tp_price": 2.35
+    },
+    {
+      "close_price": null,
+      "close_reason": null,
+      "close_time": null,
+      "entry_price": 363.54,
+      "fees_close": 0.0,
+      "fees_open": 0.1,
+      "id": "05d9cf4558fd",
+      "latest_mark_price": 362.23,
+      "leverage": 10,
+      "margin_used": 20.0,
+      "notional_usdt": 200.0,
+      "open_time": "2026-01-23T09:59:40.923359+00:00",
+      "operation_history": [
+        {
+          "details": {
+            "entry_price": 363.54,
+            "leverage": 10,
+            "margin_usdt": 20.0,
+            "notional": 200.0,
+            "sl_price": 372.0,
+            "tp_price": 345.0
+          },
+          "operation": "open",
+          "timestamp": "2026-01-23T09:59:40.923328+00:00"
+        }
+      ],
+      "original_sl_price": 372.0,
+      "original_tp_price": 345.0,
+      "qty": 0.550145788633988,
+      "realized_pnl": 0.0,
+      "side": "short",
+      "sl_price": 372.0,
+      "status": "open",
+      "symbol": "ZECUSDT",
+      "tp_price": 345.0
+    }
+  ],
+  "ts": "2026-01-23T10:19:19.839291+00:00"
+}

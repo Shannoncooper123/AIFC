@@ -5,12 +5,16 @@
 """
 import math
 import os
+import sys
 from typing import Dict
 
 import pytest
 
-from agent.trade_simulator.engine import TradeSimulatorEngine
-from agent.trade_simulator import set_engine
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend"))
+sys.path.insert(0, BASE_DIR)
+
+from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine
+from modules.agent.engine import set_engine
 
 
 def make_min_config(tmp_path) -> Dict:
@@ -74,6 +78,7 @@ def make_min_config(tmp_path) -> Dict:
             'reports_jsonl_path': str(tmp_path / 'agent_reports.jsonl'),
             'state_path': str(tmp_path / 'state.json'),
             'trade_state_path': str(tmp_path / 'trade_state.json'),
+            'position_history_path': str(tmp_path / 'position_history.jsonl'),
             'default_interval_min': 30,
             'simulator': {
                 'initial_balance': 10000.0,
@@ -121,17 +126,17 @@ def engine(tmp_path):
     cfg = make_min_config(tmp_path)
     eng = TradeSimulatorEngine(cfg)
     # 注入假的WS与REST，避免真实网络依赖
-    eng.ws_manager = FakeWSManager(cfg, eng._on_kline)
-    eng.rest = FakeRest(entry_price=100.0)  # 设定入场价近似为100
+    eng.ws_manager = FakeWSManager(cfg, eng._on_kline_wrapper)
+    eng.position_manager.rest = FakeRest(entry_price=100.0)
     set_engine(eng)
     return eng
 
 
 def test_tp_trigger_long(engine):
-    # 开多仓：名义1000，杠杆3，TP=+2%，SL=-1%
+    # 开多仓：名义1000，杠杆3，TP=102，SL=99
     res = engine.open_position(
         symbol='BTCUSDT', side='long', quote_notional_usdt=1000.0, leverage=3,
-        tp_pct=0.02, sl_pct=0.01
+        tp_price=102.0, sl_price=99.0
     )
     assert 'error' not in res, f"开仓失败: {res}"
     pos_id = res['id']
@@ -139,8 +144,7 @@ def test_tp_trigger_long(engine):
     assert approx_equal(res['entry_price'], 100.0)
     assert approx_equal(res['tp_price'], 102.0)
     assert approx_equal(res['sl_price'], 99.0)
-    # 模拟当根K线：高点触发TP
-    engine._on_kline('BTCUSDT', {'h': 102.5, 'l': 100.0, 'c': 103.0})
+    engine._on_kline_wrapper('BTCUSDT', {'h': 102.5, 'l': 100.0, 'c': 103.0})
     # 校验持仓状态已关闭，账户实现盈亏为正
     pos = engine.positions['BTCUSDT']
     assert pos.status == 'closed'
@@ -152,35 +156,28 @@ def test_tp_trigger_long(engine):
 
 
 def test_sl_trigger_long(engine):
-    # 开多仓：名义1000，杠杆3，TP=+2%，SL=-1%
+    # 开多仓：名义1000，杠杆3，TP=102，SL=99
     res = engine.open_position(
         symbol='BTCUSDT', side='long', quote_notional_usdt=1000.0, leverage=3,
-        tp_pct=0.02, sl_pct=0.01
+        tp_price=102.0, sl_price=99.0
     )
     assert 'error' not in res, f"开仓失败: {res}"
-    # 模拟当根K线：低点触发SL
-    engine._on_kline('BTCUSDT', {'h': 100.5, 'l': 98.5, 'c': 99.0})
+    engine._on_kline_wrapper('BTCUSDT', {'h': 100.5, 'l': 98.5, 'c': 99.0})
     pos = engine.positions['BTCUSDT']
     assert pos.status == 'closed'
     assert engine.account.realized_pnl < 0.0
 
 
-def test_partial_close(engine):
-    # 开多仓：名义1000，杠杆2，设置TP/SL
+def test_close_long(engine):
     res = engine.open_position(
         symbol='BTCUSDT', side='long', quote_notional_usdt=1000.0, leverage=2,
-        tp_pct=0.03, sl_pct=0.01
+        tp_price=103.0, sl_price=99.0
     )
     assert 'error' not in res, f"开仓失败: {res}"
-    # 模拟价格上行，局部平仓500 USDT名义
-    engine.positions['BTCUSDT'].latest_mark_price = 105.0
-    res_close = engine.close_position(symbol='BTCUSDT', reduce_notional_usdt=500.0)
-    assert 'error' not in res_close, f"部分平仓失败: {res_close}"
+    res_close = engine.close_position(symbol='BTCUSDT', close_reason='agent', close_price=101.0)
+    assert 'error' not in res_close, f"平仓失败: {res_close}"
     pos = engine.positions['BTCUSDT']
-    assert pos.status == 'open'  # 仍有剩余仓位
-    assert approx_equal(pos.notional_usdt, 500.0, tol=1e-3)
-    # 校验保证金释放与费用累计
-    assert engine.account.reserved_margin_sum > 0.0
+    assert pos.status == 'closed'
     assert pos.fees_close > 0.0
 
 
@@ -188,7 +185,7 @@ def test_summary_consistency(engine):
     # 开多仓并检查摘要接口一致性
     res = engine.open_position(
         symbol='BTCUSDT', side='long', quote_notional_usdt=1000.0, leverage=3,
-        tp_pct=0.02, sl_pct=0.01
+        tp_price=102.0, sl_price=99.0
     )
     assert 'error' not in res
     acc = engine.get_account_summary()
