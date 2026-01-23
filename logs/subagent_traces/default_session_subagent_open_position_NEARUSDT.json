@@ -1,0 +1,10 @@
+{
+  "subagent_name": "open_position_NEARUSDT",
+  "subagent_session_id": "default_session_subagent_open_position_NEARUSDT",
+  "parent_session_id": "default_session",
+  "start_time": "2025-11-28T02:15:24.778330+00:00",
+  "end_time": "2025-11-28T02:15:38.468672+00:00",
+  "tool_calls": [],
+  "related_positions": [],
+  "summary": "0 tool calls"
+}

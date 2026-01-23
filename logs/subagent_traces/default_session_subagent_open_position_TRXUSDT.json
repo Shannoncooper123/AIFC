@@ -1,0 +1,10 @@
+{
+  "subagent_name": "open_position_TRXUSDT",
+  "subagent_session_id": "default_session_subagent_open_position_TRXUSDT",
+  "parent_session_id": "default_session",
+  "start_time": "2025-11-28T06:00:38.346752+00:00",
+  "end_time": "2025-11-28T06:00:56.205629+00:00",
+  "tool_calls": [],
+  "related_positions": [],
+  "summary": "0 tool calls"
+}

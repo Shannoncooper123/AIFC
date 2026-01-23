@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "crypto-monitor"
+version = "0.1.0"
+description = "专业的加密货币异动监控系统"
+authors = ["Your Name <your@email.com>"]
+readme = "README.md"
+packages = [{include = "src"}, {include = "config"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+websocket-client = "^1.6.0"
+requests = "^2.31.0"
+numpy = "^1.24.0"
+python-dotenv = "^1.0.0"
+pyyaml = "^6.0"
+langchain = "^1.0.0"
+langgraph = "^1.0.0"
+langchain-openai = "^1.0.1"
+flask = "^3.0.0"
+flask-socketio = "^5.3.5"
+python-socketio = "^5.10.0"
+watchdog = "^3.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0"
+black = "^23.0"
+flake8 = "^6.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+

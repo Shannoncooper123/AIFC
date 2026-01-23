@@ -1,0 +1,23 @@
+{
+  "subagent_name": "open_position_MMTUSDT",
+  "subagent_session_id": "default_session_subagent_open_position_MMTUSDT",
+  "parent_session_id": "default_session",
+  "start_time": "2025-11-21T10:27:57.817564+00:00",
+  "end_time": "2025-11-21T10:28:14.939545+00:00",
+  "tool_calls": [
+    {
+      "seq": 1,
+      "tool_name": "open_position",
+      "input": {
+        "side": "NULL",
+        "order_type": "market",
+        "feedback": "当前账户保证金利用率为72.28%，超过70%风险阈值，优先考虑保护现有仓位而非开新仓；已持仓MMTUSDT空单需关注1h/4h关键位0.244（止损位）与0.2057（止盈位）的价格变动，暂不适合新开仓"
+      },
+      "output": "{\"status\": \"opening_stage_completed\", \"message\": \"开仓决策阶段已完成，未执行实际开仓操作。系统将进入持仓管理阶段。\"}",
+      "timestamp": "2025-11-21T10:28:04.318454+00:00",
+      "success": true
+    }
+  ],
+  "related_positions": [],
+  "summary": "开仓 unknown"
+}

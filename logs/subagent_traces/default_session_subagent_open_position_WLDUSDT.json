@@ -1,0 +1,27 @@
+{
+  "subagent_name": "open_position_WLDUSDT",
+  "subagent_session_id": "default_session_subagent_open_position_WLDUSDT",
+  "parent_session_id": "default_session",
+  "start_time": "2025-11-26T18:45:36.239722+00:00",
+  "end_time": "2025-11-26T18:46:07.268544+00:00",
+  "tool_calls": [
+    {
+      "seq": 1,
+      "tool_name": "open_position",
+      "input": {
+        "side": "NULL",
+        "order_type": "market",
+        "symbol": null,
+        "margin_usdt": null,
+        "tp_price": null,
+        "sl_price": null,
+        "runtime": null
+      },
+      "output": "{\"status\": \"opening_stage_completed\", \"message\": \"开仓决策阶段已完成，未执行实际开仓操作。系统将进入持仓管理阶段。\"}",
+      "timestamp": "2025-11-26T18:45:51.672472+00:00",
+      "success": true
+    }
+  ],
+  "related_positions": [],
+  "summary": "开仓 None"
+}

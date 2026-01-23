@@ -1,0 +1,23 @@
+{
+  "subagent_name": "open_position_TIAUSDT",
+  "subagent_session_id": "default_session_subagent_open_position_TIAUSDT",
+  "parent_session_id": "default_session",
+  "start_time": "2025-11-28T03:15:37.565254+00:00",
+  "end_time": "2025-11-28T03:16:02.487723+00:00",
+  "tool_calls": [
+    {
+      "seq": 1,
+      "tool_name": "open_position",
+      "input": {
+        "side": "NULL",
+        "order_type": "market",
+        "feedback": "TIAUSDT已有空头持仓，无极强加仓信号（如4h/1h关键阻力突破放量等），本次分析拒绝开仓"
+      },
+      "output": "{\"status\": \"opening_stage_completed\", \"message\": \"开仓决策阶段已完成，未执行实际开仓操作。系统将进入持仓管理阶段。\"}",
+      "timestamp": "2025-11-28T03:15:49.947527+00:00",
+      "success": true
+    }
+  ],
+  "related_positions": [],
+  "summary": "开仓 unknown"
+}

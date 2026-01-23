@@ -1,0 +1,42 @@
+import logging
+from typing import List, Union
+from langgraph.types import Send
+from wings_code_agent_core.graph_builder.graphs.ABExperiment.ABExperiment_server_dispatch_lark.state import ABExperimentServerDispatchLarkAgentState, ABExperimentServerLarkSubAgentState
+
+logger = logging.getLogger(__name__)
+
+def dispatch_analysis(state: ABExperimentServerDispatchLarkAgentState) -> Union[str, List[Send]]:
+    """
+    使用子图分发内容组以进行并行分析。
+
+    此函数充当路由器。它会检查是否有要分析的内容组。
+    - 如果有，它会为每个组创建一个`Send`对象，目标是分析子图。
+      这将触发每个内容组的子图并行执行。
+    - 如果没有，它会将流程路由到最终的总结节点。
+    """
+    logger.info("--- 进入 dispatch_analysis 进行路由 ---")
+    
+    content_groups = state.mr_diff_content_groups
+    
+    if not content_groups:
+        logger.warning("没有要分析的内容组。路由到总结节点。")
+        return "summarize_and_format_analysis"
+
+    sends = []
+    logger.info(f"分发 {len(content_groups)} 个内容组进行并行分析。")
+    for i, content_group in enumerate(content_groups):
+        # 为每个内容组创建子图状态对象
+        subgraph_state = ABExperimentServerLarkSubAgentState(
+            workspace=state.workspace,
+            os_version=state.os_version,
+            mr_diff_content=content_group,
+            current_group_index=i,
+            prompt_identify_ab_details=state.prompt_identify_ab_details,
+            prompt_analyze_gating_logic=state.prompt_analyze_gating_logic,
+            prompt_assess_gated_changes=state.prompt_assess_gated_changes,
+            prompt_summarize_analysis=state.prompt_summarize_analysis,
+            # extracted_lark_info=state.extracted_lark_info,
+        )
+        sends.append(Send("analysis_subgraph", subgraph_state))
+    
+    return sends
