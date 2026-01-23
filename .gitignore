@@ -35,6 +35,7 @@ build/
 out/
 coverage/
 .nyc_output/
+data/klines_15m/
 
 .next/
 .nuxt/
