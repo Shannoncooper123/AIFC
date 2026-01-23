@@ -74,3 +74,4 @@ logs/
 *.png
 *.svg
 *.jsonl
+*.pid
