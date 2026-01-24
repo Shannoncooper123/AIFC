@@ -1,6 +1,7 @@
 """获取K线图图像的工具（含技术指标）"""
 import base64
 import io
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from langchain.tools import tool
 import matplotlib
@@ -112,6 +113,12 @@ def _plot_candlestick_chart(klines: List[Kline], symbol: str, interval: str, vis
     
     # X轴索引（0 到 visible_count-1）
     indices = list(range(len(plot_klines)))
+    intraday_intervals = {'1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h'}
+    fmt = '%m-%d %H:%M' if interval in intraday_intervals else '%Y-%m-%d'
+    date_labels = [datetime.utcfromtimestamp(k.timestamp / 1000.0).strftime(fmt) for k in plot_klines]
+    step = max(1, len(indices) // 7)
+    xticks = list(range(0, len(indices), step))
+    xtick_labels = [date_labels[i] for i in xticks]
     
     # 定义颜色
     up_color = '#26a69a'    # 青绿色 - 上涨
@@ -264,6 +271,8 @@ def _plot_candlestick_chart(klines: List[Kline], symbol: str, interval: str, vis
     ax_rsi.set_xlabel('Candle Index', fontsize=10)
     ax_rsi.legend(loc='upper left', fontsize=8, framealpha=0.8)
     ax_rsi.tick_params(axis='y', labelright=True)
+    ax_rsi.set_xticks(xticks)
+    ax_rsi.set_xticklabels(xtick_labels, rotation=30, fontsize=9)
     
     plt.tight_layout(rect=[0, 0.01, 1, 0.98])
     
@@ -280,15 +289,16 @@ def _plot_candlestick_chart(klines: List[Kline], symbol: str, interval: str, vis
 def get_kline_image_tool(
     symbol: str,
     interval: str = "1h",
+    feedback: str = "",
 ) -> str:
     """获取单周期K线图并进行视觉分析（含技术指标：EMA、MACD、RSI、Bollinger Bands）。
     
-    该工具生成指定时间周期的K线蜡烛图，并使用视觉理解模型自动分析图片内容，
-    返回包括趋势方向、支撑阻力位、技术形态等关键技术分析结果。
+    该工具生成指定时间周期的K线蜡烛图，返回包括趋势方向、支撑阻力位、技术形态等关键技术分析结果。
     
     Args:
         symbol: 交易对，如 "BTCUSDT"
         interval: 时间周期，如 "15m"、"1h"、"4h"、"1d"。默认为 "1h"。注意：仅支持单个周期。
+        feedback: 分析进度笔记。请填写：1) 上一周期分析的关键结论（趋势方向、关键位、动能状态）；2) 本次调用的分析目的（如"验证4h趋势是否与1d一致"或"寻找1h级别的入场触发信号"）。"
     
     Returns:
         包含图像数据和元数据的JSON字符串

@@ -52,12 +52,12 @@ def calc_metrics_tool(
         - **风控辅助**：提供 R:R 质量评估（Excellent/Good/Poor），辅助决策。
 
     Args:
-        symbol (str): 交易对，如 "BTCUSDT"。必须为非空字符串。
-        side (str): 仓位方向，仅支持 "BUY" 或 "SELL"（大写）。多头要求 tp > entry > sl，
+        symbol: 交易对，如 "BTCUSDT"。必须为非空字符串。
+        side: 仓位方向，仅支持 "BUY" 或 "SELL"（大写）。多头要求 tp > entry > sl，
             空头要求 sl > entry > tp。
-        tp_price (float): 止盈价格（正数，绝对价格）。
-        sl_price (float): 止损价格（正数，绝对价格）。
-        feedback (str): 当前分析进度总结，详细说明当前的分析阶段与下一步计划。
+        tp_price: 止盈价格（正数，绝对价格）。
+        sl_price: 止损价格（正数，绝对价格）。
+        feedback: 当前分析进度总结，详细说明当前的分析阶段与下一步计划。
             必须为非空字符串，用于追溯决策逻辑。
         入场价格不提供，工具会自动获取最新市价。
 

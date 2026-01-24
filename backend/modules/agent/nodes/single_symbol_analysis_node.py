@@ -187,8 +187,6 @@ def single_symbol_analysis_node(state: AgentState, *, config: RunnableConfig) ->
             position_status_hint = f"\n重要提示：{symbol} 已有持仓，本次分析仅评估是否需要加仓（需极强信号+严格条件）或直接拒绝分析。"
             logger.warning(f"检测到 {symbol} 已有持仓: {state.positions_summary}")
 
-        specific_prompt = f"请基于以上市场信息，重点分析 {symbol} 的开仓机会并自主执行开仓操作。{position_status_hint}"
-
         supplemental_context = _build_supplemental_context(
             symbol=symbol,
             account_summary=state.account_summary,
@@ -196,10 +194,16 @@ def single_symbol_analysis_node(state: AgentState, *, config: RunnableConfig) ->
             position_history=state.position_history,
         )
 
+        task_prompt = f"请基于以上市场信息，重点分析 {symbol} 的开仓机会并自主执行开仓操作。{position_status_hint}"
+
+        combined_message = "\n\n".join([
+            market_context,
+            "\n".join(supplemental_context),
+            task_prompt,
+        ])
+
         subagent_messages = [
-            HumanMessage(content=market_context),
-            HumanMessage(content="\n".join(supplemental_context)),
-            HumanMessage(content=specific_prompt),
+            HumanMessage(content=combined_message),
         ]
         result = subagent.invoke(
             {"messages": subagent_messages},
