@@ -100,6 +100,7 @@ class Position(BaseModel):
     take_profit: Optional[float] = None
     stop_loss: Optional[float] = None
     opened_at: Optional[str] = None
+    open_run_id: Optional[str] = None
 
 
 class PositionsResponse(BaseModel):
@@ -120,6 +121,8 @@ class PositionHistoryEntry(BaseModel):
     opened_at: str
     closed_at: str
     close_reason: Optional[str] = None
+    open_run_id: Optional[str] = None
+    close_run_id: Optional[str] = None
 
 
 class PositionHistoryResponse(BaseModel):

@@ -142,7 +142,8 @@ class TradeSimulatorEngine:
 
     def open_position(self, symbol: str, side: str, quote_notional_usdt: float, leverage: int,
                       tp_price: Optional[float] = None, sl_price: Optional[float] = None,
-                      entry_price: Optional[float] = None, pre_reserved_margin: bool = False) -> Dict[str, Any]:
+                      entry_price: Optional[float] = None, pre_reserved_margin: bool = False,
+                      run_id: Optional[str] = None) -> Dict[str, Any]:
         """开仓
         
         Args:
@@ -152,6 +153,7 @@ class TradeSimulatorEngine:
             leverage: 杠杆倍数
             tp_price: 止盈价
             sl_price: 止损价
+            run_id: workflow run_id（用于关联开仓与workflow trace）
         
         Note:
             为保持与实盘工具调用一致，参数名保持为 quote_notional_usdt（名义价值）
@@ -159,7 +161,7 @@ class TradeSimulatorEngine:
         """
         result = self.position_manager.open_position(
             symbol, side, quote_notional_usdt, leverage,
-            tp_price, sl_price, entry_price, pre_reserved_margin
+            tp_price, sl_price, entry_price, pre_reserved_margin, run_id
         )
 
         if 'error' not in result:
@@ -171,7 +173,8 @@ class TradeSimulatorEngine:
         return result
 
     def close_position(self, position_id: Optional[str] = None, symbol: Optional[str] = None,
-                       close_reason: Optional[str] = None, close_price: Optional[float] = None) -> Dict[str, Any]:
+                       close_reason: Optional[str] = None, close_price: Optional[float] = None,
+                       run_id: Optional[str] = None) -> Dict[str, Any]:
         """平仓（全平）
         
         Args:
@@ -179,9 +182,10 @@ class TradeSimulatorEngine:
             symbol: 交易对（可选）
             close_reason: 平仓原因（可选）
             close_price: 指定平仓价格（可选），如果提供则使用此价格，否则使用当前市场价格
+            run_id: workflow run_id（Agent主动平仓时传入，止盈止损自动触发时为None）
         """
         result = self.position_manager.close_position(
-            position_id, symbol, close_reason, close_price
+            position_id, symbol, close_reason, close_price, run_id
         )
 
         if 'error' not in result:

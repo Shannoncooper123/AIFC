@@ -67,6 +67,7 @@ def parse_position(data: Dict[str, Any]) -> Position:
         take_profit=float(take_profit) if take_profit else None,
         stop_loss=float(stop_loss) if stop_loss else None,
         opened_at=opened_at,
+        open_run_id=data.get("open_run_id"),
     )
 
 
@@ -156,6 +157,8 @@ async def get_position_history(
             opened_at=p.get("open_time", ""),
             closed_at=p.get("close_time", ""),
             close_reason=p.get("close_reason"),
+            open_run_id=p.get("open_run_id"),
+            close_run_id=p.get("close_run_id"),
         ))
     
     return PositionHistoryResponse(

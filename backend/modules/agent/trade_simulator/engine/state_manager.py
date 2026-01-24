@@ -110,6 +110,8 @@ class StateManager:
                     'close_time': payload.get('close_time'),
                     'close_reason': payload.get('close_reason') or 'Agent主动平仓',
                     'operation_history': payload.get('operation_history', []),
+                    'open_run_id': payload.get('open_run_id'),
+                    'close_run_id': payload.get('close_run_id'),
                 }
 
                 logger.info(f"log_operation: 准备写入历史记录, symbol={record['symbol']}, id={record['id']}, pnl={record['realized_pnl']}, path={self.history_path}")

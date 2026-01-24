@@ -1,4 +1,5 @@
-import { ArrowUpRight, ArrowDownRight, Target, ShieldAlert } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Target, ShieldAlert, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { Position } from '../../../types';
 
 interface PositionsTableProps {
@@ -7,6 +8,12 @@ interface PositionsTableProps {
 }
 
 export function PositionsTable({ positions, isLoading }: PositionsTableProps) {
+  const navigate = useNavigate();
+
+  const handleViewTrace = (runId: string) => {
+    navigate(`/workflow?run_id=${runId}`);
+  };
+
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -83,6 +90,9 @@ export function PositionsTable({ positions, isLoading }: PositionsTableProps) {
               </th>
               <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-neutral-400">
                 TP / SL
+              </th>
+              <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-neutral-400">
+                Trace
               </th>
             </tr>
           </thead>
@@ -163,6 +173,20 @@ export function PositionsTable({ positions, isLoading }: PositionsTableProps) {
                         <span className="text-neutral-500">-</span>
                       )}
                     </div>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-4 text-center">
+                    {position.open_run_id ? (
+                      <button
+                        onClick={() => handleViewTrace(position.open_run_id!)}
+                        className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/20"
+                        title="View opening workflow trace"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Trace
+                      </button>
+                    ) : (
+                      <span className="text-neutral-500">-</span>
+                    )}
                   </td>
                 </tr>
               );

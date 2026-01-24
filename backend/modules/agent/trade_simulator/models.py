@@ -49,6 +49,8 @@ class Position:
     margin_used: float = 0.0
     latest_mark_price: Optional[float] = None
     close_reason: Optional[str] = None  # 平仓原因（Agent主动平仓/止盈/止损）
+    open_run_id: Optional[str] = None  # 开仓时的workflow run_id
+    close_run_id: Optional[str] = None  # 平仓时的workflow run_id（止盈止损自动触发时为None）
 
     def unrealized_pnl(self, mark_price: Optional[float] = None) -> float:
         mp = mark_price or self.latest_mark_price or self.entry_price

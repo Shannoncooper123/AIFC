@@ -121,13 +121,13 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
         next_action = "unknown"
 
         if isinstance(last_message, AIMessage):
-            ai_content = str(last_message.content)[:2000] if last_message.content else ""
+            ai_content = str(last_message.content) if last_message.content else ""
             if hasattr(last_message, "tool_calls") and last_message.tool_calls:
                 tool_calls_info = [
                     {
                         "name": tc.get("name", "unknown"),
                         "id": tc.get("id", ""),
-                        "args": {k: str(v)[:100] for k, v in tc.get("args", {}).items()}
+                        "args": {k: str(v) for k, v in tc.get("args", {}).items()}
                     }
                     for tc in last_message.tool_calls
                 ]

@@ -2,6 +2,7 @@
 from langchain.tools import tool
 from typing import Optional, Dict, Any, List
 from modules.agent.engine import get_engine
+from modules.agent.utils.workflow_trace_storage import get_current_run_id
 from modules.monitor.utils.logger import get_logger
 from modules.monitor.alerts.notifier import EmailNotifier
 from modules.config.settings import get_config
@@ -268,8 +269,8 @@ def open_position_tool(
             f"open_position_tool: 使用保证金输入 => margin={margin_usdt}U, leverage=10x, notional={notional}U"
         )
         
-        # 调用引擎（传递名义价值给引擎）
-        res = eng.open_position(symbol, engine_side, float(notional), int(leverage), tp_price, sl_price)
+        run_id = get_current_run_id()
+        res = eng.open_position(symbol, engine_side, float(notional), int(leverage), tp_price, sl_price, run_id=run_id)
         if isinstance(res, dict) and 'error' in res:
             logger.error(f"open_position_tool: 失败 -> {res['error']}")
         else:

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import { Card, Loading } from '../components/ui';
 import {
@@ -10,8 +11,19 @@ import {
 } from '../features/workflow';
 
 export function WorkflowPage() {
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialRunId = searchParams.get('run_id');
+  
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+
+  useEffect(() => {
+    const runIdFromUrl = searchParams.get('run_id');
+    if (runIdFromUrl && runIdFromUrl !== selectedRunId) {
+      setSelectedRunId(runIdFromUrl);
+      setSelectedSymbol(null);
+    }
+  }, [searchParams]);
 
   const runsQuery = useWorkflowRuns(50);
   const timelineQuery = useWorkflowTimeline(selectedRunId);
@@ -22,6 +34,7 @@ export function WorkflowPage() {
   const handleSelectRun = (runId: string) => {
     setSelectedRunId(runId);
     setSelectedSymbol(null);
+    setSearchParams({ run_id: runId });
   };
 
   return (

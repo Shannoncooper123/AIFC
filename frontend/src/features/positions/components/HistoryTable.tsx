@@ -1,4 +1,5 @@
-import { ArrowUpRight, ArrowDownRight, Clock, TrendingUp, TrendingDown } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Clock, TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { PositionHistory } from '../../../types';
 
 interface HistoryTableProps {
@@ -7,6 +8,12 @@ interface HistoryTableProps {
 }
 
 export function HistoryTable({ positions, isLoading }: HistoryTableProps) {
+  const navigate = useNavigate();
+
+  const handleViewTrace = (runId: string) => {
+    navigate(`/workflow?run_id=${runId}`);
+  };
+
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -92,6 +99,9 @@ export function HistoryTable({ positions, isLoading }: HistoryTableProps) {
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-neutral-400">
                 Reason
+              </th>
+              <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-neutral-400">
+                Trace
               </th>
             </tr>
           </thead>
@@ -183,6 +193,33 @@ export function HistoryTable({ positions, isLoading }: HistoryTableProps) {
                     ) : (
                       <span className="text-neutral-500">-</span>
                     )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      {position.open_run_id && (
+                        <button
+                          onClick={() => handleViewTrace(position.open_run_id!)}
+                          className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/20"
+                          title="View opening workflow trace"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Open
+                        </button>
+                      )}
+                      {position.close_run_id && (
+                        <button
+                          onClick={() => handleViewTrace(position.close_run_id!)}
+                          className="inline-flex items-center gap-1 rounded-md bg-purple-500/10 px-2 py-1 text-xs font-medium text-purple-400 transition-colors hover:bg-purple-500/20"
+                          title="View closing workflow trace"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Close
+                        </button>
+                      )}
+                      {!position.open_run_id && !position.close_run_id && (
+                        <span className="text-neutral-500">-</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

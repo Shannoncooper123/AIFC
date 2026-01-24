@@ -249,7 +249,8 @@ class BinanceLiveEngine:
             return self.position_service.get_positions_summary(self.order_service)
     
     def open_position(self, symbol: str, side: str, quote_notional_usdt: float, leverage: int,
-                      tp_price: Optional[float] = None, sl_price: Optional[float] = None) -> Dict[str, Any]:
+                      tp_price: Optional[float] = None, sl_price: Optional[float] = None,
+                      run_id: Optional[str] = None) -> Dict[str, Any]:
         """开仓（兼容模拟器接口）"""
         try:
             # 获取当前价格计算数量
@@ -331,7 +332,8 @@ class BinanceLiveEngine:
             return {'error': str(e)}
     
     def close_position(self, position_id: Optional[str] = None, symbol: Optional[str] = None,
-                       close_reason: Optional[str] = None, close_price: Optional[float] = None) -> Dict[str, Any]:
+                       close_reason: Optional[str] = None, close_price: Optional[float] = None,
+                       run_id: Optional[str] = None) -> Dict[str, Any]:
         """平仓（兼容模拟器接口）"""
         with self._lock:
             # 通过 symbol 或 position_id 查找持仓

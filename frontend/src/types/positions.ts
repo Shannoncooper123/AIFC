@@ -17,6 +17,7 @@ export interface Position {
   take_profit?: number;
   stop_loss?: number;
   opened_at?: string;
+  open_run_id?: string;
 }
 
 export interface PositionHistory {
@@ -30,4 +31,6 @@ export interface PositionHistory {
   opened_at: string;
   closed_at: string;
   close_reason?: string;
+  open_run_id?: string;
+  close_run_id?: string;
 }
