@@ -31,9 +31,9 @@ logger = get_logger("agent.workflow_trace_middleware")
 def _serialize_message(msg: Any) -> dict:
     """序列化消息为可存储的格式"""
     if isinstance(msg, HumanMessage):
-        return {"role": "human", "content": str(msg.content)[:1000]}
+        return {"role": "human", "content": str(msg.content)}
     elif isinstance(msg, AIMessage):
-        result = {"role": "ai", "content": str(msg.content)[:1000] if msg.content else ""}
+        result = {"role": "ai", "content": str(msg.content) if msg.content else ""}
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             result["tool_calls"] = [
                 {"name": tc.get("name", "unknown"), "args_keys": list(tc.get("args", {}).keys())}
@@ -41,14 +41,11 @@ def _serialize_message(msg: Any) -> dict:
             ]
         return result
     elif isinstance(msg, ToolMessage):
-        content = str(msg.content)
-        if len(content) > 500:
-            content = content[:500] + "..."
-        return {"role": "tool", "tool_call_id": getattr(msg, "tool_call_id", ""), "content": content}
+        return {"role": "tool", "tool_call_id": getattr(msg, "tool_call_id", ""), "content": str(msg.content)}
     elif isinstance(msg, SystemMessage):
-        return {"role": "system", "content": str(msg.content)[:500]}
+        return {"role": "system", "content": str(msg.content)}
     else:
-        return {"role": "unknown", "content": str(msg)[:500]}
+        return {"role": "unknown", "content": str(msg)}
 
 
 class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
@@ -81,7 +78,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
             if isinstance(msg, ToolMessage):
                 pending_tool_results.append({
                     "tool_call_id": getattr(msg, "tool_call_id", ""),
-                    "content_preview": str(msg.content)[:200] if msg.content else ""
+                    "content": str(msg.content) if msg.content else ""
                 })
             elif isinstance(msg, AIMessage):
                 break
