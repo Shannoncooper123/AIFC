@@ -108,7 +108,7 @@ class StateManager:
                     'realized_pnl': payload.get('realized_pnl'),
                     'open_time': payload.get('open_time'),
                     'close_time': payload.get('close_time'),
-                    'close_reason': payload.get('close_reason') or 'agent',
+                    'close_reason': payload.get('close_reason') or 'Agent主动平仓',
                     'operation_history': payload.get('operation_history', []),
                 }
 

@@ -281,7 +281,7 @@ class PositionManager:
             pos.status = 'closed'
             pos.close_price = mark
             pos.close_time = datetime.now(timezone.utc).isoformat()
-            pos.close_reason = close_reason or 'agent'  # 记录平仓原因
+            pos.close_reason = close_reason or 'Agent主动平仓'
             pos.qty = 0.0
             pos.notional_usdt = 0.0
             pos.margin_used = 0.0
@@ -314,8 +314,8 @@ class PositionManager:
     def _get_trigger_type(self, close_reason: Optional[str]) -> str:
         """判断平仓触发类型"""
         if close_reason in ('止盈', '止损'):
-            return 'auto'  # 自动触发
-        elif close_reason == 'agent':
-            return 'manual'  # Agent 主动平仓
+            return 'auto'
+        elif close_reason == 'Agent主动平仓':
+            return 'manual'
         else:
             return 'unknown'

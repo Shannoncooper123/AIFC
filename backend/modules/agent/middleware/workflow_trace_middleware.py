@@ -67,8 +67,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
 
         messages = state.get("messages", [])
 
-        recent_messages = messages[-10:] if len(messages) > 10 else messages
-        serialized_messages = [_serialize_message(m) for m in recent_messages]
+        serialized_messages = [_serialize_message(m) for m in messages]
 
         last_message = messages[-1] if messages else None
         last_message_type = type(last_message).__name__ if last_message else "None"

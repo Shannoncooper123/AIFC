@@ -48,7 +48,7 @@ class Position:
     notional_usdt: float = 0.0
     margin_used: float = 0.0
     latest_mark_price: Optional[float] = None
-    close_reason: Optional[str] = None  # 平仓原因（agent/止盈/止损）
+    close_reason: Optional[str] = None  # 平仓原因（Agent主动平仓/止盈/止损）
 
     def unrealized_pnl(self, mark_price: Optional[float] = None) -> float:
         mp = mark_price or self.latest_mark_price or self.entry_price

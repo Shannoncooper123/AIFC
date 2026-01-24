@@ -52,7 +52,7 @@ class HistoryWriter:
         
         Args:
             position: Position对象
-            close_reason: 平仓原因（agent/止盈/止损）
+            close_reason: 平仓原因（Agent主动平仓/止盈/止损）
             close_price: 平仓价格
             realized_pnl: 已实现盈亏
             close_order_id: 平仓订单ID（用于复盘）

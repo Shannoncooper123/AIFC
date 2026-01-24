@@ -114,7 +114,7 @@ class OrderService:
             return {'error': str(e)}
     
     def close_position_market(self, symbol: str, side: str, quantity: float, 
-                              position_obj=None, close_reason: str = 'agent') -> Dict[str, Any]:
+                              position_obj=None, close_reason: str = 'Agent主动平仓') -> Dict[str, Any]:
         """市价平仓
         
         Args:

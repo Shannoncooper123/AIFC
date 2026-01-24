@@ -356,7 +356,7 @@ class BinanceLiveEngine:
             result = self.order_service.close_position_market(
                 target_symbol, pos.side, pos.qty, 
                 position_obj=pos, 
-                close_reason=close_reason or 'agent'
+                close_reason=close_reason or 'Agent主动平仓'
             )
             
             if 'error' not in result:
@@ -367,7 +367,7 @@ class BinanceLiveEngine:
                 
                 self.history_writer.record_closed_position(
                     pos,
-                    close_reason=close_reason or 'agent',
+                    close_reason=close_reason or 'Agent主动平仓',
                     close_price=avg_price,
                     close_order_id=order_id
                 )
