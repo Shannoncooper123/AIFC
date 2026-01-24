@@ -1,9 +1,13 @@
 """交易模拟状态持久化（精简版）"""
 import json
 import os
-from typing import Dict, Any
+from typing import Any, Dict
 
-from modules.agent.trade_simulator.utils.file_utils import WriteQueue, TaskType, locked_append_jsonl, locked_write_jsonl
+from modules.agent.trade_simulator.utils.file_utils import (
+    TaskType,
+    WriteQueue,
+    locked_append_jsonl,
+)
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.trade_simulator.storage')
@@ -33,7 +37,13 @@ def save_state(path: str, state: Dict[str, Any]) -> None:
 
 
 def load_position_history(path: str) -> Dict[str, Any]:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    """加载持仓历史记录（JSONL格式）
+
+    文件格式：每行一个JSON对象，每行是一条已平仓位记录
+    """
+    dir_name = os.path.dirname(path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
     if not os.path.exists(path):
         return {"positions": []}
     try:
@@ -41,40 +51,42 @@ def load_position_history(path: str) -> Dict[str, Any]:
             content = f.read().strip()
         if not content:
             return {"positions": []}
-        if content[0] == "{":
-            return json.loads(content) or {"positions": []}
+
         positions = []
         for line in content.splitlines():
             line = line.strip()
             if not line:
                 continue
             try:
-                positions.append(json.loads(line))
+                record = json.loads(line)
+                if isinstance(record, dict) and "positions" not in record:
+                    positions.append(record)
             except json.JSONDecodeError:
+                logger.warning(f"load_position_history: 跳过无效行: {line[:50]}...")
                 continue
         return {"positions": positions}
-    except Exception:
+    except Exception as e:
+        logger.error(f"load_position_history: 加载失败, path={path}, error={e}")
         return {"positions": []}
 
 
 def append_position_history(path: str, record: Dict[str, Any]) -> None:
+    """追加已平仓位到历史记录文件（JSONL格式）
+
+    文件格式：每行一个JSON对象，每行是一条已平仓位记录
+    """
     try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                first_char = f.read(1)
-            if first_char == "{":
-                history = load_position_history(path)
-                positions = history.get("positions", [])
-                positions.append(record)
-                locked_write_jsonl(path, positions)
-                return
+        logger.info(f"append_position_history: 写入历史记录, symbol={record.get('symbol')}, id={record.get('id')}, path={path}")
+
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+
         locked_append_jsonl(path, record)
-    except Exception:
-        history = load_position_history(path)
-        if "positions" not in history:
-            history["positions"] = []
-        history["positions"].append(record)
-        _write_queue.enqueue(TaskType.HISTORY, path, history)
+        logger.info(f"append_position_history: 成功追加记录, symbol={record.get('symbol')}")
+
+    except Exception as e:
+        logger.error(f"append_position_history: 写入失败, error={e}", exc_info=True)
 
 
 class ConfigFacade:

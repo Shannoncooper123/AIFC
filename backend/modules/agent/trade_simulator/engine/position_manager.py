@@ -1,11 +1,12 @@
 """持仓开平仓管理"""
 from __future__ import annotations
-import uuid
-import threading
-from typing import Dict, Optional, List, Any
-from datetime import datetime, timezone
 
-from modules.agent.trade_simulator.models import Position, Account
+import threading
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from modules.agent.trade_simulator.models import Account, Position
 from modules.agent.trade_simulator.storage import ConfigFacade
 from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.utils.logger import get_logger
@@ -15,7 +16,7 @@ logger = get_logger('agent.trade_engine.position_manager')
 
 class PositionManager:
     """持仓管理服务：负责开平仓逻辑"""
-    def __init__(self, config: Dict, account: Account, positions: Dict[str, Position], 
+    def __init__(self, config: Dict, account: Account, positions: Dict[str, Position],
                  risk_service, state_manager, lock: threading.RLock):
         self.cfg = ConfigFacade(config)
         self.account = account
@@ -26,7 +27,7 @@ class PositionManager:
         self.rest = BinanceRestClient(config)
         self.max_leverage = self.cfg.max_leverage
         self.ws_interval = self.cfg.ws_interval
-    
+
     def get_latest_close_price(self, symbol: str) -> Optional[float]:
         """获取最新收盘价"""
         try:
@@ -37,7 +38,7 @@ class PositionManager:
             logger.error(f"获取价格失败: symbol={symbol}, error={e}")
             return None
         return None
-    
+
     def get_positions_summary(self) -> List[Dict[str, Any]]:
         """获取持仓汇总"""
         with self.lock:
@@ -64,7 +65,7 @@ class PositionManager:
                     'operation_history': p.operation_history,  # 添加操作历史
                 })
             return items
-    
+
     def open_position(self, symbol: str, side: str, quote_notional_usdt: float, leverage: int,
                       tp_price: Optional[float] = None, sl_price: Optional[float] = None,
                       entry_price: Optional[float] = None, pre_reserved_margin: bool = False) -> Dict[str, Any]:
@@ -92,7 +93,7 @@ class PositionManager:
         """
         with self.lock:
             logger.info(f"open_position: symbol={symbol}, side={side}, lev={leverage}, notional={quote_notional_usdt}, tp_price={tp_price}, sl_price={sl_price}")
-            
+
             # 校验参数
             if side not in ("long", "short"):
                 logger.error("open_position: 参数错误 side")
@@ -103,24 +104,24 @@ class PositionManager:
             if quote_notional_usdt <= 0:
                 logger.error("open_position: 参数错误 notional <= 0")
                 return {"error": "TOOL_INPUT_ERROR: quote_notional_usdt必须>0"}
-            
+
             # 同一交易对仅允许一边仓位
             if symbol in self.positions and self.positions[symbol].status == 'open':
                 pos0 = self.positions[symbol]
                 if pos0.side != side:
                     logger.error("open_position: 对向仓位冲突，禁止")
                     return {"error": "TOOL_INPUT_ERROR: 同一交易对仅允许一边仓位，不能对向"}
-            
+
             # 获取入场价格
             entry = entry_price or self.get_latest_close_price(symbol)
             if entry is None:
                 logger.error("open_position: 获取入场价格失败")
                 return {"error": "TOOL_RUNTIME_ERROR: 获取价格失败"}
-            
+
             # 基于名义价值计算数量和实际保证金需求
             qty_add = quote_notional_usdt / entry  # 持仓数量 = 名义价值 / 价格
             margin_add = quote_notional_usdt / float(leverage)  # 保证金需求 = 名义价值 / 杠杆
-            
+
             # 保证金检查
             if pre_reserved_margin:
                 if self.account.reserved_margin_sum < margin_add:
@@ -131,12 +132,12 @@ class PositionManager:
                 if free_bal < margin_add:
                     logger.warning(f"open_position: 保证金不足 free={free_bal:.4f} < need={margin_add:.4f}")
                     return {"error": "TOOL_INPUT_ERROR: 保证金不足"}
-            
+
             # 手续费（开仓）
             fee_open = self.risk.charge_open_fee(quote_notional_usdt)
             if not pre_reserved_margin:
                 self.account.reserved_margin_sum += margin_add
-            
+
             # 建立/加仓
             if symbol not in self.positions or self.positions[symbol].status != 'open':
                 pid = uuid.uuid4().hex[:12]
@@ -177,7 +178,7 @@ class PositionManager:
                 old_entry = pos.entry_price
                 old_qty = pos.qty
                 old_margin = pos.margin_used
-                
+
                 # 加权重算均价
                 total_notional = pos.notional_usdt + quote_notional_usdt
                 total_qty = pos.qty + qty_add
@@ -187,7 +188,7 @@ class PositionManager:
                 pos.notional_usdt = total_notional
                 pos.margin_used += margin_add
                 pos.fees_open += fee_open
-                
+
                 # TP/SL若传入则更新
                 old_tp = pos.tp_price
                 old_sl = pos.sl_price
@@ -196,7 +197,7 @@ class PositionManager:
                 if sl_price is not None:
                     pos.sl_price = sl_price
                 pos.latest_mark_price = entry
-                
+
                 # 添加加仓操作到历史
                 pos.operation_history.append({
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -219,11 +220,11 @@ class PositionManager:
                         "leverage": int(leverage)
                     }
                 })
-                
+
                 logger.info(f"open_position: 加仓 symbol={symbol}, new_entry={new_entry:.6f}, qty={pos.qty:.8f}, notional={pos.notional_usdt:.6f}, margin={pos.margin_used:.6f}, tp={pos.tp_price}, sl={pos.sl_price}")
-            
+
             return self.state.pos_to_dict(self.positions[symbol])
-    
+
     def close_position(self, position_id: Optional[str] = None, symbol: Optional[str] = None,
                        close_reason: Optional[str] = None, close_price: Optional[float] = None) -> Dict[str, Any]:
         """平仓（全平）
@@ -244,14 +245,14 @@ class PositionManager:
                     if p.id == position_id:
                         pos = p
                         break
-            
+
             if not pos or pos.status != 'open':
                 logger.error(f"close_position: 未找到可平持仓 (查询: position_id={position_id}, symbol={symbol})")
                 return {"error": "TOOL_INPUT_ERROR: 未找到可平持仓"}
-            
+
             # 日志中显示实际找到的持仓信息
             logger.info(f"close_position: position_id={pos.id}, symbol={pos.symbol}, reason={close_reason}, close_price={close_price}")
-            
+
             # 如果提供了 close_price 则使用指定价格，否则使用当前市场价格
             if close_price is not None:
                 mark = close_price
@@ -260,23 +261,23 @@ class PositionManager:
             original_notional = pos.notional_usdt
             original_qty = pos.qty
             original_margin = pos.margin_used
-            
+
             # 全平
             notional_close = pos.qty * mark
             if pos.side == 'long':
                 pnl = pos.qty * (mark - pos.entry_price)
             else:
                 pnl = pos.qty * (pos.entry_price - mark)
-            
+
             self.account.balance += pnl
             fee_close = self.risk.charge_close_fee(notional_close)
             self.account.realized_pnl += pnl
             pos.realized_pnl += pnl
-            
+
             # 释放保证金
             self.account.reserved_margin_sum -= pos.margin_used
             pos.fees_close += fee_close
-            
+
             pos.status = 'closed'
             pos.close_price = mark
             pos.close_time = datetime.now(timezone.utc).isoformat()
@@ -284,7 +285,7 @@ class PositionManager:
             pos.qty = 0.0
             pos.notional_usdt = 0.0
             pos.margin_used = 0.0
-            
+
             # 添加平仓操作到历史
             pos.operation_history.append({
                 "timestamp": pos.close_time,
@@ -296,9 +297,9 @@ class PositionManager:
                     "trigger_type": self._get_trigger_type(pos.close_reason)
                 }
             })
-            
+
             logger.info(f"close_position: symbol={pos.symbol}, close_price={mark:.6f}, realized_pnl={pos.realized_pnl:.6f}, fee={fee_close:.6f}, original_notional={original_notional:.6f}, reason={pos.close_reason}")
-            
+
             # 记录平仓事件
             evt_payload = self.state.pos_to_dict(pos)
             evt_payload['notional_usdt'] = original_notional
@@ -306,9 +307,10 @@ class PositionManager:
             evt_payload['margin_used'] = original_margin
             evt_payload.update({'action': 'close_position', 'close_reason': close_reason})
             self.state.log_operation('close_position', evt_payload)
-            
+            logger.info(f"close_position: 历史记录调用完成, symbol={pos.symbol}")
+
             return self.state.pos_to_dict(pos)
-    
+
     def _get_trigger_type(self, close_reason: Optional[str]) -> str:
         """判断平仓触发类型"""
         if close_reason in ('止盈', '止损'):

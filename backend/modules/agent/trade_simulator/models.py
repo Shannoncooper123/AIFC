@@ -1,8 +1,9 @@
 """交易模拟模型定义（全仓保证金）"""
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Optional, Dict
 from datetime import datetime, timezone
+from typing import Dict, Optional
 
 
 @dataclass

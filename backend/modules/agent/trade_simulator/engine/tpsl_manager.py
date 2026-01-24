@@ -1,10 +1,11 @@
 """TP/SL管理与触发"""
 from __future__ import annotations
-import threading
-from typing import Dict, Optional, Any
-from datetime import datetime, timezone
 
-from modules.agent.trade_simulator.models import Position, Account
+import threading
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
+from modules.agent.trade_simulator.models import Account, Position
 from modules.agent.trade_simulator.storage import ConfigFacade
 from modules.monitor.utils.logger import get_logger
 
@@ -22,7 +23,7 @@ class TPSLManager:
         self.state = state_manager
         self.position_mgr = position_manager
         self.lock = lock
-    
+
     def update_tp_sl(self, symbol: str,
                      tp_price: Optional[float] = None, sl_price: Optional[float] = None) -> Dict[str, Any]:
         """更新持仓的TP/SL（通过交易对查找）
@@ -40,24 +41,24 @@ class TPSLManager:
         """
         with self.lock:
             logger.info(f"update_tp_sl: symbol={symbol}, tp_price={tp_price}, sl_price={sl_price}")
-            
+
             # 通过交易对查找持仓
             pos = self.positions.get(symbol)
-            
+
             if not pos or pos.status != 'open':
                 logger.error(f"update_tp_sl: 未找到 {symbol} 的可更新持仓")
                 return {"error": f"TOOL_INPUT_ERROR: 未找到 {symbol} 的可更新持仓"}
-            
+
             # 记录旧值
             old_tp = pos.tp_price
             old_sl = pos.sl_price
-            
+
             # 允许单独更新（灵活性），但推荐同时更新（安全性）
             if tp_price is not None:
                 pos.tp_price = tp_price
             if sl_price is not None:
                 pos.sl_price = sl_price
-            
+
             # 添加操作历史
             pos.operation_history.append({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -69,11 +70,11 @@ class TPSLManager:
                     "new_sl": pos.sl_price
                 }
             })
-            
+
             logger.info(f"update_tp_sl: symbol={pos.symbol}, new_tp={pos.tp_price}, new_sl={pos.sl_price}")
-            
+
             return self.state.pos_to_dict(pos)
-    
+
     def on_kline(self, symbol: str, kline_data: Dict[str, Any]) -> None:
         """K线回调：检查TP/SL触发"""
         try:
@@ -81,13 +82,13 @@ class TPSLManager:
                 pos = self.positions.get(symbol)
                 if not pos or pos.status != 'open':
                     return
-                
+
                 k = kline_data
                 high = float(k.get('h'))
                 low = float(k.get('l'))
                 close = float(k.get('c'))
                 pos.latest_mark_price = close
-                
+
                 # 触发逻辑（止损优先）
                 if pos.side == 'long':
                     if pos.sl_price is not None and low <= pos.sl_price:

@@ -1,29 +1,29 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, Callable
-from datetime import datetime, timezone
+
 import json
 import uuid
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Callable
 
-from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse, ModelCallResult
-from langchain_core.messages import ToolMessage, AIMessage, HumanMessage, SystemMessage
+from langchain.agents.middleware.types import (
+    AgentMiddleware,
+)
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
 from modules.agent.utils.workflow_trace_storage import (
+    append_event,
     get_current_run_id,
     get_current_span_id,
     record_tool_call,
-    record_model_call,
     save_image_artifact,
-    start_span,
-    end_span,
-    append_event,
 )
 from modules.monitor.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
+
     from langchain.tools.tool_node import ToolCallRequest
-    from langgraph.runtime import Runtime
 
 logger = get_logger("agent.workflow_trace_middleware")
 
@@ -58,24 +58,24 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
         self.tools = []
         self._current_model_span_id: str | None = None
         self._model_call_seq = 0
-    
+
     def before_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         """模型调用前记录输入状态"""
         run_id = get_current_run_id()
         if not run_id:
             return None
-        
+
         self._model_call_seq += 1
         self._current_model_span_id = f"model_call_{uuid.uuid4().hex[:8]}"
-        
+
         messages = state.get("messages", [])
-        
+
         recent_messages = messages[-10:] if len(messages) > 10 else messages
         serialized_messages = [_serialize_message(m) for m in recent_messages]
-        
+
         last_message = messages[-1] if messages else None
         last_message_type = type(last_message).__name__ if last_message else "None"
-        
+
         pending_tool_results = []
         for msg in reversed(messages):
             if isinstance(msg, ToolMessage):
@@ -85,7 +85,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
                 })
             elif isinstance(msg, AIMessage):
                 break
-        
+
         payload = {
             "phase": "before",
             "model_span_id": self._current_model_span_id,
@@ -96,7 +96,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
             "recent_messages": serialized_messages,
             "pending_tool_results": pending_tool_results[:5],
         }
-        
+
         append_event({
             "type": "model_call",
             "run_id": run_id,
@@ -105,25 +105,25 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
             "node": self.node_name,
             "payload": payload,
         })
-        
+
         return None
-    
+
     async def abefore_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         return self.before_model(state, runtime)
-    
+
     def after_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         """模型调用后记录输出"""
         run_id = get_current_run_id()
         if not run_id:
             return None
-        
+
         messages = state.get("messages", [])
         last_message = messages[-1] if messages else None
-        
+
         ai_content = ""
         tool_calls_info = []
         next_action = "unknown"
-        
+
         if isinstance(last_message, AIMessage):
             ai_content = str(last_message.content)[:2000] if last_message.content else ""
             if hasattr(last_message, "tool_calls") and last_message.tool_calls:
@@ -138,7 +138,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
                 next_action = "tool_calls"
             else:
                 next_action = "end"
-        
+
         payload = {
             "phase": "after",
             "model_span_id": self._current_model_span_id,
@@ -148,7 +148,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
             "tool_calls": tool_calls_info,
             "next_action": next_action,
         }
-        
+
         append_event({
             "type": "model_call",
             "run_id": run_id,
@@ -157,14 +157,16 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
             "node": self.node_name,
             "payload": payload,
         })
-        
-        self._current_model_span_id = None
-        
+
+        # 注意：不在此处重置 _current_model_span_id
+        # 因为 tool_call 会在 after_model 之后执行，需要保留 model_span_id 用于关联
+        # model_span_id 会在下一次 before_model 时自动更新
+
         return None
-    
+
     async def aafter_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         return self.after_model(state, runtime)
-    
+
     def wrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -174,7 +176,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
         tool_input = request.tool_call.get("args", {})
         tool_call_id = request.tool_call.get("id", "")
         call_time = datetime.now(timezone.utc).isoformat()
-        
+
         success = True
         result = None
         try:
@@ -188,7 +190,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
             tool_output = {"error": str(e)}
             logger.error(f"Tool {tool_name} 调用失败: {e}")
             raise
-        
+
         run_id = get_current_run_id()
         if run_id:
             if tool_name == "get_kline_image":
@@ -204,11 +206,12 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
                     "output": sanitized_output,
                     "timestamp": call_time,
                     "success": success,
+                    "model_span_id": self._current_model_span_id,
                 },
             )
-        
+
         return result
-    
+
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -218,7 +221,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
         tool_input = request.tool_call.get("args", {})
         tool_call_id = request.tool_call.get("id", "")
         call_time = datetime.now(timezone.utc).isoformat()
-        
+
         success = True
         result = None
         try:
@@ -232,7 +235,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
             tool_output = {"error": str(e)}
             logger.error(f"Tool {tool_name} 调用失败: {e}")
             raise
-        
+
         run_id = get_current_run_id()
         if run_id:
             if tool_name == "get_kline_image":
@@ -248,9 +251,10 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
                     "output": sanitized_output,
                     "timestamp": call_time,
                     "success": success,
+                    "model_span_id": self._current_model_span_id,
                 },
             )
-        
+
         return result
 
     def _sanitize_tool_output(self, tool_name: str, tool_output: Any) -> Any:

@@ -1,5 +1,5 @@
 """实盘模拟引擎单例入口"""
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine

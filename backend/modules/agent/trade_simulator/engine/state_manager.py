@@ -1,19 +1,14 @@
 """状态持久化管理"""
 from __future__ import annotations
-import os
-import json
-from typing import Dict, List, Any
-from datetime import datetime, timezone
 
-from modules.agent.trade_simulator.models import Position, Account
-from modules.agent.trade_simulator.storage import (
-    load_state as load_trade_state, 
-    save_state as save_trade_state,
-    append_position_history,
-    ConfigFacade
-)
+from datetime import datetime, timezone
+from typing import Any, Dict
+
+from modules.agent.trade_simulator.models import Account, Position
+from modules.agent.trade_simulator.storage import ConfigFacade, append_position_history
+from modules.agent.trade_simulator.storage import load_state as load_trade_state
+from modules.agent.trade_simulator.storage import save_state as save_trade_state
 from modules.agent.trade_simulator.utils.file_utils import locked_write_json
-from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.trade_engine.state_manager')
@@ -27,7 +22,7 @@ class StateManager:
         self.history_path = self.cfg.position_history_path
         self.account = account
         self.positions = positions
-    
+
     def restore(self) -> None:
         """恢复账户与持仓状态"""
         try:
@@ -47,7 +42,7 @@ class StateManager:
             logger.info(f"状态恢复成功: balance={self.account.balance}, positions={len(self.positions)}")
         except Exception as e:
             logger.warning(f"状态恢复失败或不存在: {e}")
-    
+
     def persist(self) -> None:
         """持久化当前状态（异步非阻塞）"""
         st = {
@@ -56,7 +51,7 @@ class StateManager:
             'ts': datetime.now(timezone.utc).isoformat(),
         }
         save_trade_state(self.state_path, st)
-    
+
     def persist_sync(self) -> None:
         """同步持久化当前状态（用于关闭时确保数据写入）
         
@@ -72,16 +67,28 @@ class StateManager:
         # 使用文件锁同步写入
         locked_write_json(self.state_path, st)
         logger.info(f"同步持久化完成: balance={self.account.balance}, positions={len([p for p in self.positions.values() if p.status == 'open'])}")
-    
+
     @staticmethod
     def pos_to_dict(p: Position) -> Dict[str, Any]:
         """Position对象转字典"""
         return p.__dict__.copy()
-    
+
     def log_operation(self, event: str, payload: Dict[str, Any]) -> None:
-        """记录操作事件（仅记录已平仓位到历史）"""
+        """记录操作事件（仅记录已平仓位到历史）
+        
+        Args:
+            event: 事件类型（如 'close_position'）
+            payload: 事件数据，必须包含 status='closed' 才会记录到历史
+        """
+        logger.debug(f"log_operation: event={event}, status={payload.get('status')}, symbol={payload.get('symbol')}")
+
         try:
-            if event == 'close_position' and payload.get('status') == 'closed':
+            if event == 'close_position':
+                status = payload.get('status')
+                if status != 'closed':
+                    logger.warning(f"log_operation: 跳过记录，status={status} (期望 'closed'), symbol={payload.get('symbol')}")
+                    return
+
                 record = {
                     'id': payload.get('id'),
                     'symbol': payload.get('symbol'),
@@ -90,8 +97,8 @@ class StateManager:
                     'close_price': payload.get('close_price'),
                     'tp_price': payload.get('tp_price'),
                     'sl_price': payload.get('sl_price'),
-                    'original_sl_price': payload.get('original_sl_price'),  # 原始止损价
-                    'original_tp_price': payload.get('original_tp_price'),  # 原始止盈价
+                    'original_sl_price': payload.get('original_sl_price'),
+                    'original_tp_price': payload.get('original_tp_price'),
                     'leverage': payload.get('leverage'),
                     'qty': payload.get('qty'),
                     'margin_used': payload.get('margin_used'),
@@ -102,9 +109,14 @@ class StateManager:
                     'open_time': payload.get('open_time'),
                     'close_time': payload.get('close_time'),
                     'close_reason': payload.get('close_reason') or 'agent',
-                    'operation_history': payload.get('operation_history', []),  # 操作历史
+                    'operation_history': payload.get('operation_history', []),
                 }
+
+                logger.info(f"log_operation: 准备写入历史记录, symbol={record['symbol']}, id={record['id']}, pnl={record['realized_pnl']}, path={self.history_path}")
+
                 append_position_history(self.history_path, record)
-                logger.info(f"操作日志记录: {event}, symbol={record.get('symbol')}, pnl={record.get('realized_pnl')}, ops_count={len(record.get('operation_history', []))}")
+
+                logger.info(f"log_operation: 历史记录写入完成, symbol={record['symbol']}, pnl={record['realized_pnl']}, close_reason={record['close_reason']}")
+
         except Exception as e:
-            logger.error(f"写入操作日志失败: {e}")
+            logger.error(f"log_operation: 写入操作日志失败, event={event}, symbol={payload.get('symbol')}, error={e}", exc_info=True)

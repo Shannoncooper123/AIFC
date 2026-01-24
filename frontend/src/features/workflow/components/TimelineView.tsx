@@ -83,14 +83,14 @@ export function TimelineView({ timeline, selectedSymbol, uniqueSymbols, onSymbol
   return (
     <div className="flex h-[calc(100vh-200px)] min-h-[500px] bg-[#141414] rounded-lg overflow-hidden border border-neutral-800">
       <div className="w-[420px] flex-shrink-0 border-r border-neutral-800 flex flex-col">
-        <div className="flex items-center justify-between p-2 border-b border-neutral-800 bg-[#1a1a1a]">
+        <div className="flex items-center gap-2 p-2 border-b border-neutral-800 bg-[#1a1a1a]">
           {uniqueSymbols && uniqueSymbols.length > 0 && onSymbolSelect ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-neutral-500">筛选:</span>
-              <div className="flex gap-1">
+            <div className="flex items-center gap-2 flex-1 min-w-0 overflow-x-auto">
+              <span className="text-xs text-neutral-500 flex-shrink-0">筛选:</span>
+              <div className="flex gap-1 flex-nowrap">
                 <button
                   onClick={() => onSymbolSelect(null)}
-                  className={`px-2 py-1 text-xs rounded border transition-all duration-200 ${
+                  className={`px-2 py-1 text-xs rounded border transition-all duration-200 whitespace-nowrap flex-shrink-0 ${
                     selectedSymbol === null
                       ? 'bg-neutral-700/50 border-neutral-500 text-white'
                       : 'border-neutral-700 text-neutral-400 hover:border-neutral-600'
@@ -102,7 +102,7 @@ export function TimelineView({ timeline, selectedSymbol, uniqueSymbols, onSymbol
                   <button
                     key={symbol}
                     onClick={() => onSymbolSelect(symbol)}
-                    className={`px-2 py-1 text-xs rounded border transition-all duration-200 ${
+                    className={`px-2 py-1 text-xs rounded border transition-all duration-200 whitespace-nowrap flex-shrink-0 ${
                       selectedSymbol === symbol
                         ? 'bg-neutral-700/50 border-neutral-500 text-white'
                         : 'border-neutral-700 text-neutral-400 hover:border-neutral-600'
@@ -113,19 +113,19 @@ export function TimelineView({ timeline, selectedSymbol, uniqueSymbols, onSymbol
                 ))}
               </div>
             </div>
-          ) : <div />}
-          <div className="flex gap-1">
+          ) : <div className="flex-1" />}
+          <div className="flex gap-1 flex-shrink-0">
             <button
               onClick={expandAll}
-              className="px-2 py-1 text-xs bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-all duration-200"
+              className="px-2 py-1 text-xs bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-all duration-200 whitespace-nowrap"
             >
-              Expand All
+              Expand
             </button>
             <button
               onClick={collapseAll}
-              className="px-2 py-1 text-xs bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-all duration-200"
+              className="px-2 py-1 text-xs bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-all duration-200 whitespace-nowrap"
             >
-              Collapse All
+              Collapse
             </button>
           </div>
         </div>

@@ -48,6 +48,7 @@ export function SpanItem({
 
   const mergedChildren = useMemo(() => {
     const children = span.children || [];
+    if (children.length === 0) return [];
     
     const cleanResult: (WorkflowSpanChild | { type: 'model_call_group', before: WorkflowSpanChild, after?: WorkflowSpanChild, children: WorkflowSpanChild[] })[] = [];
     const processedIndices = new Set<number>();
@@ -74,11 +75,52 @@ export function SpanItem({
           modelCallGroups.get(modelSpanId)!.after = child;
           processedIndices.add(idx);
         }
-      } else if (child.type === 'tool_call') {
+      }
+    }
+    
+    for (let idx = 0; idx < children.length; idx++) {
+      const child = children[idx];
+      if (processedIndices.has(idx)) continue;
+      
+      if (child.type === 'tool_call') {
         const modelSpanId = child.model_span_id || (child.payload as Record<string, unknown> | undefined)?.model_span_id as string;
+        
         if (modelSpanId && modelCallGroups.has(modelSpanId)) {
           modelCallGroups.get(modelSpanId)!.children.push(child);
           processedIndices.add(idx);
+        } else {
+          let foundGroup = false;
+          const childTs = child.ts ? new Date(child.ts).getTime() : 0;
+          
+          const sortedGroupEntries = Array.from(modelCallGroups.entries())
+            .sort((a, b) => a[1].beforeIdx - b[1].beforeIdx);
+          
+          for (let i = sortedGroupEntries.length - 1; i >= 0; i--) {
+            const [, group] = sortedGroupEntries[i];
+            const beforeTs = group.before.ts ? new Date(group.before.ts).getTime() : 0;
+            const afterTs = group.after?.ts ? new Date(group.after.ts).getTime() : Infinity;
+            
+            if (childTs >= beforeTs && childTs <= afterTs) {
+              group.children.push(child);
+              processedIndices.add(idx);
+              foundGroup = true;
+              break;
+            }
+          }
+          
+          if (!foundGroup && sortedGroupEntries.length > 0) {
+            for (let i = sortedGroupEntries.length - 1; i >= 0; i--) {
+              const [, group] = sortedGroupEntries[i];
+              const beforeTs = group.before.ts ? new Date(group.before.ts).getTime() : 0;
+              
+              if (childTs >= beforeTs) {
+                group.children.push(child);
+                processedIndices.add(idx);
+                foundGroup = true;
+                break;
+              }
+            }
+          }
         }
       }
     }
