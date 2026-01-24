@@ -43,6 +43,18 @@ log_error() {
 # 停止服务
 # =============================================================================
 
+kill_process_tree() {
+    local pid="$1"
+    local signal="${2:-TERM}"
+    
+    local children=$(pgrep -P "$pid" 2>/dev/null)
+    for child in $children; do
+        kill_process_tree "$child" "$signal"
+    done
+    
+    kill -"$signal" "$pid" 2>/dev/null
+}
+
 stop_service() {
     local name="$1"
     local pid_file="$2"
@@ -61,12 +73,10 @@ stop_service() {
         return 0
     fi
     
-    log_info "正在停止 $name (PID: $pid)..."
+    log_info "正在停止 $name (PID: $pid) 及其子进程..."
     
-    # 发送 SIGTERM 信号，优雅关闭
-    kill -TERM "$pid" 2>/dev/null
+    kill_process_tree "$pid" "TERM"
     
-    # 等待进程退出
     local count=0
     while kill -0 "$pid" 2>/dev/null && [ $count -lt $timeout ]; do
         sleep 1
@@ -75,14 +85,12 @@ stop_service() {
     done
     echo ""
     
-    # 如果进程仍在运行，强制终止
     if kill -0 "$pid" 2>/dev/null; then
         log_warn "$name 未能优雅关闭，强制终止..."
-        kill -9 "$pid" 2>/dev/null
+        kill_process_tree "$pid" "9"
         sleep 1
     fi
     
-    # 清理 PID 文件
     rm -f "$pid_file"
     
     if ! kill -0 "$pid" 2>/dev/null; then
