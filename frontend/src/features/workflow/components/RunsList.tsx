@@ -9,7 +9,7 @@ interface RunsListProps {
 
 export function RunsList({ runs, selectedRunId, onSelectRun }: RunsListProps) {
   return (
-    <div className="space-y-2 max-h-[calc(100vh-200px)] overflow-y-auto">
+    <div className="space-y-2 max-h-96 lg:max-h-[calc(100vh-200px)] overflow-y-auto">
       {runs.map((run) => (
         <button
           key={run.run_id}
