@@ -21,7 +21,7 @@ export function Layout({ children }: LayoutProps) {
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <main className="lg:ml-64 min-h-screen">
-        <div className="p-6 animate-fade-in">{children}</div>
+        <div className="p-4 sm:p-6 animate-fade-in">{children}</div>
       </main>
     </div>
   );

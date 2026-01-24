@@ -29,7 +29,7 @@ export function AlertsPage() {
   const hasFilters = selectedSymbol !== '' || limit !== 50;
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-7xl space-y-6">
         <PageHeader
           title="Alerts"

@@ -81,8 +81,8 @@ export function TimelineView({ timeline, selectedSymbol, uniqueSymbols, onSymbol
   }, [timeline]);
 
   return (
-    <div className="flex h-[calc(100vh-200px)] min-h-[500px] bg-[#141414] rounded-lg overflow-hidden border border-neutral-800">
-      <div className="w-[420px] flex-shrink-0 border-r border-neutral-800 flex flex-col">
+    <div className="flex flex-col lg:flex-row h-[calc(100vh-200px)] min-h-[500px] bg-[#141414] rounded-lg overflow-hidden border border-neutral-800">
+      <div className="w-full lg:w-[420px] h-1/2 lg:h-full flex-shrink-0 border-b lg:border-b-0 lg:border-r border-neutral-800 flex flex-col">
         <div className="flex items-center gap-2 p-2 border-b border-neutral-800 bg-[#1a1a1a]">
           {uniqueSymbols && uniqueSymbols.length > 0 && onSymbolSelect ? (
             <div className="flex items-center gap-2 flex-1 min-w-0 overflow-x-auto">
@@ -130,7 +130,7 @@ export function TimelineView({ timeline, selectedSymbol, uniqueSymbols, onSymbol
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2 bg-[#141414]">
+        <div className="flex-1 overflow-y-auto overflow-x-auto p-2 bg-[#141414]">
           {spansWithOffset.map(({ span, offset }) => (
             <SpanItem
               key={span.span_id}

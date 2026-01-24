@@ -62,7 +62,7 @@ export function PositionsTabs({
       </div>
 
       {activeTab === 'history' && (
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <div
             className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
               pnlIsPositive
