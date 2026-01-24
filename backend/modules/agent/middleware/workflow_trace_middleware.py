@@ -28,10 +28,64 @@ if TYPE_CHECKING:
 logger = get_logger("agent.workflow_trace_middleware")
 
 
+def _count_images_in_content(content: list) -> int:
+    """统计 content 中的 base64 图片数量"""
+    count = 0
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "image_url":
+            image_url = item.get("image_url", {})
+            url = image_url.get("url", "") if isinstance(image_url, dict) else ""
+            if url.startswith("data:image"):
+                count += 1
+    return count
+
+
+def _serialize_multimodal_content(content: list, image_metas: list, start_index: int) -> tuple[list, int]:
+    """序列化多模态内容，将 base64 图片替换为占位符
+    
+    Args:
+        content: HumanMessage 的 content 列表
+        image_metas: 图片元数据列表（全局累积）
+        start_index: 当前 HumanMessage 中图片的起始索引（在全局列表中的位置）
+    
+    Returns:
+        (序列化后的内容, 处理的图片数量)
+    """
+    serialized = []
+    image_count = 0
+    for item in content:
+        if isinstance(item, dict):
+            if item.get("type") == "image_url":
+                image_url = item.get("image_url", {})
+                url = image_url.get("url", "") if isinstance(image_url, dict) else ""
+                if url.startswith("data:image"):
+                    global_index = start_index + image_count
+                    meta = image_metas[global_index] if global_index < len(image_metas) else {}
+                    image_count += 1
+                    serialized.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "[IMAGE_ARTIFACT]",
+                            "detail": image_url.get("detail", "auto") if isinstance(image_url, dict) else "auto"
+                        },
+                        "_artifact_meta": meta
+                    })
+                else:
+                    serialized.append(item)
+            else:
+                serialized.append(item)
+        else:
+            serialized.append(item)
+    return serialized, image_count
+
+
 def _serialize_message(msg: Any) -> dict:
-    """序列化消息为可存储的格式"""
+    """序列化消息为可存储的格式（不处理图片，图片由专门的函数处理）"""
     if isinstance(msg, HumanMessage):
-        return {"role": "human", "content": str(msg.content)}
+        content = msg.content
+        if isinstance(content, list):
+            return {"role": "human", "content": content}
+        return {"role": "human", "content": str(content)}
     elif isinstance(msg, AIMessage):
         result = {"role": "ai", "content": str(msg.content) if msg.content else ""}
         if hasattr(msg, "tool_calls") and msg.tool_calls:
@@ -55,6 +109,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
         self.tools = []
         self._current_model_span_id: str | None = None
         self._model_call_seq = 0
+        self._image_metas: list = []
 
     def before_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         """模型调用前记录输入状态"""
@@ -66,8 +121,21 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
         self._current_model_span_id = f"model_call_{uuid.uuid4().hex[:8]}"
 
         messages = state.get("messages", [])
-
-        serialized_messages = [_serialize_message(m) for m in messages]
+        
+        serialized_messages = []
+        global_image_index = 0
+        
+        for m in messages:
+            if isinstance(m, HumanMessage) and isinstance(m.content, list):
+                serialized_content, image_count = _serialize_multimodal_content(
+                    m.content, 
+                    self._image_metas, 
+                    global_image_index
+                )
+                serialized_messages.append({"role": "human", "content": serialized_content})
+                global_image_index += image_count
+            else:
+                serialized_messages.append(_serialize_message(m))
 
         last_message = messages[-1] if messages else None
         last_message_type = type(last_message).__name__ if last_message else "None"
@@ -153,10 +221,6 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
             "node": self.node_name,
             "payload": payload,
         })
-
-        # 注意：不在此处重置 _current_model_span_id
-        # 因为 tool_call 会在 after_model 之后执行，需要保留 model_span_id 用于关联
-        # model_span_id 会在下一次 before_model 时自动更新
 
         return None
 
@@ -267,6 +331,7 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
         return tool_output
 
     def _save_image_artifact_from_output(self, run_id: str, tool_output: Any) -> None:
+        """保存图片 artifact 并记录元数据"""
         try:
             data = json.loads(tool_output) if isinstance(tool_output, str) else tool_output
             if isinstance(data, dict) and data.get("image_data") and data.get("success"):
@@ -274,5 +339,9 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
                 intervals = data.get("intervals", ["unknown"])
                 interval = intervals[0] if intervals else "unknown"
                 save_image_artifact(run_id, symbol, interval, data["image_data"])
+                self._image_metas.append({
+                    "symbol": symbol,
+                    "interval": interval,
+                })
         except Exception as e:
             logger.debug(f"保存图像 artifact 失败: {e}")

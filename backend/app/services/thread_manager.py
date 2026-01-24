@@ -3,10 +3,7 @@ import logging
 import threading
 import traceback
 from datetime import datetime
-from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
-
-from pydantic import BaseModel
 
 from app.core.events import (
     emit_agent_status,
@@ -14,25 +11,10 @@ from app.core.events import (
     emit_log,
     emit_monitor_status,
 )
+from app.models.schemas import ServiceInfo, ServiceStatus
 
 
 logger = logging.getLogger(__name__)
-
-
-class ServiceStatus(str, Enum):
-    STOPPED = "stopped"
-    STARTING = "starting"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    ERROR = "error"
-
-
-class ServiceInfo(BaseModel):
-    name: str
-    status: ServiceStatus = ServiceStatus.STOPPED
-    thread_id: Optional[int] = None
-    started_at: Optional[str] = None
-    error: Optional[str] = None
 
 
 class ManagedService:

@@ -11,10 +11,11 @@ import matplotlib.patches as patches
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import MaxNLocator
 
+from modules.agent.tools.tool_utils import validate_symbol, validate_interval
 from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.data.models import Kline
 from modules.config.settings import get_config
-from modules.monitor.utils.logger import setup_logger
+from modules.monitor.utils.logger import get_logger
 
 from modules.monitor.indicators.volatility import (
     calculate_ema_list,
@@ -23,7 +24,7 @@ from modules.monitor.indicators.volatility import (
     calculate_macd_list,
 )
 
-logger = setup_logger()
+logger = get_logger('agent.tool.get_kline_image')
 
 
 def _plot_candlestick_chart(klines: List[Kline], symbol: str, interval: str, visible_count: int) -> str:
@@ -113,8 +114,8 @@ def _plot_candlestick_chart(klines: List[Kline], symbol: str, interval: str, vis
     
     # X轴索引（0 到 visible_count-1）
     indices = list(range(len(plot_klines)))
-    intraday_intervals = {'1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h'}
-    fmt = '%m-%d %H:%M' if interval in intraday_intervals else '%Y-%m-%d'
+    from modules.constants import INTRADAY_INTERVALS
+    fmt = '%m-%d %H:%M' if interval in INTRADAY_INTERVALS else '%Y-%m-%d'
     date_labels = [datetime.utcfromtimestamp(k.timestamp / 1000.0).strftime(fmt) for k in plot_klines]
     step = max(1, len(indices) // 7)
     xticks = list(range(0, len(indices), step))
@@ -303,38 +304,41 @@ def get_kline_image_tool(
     Returns:
         包含图像数据和元数据的JSON字符串
     """
-    def _error(msg: str) -> str:
-        return f"❌ 错误：{msg}"
+    def _make_error(msg: str) -> str:
+        import json
+        return json.dumps({"error": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。", "success": False}, ensure_ascii=False)
+    
+    def _make_runtime_error(msg: str) -> str:
+        import json
+        return json.dumps({"error": f"TOOL_RUNTIME_ERROR: {msg}", "success": False}, ensure_ascii=False)
     
     try:
         limit = 200
         
         logger.info(f"get_kline_image_tool 被调用 - symbol={symbol}, interval={interval}, limit={limit}")
         
-        if not isinstance(symbol, str) or not symbol:
-            return _error("参数 symbol 必须为非空字符串，如 'BTCUSDT'")
+        error = validate_symbol(symbol)
+        if error:
+            return _make_error(error)
         
-        if not isinstance(interval, str) or not interval:
-            return _error("参数 interval 必须为非空字符串，如 '1h'")
+        error = validate_interval(interval)
+        if error:
+            return _make_error(error)
         
         if ',' in interval:
-             return _error("参数 interval 仅支持单个周期，请不要使用逗号分隔。如需多个周期请多次调用。")
+             return _make_error("参数 interval 仅支持单个周期，请不要使用逗号分隔。如需多个周期请多次调用。")
         
         interval = interval.strip()
-        valid_intervals = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
         
-        if interval not in valid_intervals:
-            return _error(f"无效的 interval: {interval}，支持: {', '.join(valid_intervals)}")
-        
+        from modules.agent.tools.tool_utils import get_binance_client
         fetch_limit = limit + 100
-        cfg = get_config()
-        client = BinanceRestClient(cfg)
+        client = get_binance_client()
         
         logger.info(f"获取 {symbol} {interval} K线数据，数量={fetch_limit} (显示{limit})")
         raw = client.get_klines(symbol, interval, fetch_limit)
         
         if not raw:
-            return _error(f"未获取到 {symbol} {interval} 的K线数据")
+            return _make_runtime_error(f"未获取到 {symbol} {interval} 的K线数据")
             
         klines = [Kline.from_rest_api(item) for item in raw]
         
@@ -352,4 +356,4 @@ def get_kline_image_tool(
         
     except Exception as e:
         logger.error(f"K线图分析失败: {e}", exc_info=True)
-        return _error(f"生成K线图失败 - {str(e)}")
+        return _make_runtime_error(f"生成K线图失败 - {str(e)}")

@@ -11,6 +11,7 @@ export const REFRESH_INTERVALS = {
   POSITIONS: 10000,
   ALERTS: 30000,
   HISTORY: 30000,
+  WORKFLOW: 10000,
 } as const;
 
 /**

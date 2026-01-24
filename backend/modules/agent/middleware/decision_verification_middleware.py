@@ -222,58 +222,10 @@ class DecisionVerificationMiddleware(AgentMiddleware[dict, Any]):
                 else:  # token == 'false'
                     return (1.0 - prob, prob)
         
-        # 如果没有找到 true/false token，说明模型输出格式异常
         raise RuntimeError(
             f"无法在 logprobs 中找到 'true' 或 'false' token 用于参数 {param_name}。"
             f"检查到的 token: {[t.get('token') for t in content_logprobs[:10]]}"
         )
-    
-    def _extract_numeric_confidence(
-        self,
-        logprobs_data: Dict[str, Any],
-        numeric_value: int
-    ) -> float:
-        """从 logprobs 数据中提取数值的置信度
-        
-        对于数值参数（如 profitability_confidence_score），计算模型输出该数值的置信度。
-        策略：找到数值对应的 token 序列，取其 logprobs 的平均 exp 值。
-        
-        Args:
-            logprobs_data: logprobs 原始数据
-            numeric_value: 参数的实际数值
-            
-        Returns:
-            数值的置信度 (0-1)，无法提取时返回 0.5（中性）
-        """
-        import math
-        
-        content_logprobs = logprobs_data.get('content', [])
-        if not content_logprobs:
-            logger.warning("logprobs 数据为空，数值置信度返回中性值 0.5")
-            return 0.5
-        
-        # 将数值转为字符串，可能是单个 token 或多个 token（如 "85" 可能是 "8"+"5" 或单个 "85"）
-        target_str = str(numeric_value)
-        
-        # 查找包含目标数值的 token（可能完全匹配或部分匹配）
-        matched_probs = []
-        for i, token_info in enumerate(content_logprobs):
-            token = str(token_info.get('token', '')).strip()
-            
-            # 如果 token 是数字且与目标匹配（完全匹配或为目标的一部分）
-            if token.isdigit() and (token == target_str or token in target_str or target_str.startswith(token)):
-                logprob = token_info.get('logprob')
-                if logprob is not None:
-                    prob = math.exp(logprob)
-                    matched_probs.append(prob)
-        
-        if not matched_probs:
-            logger.warning(f"未找到数值 {numeric_value} 对应的 token，置信度返回中性值 0.5")
-            return 0.5
-        
-        # 取平均概率作为置信度
-        confidence = sum(matched_probs) / len(matched_probs)
-        return confidence
     
     def _calculate_weighted_score(
         self,

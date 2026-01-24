@@ -1,7 +1,9 @@
 """持仓 API 路由"""
+import asyncio
 import json
+import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from fastapi import APIRouter, Query
 
@@ -13,41 +15,47 @@ from app.models.schemas import (
     PositionHistoryEntry,
     PositionHistoryResponse,
     PositionsResponse,
-    PositionSide,
     TradeStateResponse,
 )
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/positions", tags=["positions"])
 
 
-def load_json_file(file_path: Path) -> Dict[str, Any]:
-    """加载 JSON 文件"""
+def _load_json_file_sync(file_path: Path) -> Dict[str, Any]:
+    """同步加载 JSON 文件"""
     if not file_path.exists():
         return {}
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, IOError) as e:
+        logger.warning(f"加载JSON文件失败 {file_path}: {e}")
         return {}
 
 
+async def load_json_file(file_path: Path) -> Dict[str, Any]:
+    """异步加载 JSON 文件（在线程池中执行）"""
+    return await asyncio.to_thread(_load_json_file_sync, file_path)
+
+
 def parse_position(data: Dict[str, Any]) -> Position:
-    """解析持仓数据，兼容多种字段命名格式"""
-    side_str = data.get("side", "LONG").upper()
-    side = PositionSide.LONG if side_str == "LONG" else PositionSide.SHORT
+    """解析持仓数据 - 字段名与前端 types/positions.ts 对齐"""
+    side_raw = data.get("side", "long").lower()
+    side = side_raw.upper()
     
-    size = float(data.get("size", 0) or data.get("qty", 0) or 0)
+    size = float(data.get("qty", 0) or data.get("size", 0) or 0)
     mark_price = data.get("mark_price") or data.get("latest_mark_price")
-    take_profit = data.get("take_profit") or data.get("tp_price")
-    stop_loss = data.get("stop_loss") or data.get("sl_price")
-    opened_at = data.get("opened_at") or data.get("open_time")
-    margin = data.get("margin") or data.get("margin_used")
+    take_profit = data.get("tp_price") or data.get("take_profit")
+    stop_loss = data.get("sl_price") or data.get("stop_loss")
+    opened_at = data.get("open_time") or data.get("opened_at")
+    margin = data.get("margin_used") or data.get("margin")
     
     entry_price = float(data.get("entry_price", 0))
     if mark_price is not None:
         mark_price = float(mark_price)
-        if side == PositionSide.LONG:
+        if side_raw == "long":
             unrealized_pnl = (mark_price - entry_price) * size
         else:
             unrealized_pnl = (entry_price - mark_price) * size
@@ -111,7 +119,7 @@ async def get_positions():
     agent_config = get_config("agent")
     trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/data/trade_state.json")
     
-    data = load_json_file(trade_state_path)
+    data = await load_json_file(trade_state_path)
     positions_data = data.get("positions", [])
     
     open_positions = [p for p in positions_data if p.get("status") == "open"]
@@ -141,8 +149,7 @@ async def get_position_history(
     total_pnl = 0.0
     
     for p in sorted_positions:
-        side_str = p.get("side", "LONG").upper()
-        side = PositionSide.LONG if side_str == "LONG" else PositionSide.SHORT
+        side = p.get("side", "long").upper()
         realized_pnl = float(p.get("realized_pnl", 0))
         total_pnl += realized_pnl
         
@@ -151,11 +158,11 @@ async def get_position_history(
             side=side,
             size=float(p.get("qty", p.get("size", 0))),
             entry_price=float(p.get("entry_price", 0)),
-            exit_price=float(p.get("exit_price", p.get("close_price", 0))),
+            exit_price=float(p.get("close_price", p.get("exit_price", 0))),
             realized_pnl=realized_pnl,
             pnl_percent=float(p.get("pnl_percent", 0)),
-            opened_at=p.get("open_time", ""),
-            closed_at=p.get("close_time", ""),
+            opened_at=p.get("open_time", p.get("opened_at", "")),
+            closed_at=p.get("close_time", p.get("closed_at", "")),
             close_reason=p.get("close_reason"),
             open_run_id=p.get("open_run_id"),
             close_run_id=p.get("close_run_id"),
@@ -174,7 +181,7 @@ async def get_trade_state():
     agent_config = get_config("agent")
     trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/data/trade_state.json")
     
-    data = load_json_file(trade_state_path)
+    data = await load_json_file(trade_state_path)
     
     account_data = data.get("account", {})
     account = parse_account(account_data)
@@ -199,8 +206,10 @@ async def get_positions_summary():
     trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/data/trade_state.json")
     history_path = BASE_DIR / agent_config.get("position_history_path", "modules/data/position_history.json")
     
-    trade_data = load_json_file(trade_state_path)
-    history_data = load_json_file(history_path)
+    trade_data, history_data = await asyncio.gather(
+        load_json_file(trade_state_path),
+        load_json_file(history_path),
+    )
     
     positions_data = trade_data.get("positions", [])
     open_positions = [p for p in positions_data if p.get("status") == "open"]
@@ -224,14 +233,14 @@ async def get_positions_summary():
     win_count = sum(1 for p in history if float(p.get("realized_pnl", 0)) > 0)
     loss_count = sum(1 for p in history if float(p.get("realized_pnl", 0)) < 0)
     total_trades = len(history)
-    win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
+    win_rate = (win_count / total_trades) if total_trades > 0 else 0
     
     return {
         "open_positions": len(open_positions),
         "total_trades": total_trades,
         "win_count": win_count,
         "loss_count": loss_count,
-        "win_rate": round(win_rate, 2),
+        "win_rate": round(win_rate, 4),
         "total_unrealized_pnl": round(total_unrealized_pnl, 4),
         "total_realized_pnl": round(total_realized_pnl, 4),
     }

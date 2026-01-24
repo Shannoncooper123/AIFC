@@ -6,11 +6,11 @@ from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from modules.agent.state import AgentState
 from modules.agent.tools.write_report_tool import write_report_tool
-from modules.monitor.utils.logger import setup_logger
+from modules.monitor.utils.logger import get_logger
 from modules.agent.middleware.workflow_trace_middleware import WorkflowTraceMiddleware
 from modules.agent.utils.trace_decorators import traced_node
 
-logger = setup_logger()
+logger = get_logger('agent.nodes.reporting')
 
 
 @traced_node("reporting")

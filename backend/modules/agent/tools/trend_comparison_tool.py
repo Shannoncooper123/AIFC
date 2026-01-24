@@ -5,9 +5,9 @@ from langchain.tools import tool
 from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.data.models import Kline
 from modules.config.settings import get_config
-from modules.monitor.utils.logger import setup_logger
+from modules.monitor.utils.logger import get_logger
 
-logger = setup_logger()
+logger = get_logger('agent.tool.trend_comparison')
 
 
 def _calculate_zscore_trend(klines_data: List[Kline], window: int = 20) -> List[float]:
@@ -103,15 +103,14 @@ def trend_comparison_tool(symbol: str, interval: str, feedback: str) -> List[Dic
             return _error("参数 symbol 必须为非空字符串，如 'ETHUSDT'")
         if not isinstance(interval, str) or not interval:
             return _error("参数 interval 必须为非空字符串，如 '15m' 或 '1h'")
-        valid_intervals = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
-        if interval not in valid_intervals:
-            return _error(f"无效的 interval: {interval}，支持: {', '.join(valid_intervals)}")
+        from modules.constants import VALID_INTERVALS
+        if interval not in VALID_INTERVALS:
+            return _error(f"无效的 interval: {interval}，支持: {', '.join(VALID_INTERVALS)}")
         if not isinstance(feedback, str) or not feedback:
             return _error("参数 feedback 必须为非空字符串，详细分析当前的阶段，并且给出下一步的计划")
         
-        # 获取配置和客户端
-        cfg = get_config()
-        client = BinanceRestClient(cfg)
+        from modules.agent.tools.tool_utils import get_binance_client
+        client = get_binance_client()
         
         # 获取目标币种K线数据
         raw = client.get_klines(symbol, interval, fetch_limit)

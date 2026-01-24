@@ -1,6 +1,10 @@
+import asyncio
 import json
+import logging
 import os
-from typing import Any, Dict, List, Optional
+import threading
+import time
+from typing import Any, Dict, List
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -17,28 +21,115 @@ from app.models.schemas import (
     WorkflowSpan,
     WorkflowSpanChild,
 )
-from modules.agent.utils.workflow_trace_storage import get_trace_path, get_artifacts_dir
+from modules.agent.utils.workflow_trace_storage import get_trace_path
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/workflow", tags=["workflow"])
 
 
-def _read_events() -> List[Dict[str, Any]]:
-    """读取所有 trace 事件"""
-    trace_path = get_trace_path()
-    if not os.path.exists(trace_path):
-        return []
-    events: List[Dict[str, Any]] = []
-    with open(trace_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return events
+class TraceEventCache:
+    """Trace 事件缓存 - 避免重复读取文件"""
+    
+    def __init__(self, ttl_seconds: float = 2.0):
+        self._events: List[Dict[str, Any]] = []
+        self._events_by_run_id: Dict[str, List[Dict[str, Any]]] = {}
+        self._last_load_time: float = 0
+        self._last_file_mtime: float = 0
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+    
+    def _should_reload(self, trace_path: str) -> bool:
+        """检查是否需要重新加载"""
+        if not os.path.exists(trace_path):
+            return False
+        
+        current_time = time.time()
+        if current_time - self._last_load_time < self._ttl:
+            return False
+        
+        try:
+            file_mtime = os.path.getmtime(trace_path)
+            if file_mtime > self._last_file_mtime:
+                return True
+        except OSError:
+            pass
+        
+        return False
+    
+    def _load_events(self, trace_path: str) -> None:
+        """加载事件并建立索引"""
+        events: List[Dict[str, Any]] = []
+        events_by_run_id: Dict[str, List[Dict[str, Any]]] = {}
+        
+        if not os.path.exists(trace_path):
+            self._events = events
+            self._events_by_run_id = events_by_run_id
+            return
+        
+        with open(trace_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    events.append(event)
+                    run_id = event.get("run_id")
+                    if run_id:
+                        if run_id not in events_by_run_id:
+                            events_by_run_id[run_id] = []
+                        events_by_run_id[run_id].append(event)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"解析工作流事件JSON行失败: {e}")
+                    continue
+        
+        self._events = events
+        self._events_by_run_id = events_by_run_id
+        self._last_load_time = time.time()
+        try:
+            self._last_file_mtime = os.path.getmtime(trace_path)
+        except OSError:
+            pass
+    
+    def get_all_events(self) -> List[Dict[str, Any]]:
+        """获取所有事件（带缓存）"""
+        trace_path = get_trace_path()
+        with self._lock:
+            if self._should_reload(trace_path):
+                self._load_events(trace_path)
+            return self._events
+    
+    def get_events_by_run_id(self, run_id: str) -> List[Dict[str, Any]]:
+        """按 run_id 获取事件（O(1) 查找）"""
+        trace_path = get_trace_path()
+        with self._lock:
+            if self._should_reload(trace_path):
+                self._load_events(trace_path)
+            return self._events_by_run_id.get(run_id, [])
+
+
+_trace_cache = TraceEventCache(ttl_seconds=2.0)
+
+
+def _read_events_sync() -> List[Dict[str, Any]]:
+    """同步读取所有 trace 事件（带缓存）"""
+    return _trace_cache.get_all_events()
+
+
+def _read_events_for_run_sync(run_id: str) -> List[Dict[str, Any]]:
+    """同步读取指定 run_id 的事件（O(1) 查找）"""
+    return _trace_cache.get_events_by_run_id(run_id)
+
+
+async def _read_events() -> List[Dict[str, Any]]:
+    """异步读取所有 trace 事件（在线程池中执行）"""
+    return await asyncio.to_thread(_read_events_sync)
+
+
+async def _read_events_for_run(run_id: str) -> List[Dict[str, Any]]:
+    """异步读取指定 run_id 的事件（在线程池中执行）"""
+    return await asyncio.to_thread(_read_events_for_run_sync, run_id)
 
 
 def _summarize_runs(events: List[Dict[str, Any]]) -> List[WorkflowRunSummary]:
@@ -71,9 +162,9 @@ def _summarize_runs(events: List[Dict[str, Any]]) -> List[WorkflowRunSummary]:
         if event_type == "run_start":
             run.start_time = event.get("ts")
             run_start_times[run_id] = event.get("timestamp_ms", 0)
-            alert = event.get("alert", {}) or {}
-            run.symbols = alert.get("symbols", []) or []
-            run.pending_count = int(alert.get("pending_count", 0) or 0)
+            alert = event.get("alert", {})
+            run.symbols = alert.get("symbols", [])
+            run.pending_count = int(alert.get("pending_count", 0))
         elif event_type == "run_end":
             run.end_time = event.get("ts")
             run_end_times[run_id] = event.get("timestamp_ms", 0)
@@ -100,10 +191,9 @@ def _summarize_runs(events: List[Dict[str, Any]]) -> List[WorkflowRunSummary]:
     return list(runs.values())
 
 
-def _build_timeline(run_id: str, events: List[Dict[str, Any]]) -> WorkflowTimeline:
-    """构建时间线树形结构"""
-    run_events = [e for e in events if e.get("run_id") == run_id]
-    run_events.sort(key=lambda e: (e.get("seq", 0), e.get("timestamp_ms", 0)))
+def _build_timeline(run_id: str, run_events: List[Dict[str, Any]]) -> WorkflowTimeline:
+    """构建时间线树形结构（接收已过滤的事件列表）"""
+    run_events = sorted(run_events, key=lambda e: (e.get("seq", 0), e.get("timestamp_ms", 0)))
     
     timeline = WorkflowTimeline(
         run_id=run_id,
@@ -124,8 +214,8 @@ def _build_timeline(run_id: str, events: List[Dict[str, Any]]) -> WorkflowTimeli
         
         if event_type == "run_start":
             timeline.start_time = event.get("ts")
-            alert = event.get("alert", {}) or {}
-            timeline.symbols = alert.get("symbols", []) or []
+            alert = event.get("alert", {})
+            timeline.symbols = alert.get("symbols", [])
             
         elif event_type == "run_end":
             timeline.end_time = event.get("ts")
@@ -254,8 +344,8 @@ def _build_timeline(run_id: str, events: List[Dict[str, Any]]) -> WorkflowTimeli
             start_dt = datetime.fromisoformat(timeline.start_time.replace("Z", "+00:00"))
             end_dt = datetime.fromisoformat(timeline.end_time.replace("Z", "+00:00"))
             timeline.duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
-        except Exception:
-            pass
+        except (ValueError, TypeError) as e:
+            logger.warning(f"解析时间线时间戳失败: {e}")
     
     timeline.spans = root_spans
     
@@ -265,7 +355,7 @@ def _build_timeline(run_id: str, events: List[Dict[str, Any]]) -> WorkflowTimeli
 @router.get("/runs", response_model=WorkflowRunsResponse)
 async def list_runs(limit: int = Query(default=50, ge=1, le=500)):
     """获取 workflow 运行列表"""
-    events = _read_events()
+    events = await _read_events()
     runs = _summarize_runs(events)
     runs_sorted = sorted(runs, key=lambda r: r.start_time or "", reverse=True)[:limit]
     return WorkflowRunsResponse(runs=runs_sorted, total=len(runs_sorted))
@@ -274,35 +364,33 @@ async def list_runs(limit: int = Query(default=50, ge=1, le=500)):
 @router.get("/runs/{run_id}", response_model=WorkflowRunDetailResponse)
 async def get_run(run_id: str):
     """获取 workflow 运行详情（原始事件列表）"""
-    events = _read_events()
-    run_events = [e for e in events if e.get("run_id") == run_id]
+    run_events = await _read_events_for_run(run_id)
     if not run_events:
         raise HTTPException(status_code=404, detail=f"运行记录不存在: {run_id}")
-    run_events.sort(key=lambda e: (e.get("seq", 0), e.get("timestamp_ms", 0)))
+    run_events_sorted = sorted(run_events, key=lambda e: (e.get("seq", 0), e.get("timestamp_ms", 0)))
     return WorkflowRunDetailResponse(
         run_id=run_id,
-        events=[WorkflowRunEvent(**e) for e in run_events],
+        events=[WorkflowRunEvent(**e) for e in run_events_sorted],
     )
 
 
 @router.get("/runs/{run_id}/timeline", response_model=WorkflowTimelineResponse)
 async def get_run_timeline(run_id: str):
     """获取 workflow 运行时间线（树形结构）"""
-    events = _read_events()
-    run_events = [e for e in events if e.get("run_id") == run_id]
+    run_events = await _read_events_for_run(run_id)
     if not run_events:
         raise HTTPException(status_code=404, detail=f"运行记录不存在: {run_id}")
-    timeline = _build_timeline(run_id, events)
+    timeline = _build_timeline(run_id, run_events)
     return WorkflowTimelineResponse(timeline=timeline)
 
 
 @router.get("/runs/{run_id}/artifacts", response_model=List[WorkflowArtifact])
 async def list_run_artifacts(run_id: str):
     """获取 workflow 运行的 artifacts"""
-    events = _read_events()
+    run_events = await _read_events_for_run(run_id)
     artifacts = []
-    for e in events:
-        if e.get("type") == "artifact" and e.get("run_id") == run_id:
+    for e in run_events:
+        if e.get("type") == "artifact":
             payload = e.get("payload") or {}
             artifacts.append(WorkflowArtifact(**payload))
     return artifacts
@@ -311,7 +399,7 @@ async def list_run_artifacts(run_id: str):
 @router.get("/artifacts/{artifact_id}")
 async def get_artifact(artifact_id: str):
     """获取 artifact 文件"""
-    events = _read_events()
+    events = await _read_events()
     for e in events:
         if e.get("type") == "artifact":
             payload = e.get("payload") or {}

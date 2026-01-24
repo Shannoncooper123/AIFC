@@ -25,8 +25,8 @@ class ServiceStatus(str, Enum):
 class ServiceInfo(BaseModel):
     """服务信息"""
     name: str
-    status: ServiceStatus
-    pid: Optional[int] = None
+    status: ServiceStatus = ServiceStatus.STOPPED
+    thread_id: Optional[int] = None
     started_at: Optional[str] = None
     error: Optional[str] = None
 
@@ -82,24 +82,24 @@ class AlertsResponse(BaseModel):
 
 class PositionSide(str, Enum):
     """持仓方向"""
-    LONG = "LONG"
-    SHORT = "SHORT"
+    LONG = "long"
+    SHORT = "short"
 
 
 class Position(BaseModel):
-    """持仓信息"""
+    """持仓信息 - 字段名与前端 types/positions.ts 对齐"""
     symbol: str
-    side: PositionSide
-    size: float
+    side: str
+    size: float = Field(description="持仓数量")
     entry_price: float
     mark_price: Optional[float] = None
     unrealized_pnl: Optional[float] = None
     leverage: int = 1
-    margin: Optional[float] = None
+    margin: Optional[float] = Field(default=None, description="已用保证金")
     liquidation_price: Optional[float] = None
-    take_profit: Optional[float] = None
-    stop_loss: Optional[float] = None
-    opened_at: Optional[str] = None
+    take_profit: Optional[float] = Field(default=None, description="止盈价格")
+    stop_loss: Optional[float] = Field(default=None, description="止损价格")
+    opened_at: Optional[str] = Field(default=None, description="开仓时间")
     open_run_id: Optional[str] = None
 
 
@@ -110,16 +110,16 @@ class PositionsResponse(BaseModel):
 
 
 class PositionHistoryEntry(BaseModel):
-    """历史持仓条目"""
+    """历史持仓条目 - 字段名与前端 types/positions.ts 对齐"""
     symbol: str
-    side: PositionSide
-    size: float
+    side: str
+    size: float = Field(description="持仓数量")
     entry_price: float
-    exit_price: float
+    exit_price: float = Field(description="平仓价格")
     realized_pnl: float
     pnl_percent: float
-    opened_at: str
-    closed_at: str
+    opened_at: str = Field(description="开仓时间")
+    closed_at: str = Field(description="平仓时间")
     close_reason: Optional[str] = None
     open_run_id: Optional[str] = None
     close_run_id: Optional[str] = None

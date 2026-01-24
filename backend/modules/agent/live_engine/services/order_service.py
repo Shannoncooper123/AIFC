@@ -310,9 +310,8 @@ class OrderService:
                 local_tp_id = local_record.get('tp_order_id')
                 local_sl_id = local_record.get('sl_order_id')
                 
-                # 处理止盈订单
                 tp_order_id = None
-                if len(tp_orders) > 0:
+                if tp_orders:
                     # 优先：如果本地有记录，且该订单在API返回的列表中，保留它
                     if local_tp_id:
                         tp_ids = [o['order_id'] for o in tp_orders]
@@ -340,9 +339,8 @@ class OrderService:
                             except Exception as e:
                                 logger.error(f"✗ 撤销止盈订单失败 {symbol} orderId={old_id}: {e}")
                 
-                # 处理止损订单
                 sl_order_id = None
-                if len(sl_orders) > 0:
+                if sl_orders:
                     # 优先：如果本地有记录，且该订单在API返回的列表中，保留它
                     if local_sl_id:
                         sl_ids = [o['order_id'] for o in sl_orders]

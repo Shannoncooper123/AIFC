@@ -4,6 +4,8 @@ import yaml
 from typing import Dict, Any
 from dotenv import load_dotenv
 
+from modules.constants import VALID_INTERVALS, DEFAULT_LEVERAGE
+
 
 class ConfigLoader:
     """配置加载器（单例模式）"""
@@ -141,8 +143,7 @@ class ConfigLoader:
             raise ValueError("邮箱格式不正确")
         
         # 验证K线间隔
-        valid_intervals = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
-        if config['kline']['interval'] not in valid_intervals:
+        if config['kline']['interval'] not in VALID_INTERVALS:
             raise ValueError(f"无效的K线间隔: {config['kline']['interval']}")
         
         # 验证持仓量配置
@@ -174,7 +175,7 @@ class ConfigLoader:
                     )
             
             # 验证杠杆
-            max_leverage = trading_config.get('max_leverage', 10)
+            max_leverage = trading_config.get('max_leverage', DEFAULT_LEVERAGE)
             if max_leverage < 1 or max_leverage > 125:
                 raise ValueError("max_leverage 必须在 1-125 之间")
         
@@ -218,7 +219,7 @@ class ConfigLoader:
             raise ValueError("手续费率必须在 0-1 之间")
         if sim['max_leverage'] < 1 or sim['max_leverage'] > 125:
             raise ValueError("最大杠杆必须在 1-125 之间")
-        if sim['ws_interval'] not in valid_intervals:
+        if sim['ws_interval'] not in VALID_INTERVALS:
             raise ValueError(f"无效的 WebSocket 间隔: {sim['ws_interval']}")
         if agent['default_interval_min'] < 1:
             raise ValueError("默认唤醒间隔必须 >= 1 分钟")

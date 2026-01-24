@@ -228,8 +228,10 @@ class BinanceLiveEngine:
                 if self.user_data_ws:
                     self.user_data_ws.stop()
                 
-                # 同步持久化状态
                 self.state_writer.persist_sync()
+                
+                if self.rest_client:
+                    self.rest_client.close()
                 
                 logger.info("实盘交易引擎已停止")
             

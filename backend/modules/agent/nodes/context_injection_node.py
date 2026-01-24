@@ -1,6 +1,6 @@
 """工作流节点：市场上下文注入"""
 import os
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
 from langchain_core.runnables import RunnableConfig
 
@@ -9,12 +9,13 @@ from modules.agent.state import AgentState
 from modules.agent.utils.state import load_state
 from modules.agent.trade_simulator.storage import load_position_history
 from modules.config.settings import get_config
+from modules.constants import INDICATOR_NAMES
 from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.data.models import Kline
-from modules.monitor.utils.logger import setup_logger
+from modules.monitor.utils.logger import get_logger
 from modules.agent.utils.trace_decorators import traced_node
 
-logger = setup_logger()
+logger = get_logger('agent.nodes.context_injection')
 
 
 def _load_position_history(limit: int = 10) -> List[Dict[str, Any]]:
@@ -39,13 +40,10 @@ def _build_symbol_block(entry: Dict[str, Any]) -> str:
     price_change_rate = entry.get('price_change_rate', 0.0) * 100
     triggered = entry.get('triggered_indicators', [])
     engulfing = entry.get('engulfing_type', '非外包')
-    indicator_names = {
-        'ATR': 'ATR波动异常','PRICE':'价格变化异常','VOLUME':'成交量异常','ENGULFING':'外包线','RSI_OVERBOUGHT':'RSI超买','RSI_OVERSOLD':'RSI超卖','RSI_ZSCORE':'RSI异常','BB_BREAKOUT_UPPER':'布林带上轨突破','BB_BREAKOUT_LOWER':'布林带下轨突破','BB_SQUEEZE_EXPAND':'布林带挤压后扩张','BB_WIDTH_ZSCORE':'布林带宽度异常','MA_BULLISH_CROSS':'均线金叉','MA_BEARISH_CROSS':'均线死叉','MA_DEVIATION_ZSCORE':'均线乖离异常','LONG_UPPER_WICK':'长上影线','LONG_LOWER_WICK':'长下影线','OI_SURGE':'持仓量激增','OI_ZSCORE':'持仓量异常','OI_BULLISH_DIVERGENCE':'持仓量看涨背离','OI_BEARISH_DIVERGENCE':'持仓量看跌背离','OI_MOMENTUM':'持仓量动量异常',
-    }
     if 'ENGULFING' in triggered and engulfing != '非外包':
-        triggered_display = [indicator_names.get(t, t) if t != 'ENGULFING' else engulfing for t in triggered[:6]]
+        triggered_display = [INDICATOR_NAMES.get(t, t) if t != 'ENGULFING' else engulfing for t in triggered[:6]]
     else:
-        triggered_display = [indicator_names.get(t, t) for t in triggered[:6]]
+        triggered_display = [INDICATOR_NAMES.get(t, t) for t in triggered[:6]]
     indicators_desc = ', '.join(triggered_display)
     if len(triggered) > 6:
         indicators_desc += f' 等{len(triggered)}个'
@@ -73,9 +71,10 @@ def context_injection_node(state: AgentState, *, config: RunnableConfig) -> Dict
 
     run_id = configurable.get("run_id")
 
-    account_summary = get_engine().get_account_summary() if get_engine() else {}
-    positions_summary = get_engine().get_positions_summary() if get_engine() else []
-    pending_orders = get_engine().get_pending_orders_summary() if get_engine() else []
+    eng = get_engine()
+    account_summary = eng.get_account_summary() if eng else {}
+    positions_summary = eng.get_positions_summary() if eng else []
+    pending_orders = eng.get_pending_orders_summary() if eng else []
 
     ts = latest_alert.get('ts', 'UNKNOWN')
     interval = latest_alert.get('interval', '15m')

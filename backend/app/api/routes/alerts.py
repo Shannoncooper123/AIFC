@@ -1,5 +1,7 @@
 """告警 API 路由"""
+import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import List, Optional
 
@@ -9,10 +11,11 @@ from app.core.config import BASE_DIR, get_config
 from app.models.schemas import AlertEntry, AlertRecord, AlertsResponse
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 
-def load_alerts_from_jsonl(file_path: Path, limit: int = 100) -> List[AlertRecord]:
+def _load_alerts_from_jsonl_sync(file_path: Path, limit: int = 100) -> List[AlertRecord]:
     """从 JSONL 文件加载告警记录"""
     alerts = []
     if not file_path.exists():
@@ -44,12 +47,18 @@ def load_alerts_from_jsonl(file_path: Path, limit: int = 100) -> List[AlertRecor
                     interval=data.get("interval", ""),
                     entries=entries,
                 ))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.warning(f"解析告警JSON行失败: {e}")
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"加载告警文件失败: {e}")
     
     return alerts
+
+
+async def load_alerts_from_jsonl(file_path: Path, limit: int = 100) -> List[AlertRecord]:
+    """异步加载告警记录（在线程池中执行同步 I/O）"""
+    return await asyncio.to_thread(_load_alerts_from_jsonl_sync, file_path, limit)
 
 
 @router.get("", response_model=AlertsResponse)
@@ -61,7 +70,7 @@ async def get_alerts(
     agent_config = get_config("agent")
     alerts_path = BASE_DIR / agent_config.get("alerts_jsonl_path", "modules/data/alerts.jsonl")
     
-    alerts = load_alerts_from_jsonl(alerts_path, limit=limit * 2)
+    alerts = await load_alerts_from_jsonl(alerts_path, limit=limit * 2)
     
     if symbol:
         symbol = symbol.upper()
@@ -87,7 +96,7 @@ async def get_latest_alert():
     agent_config = get_config("agent")
     alerts_path = BASE_DIR / agent_config.get("alerts_jsonl_path", "modules/data/alerts.jsonl")
     
-    alerts = load_alerts_from_jsonl(alerts_path, limit=1)
+    alerts = await load_alerts_from_jsonl(alerts_path, limit=1)
     
     if not alerts:
         return AlertRecord(ts="", interval="", entries=[])
@@ -101,7 +110,7 @@ async def get_alert_symbols():
     agent_config = get_config("agent")
     alerts_path = BASE_DIR / agent_config.get("alerts_jsonl_path", "modules/data/alerts.jsonl")
     
-    alerts = load_alerts_from_jsonl(alerts_path, limit=500)
+    alerts = await load_alerts_from_jsonl(alerts_path, limit=500)
     
     symbols = set()
     for alert in alerts:

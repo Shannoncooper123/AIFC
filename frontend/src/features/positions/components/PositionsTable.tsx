@@ -64,7 +64,7 @@ export function PositionsTable({ positions, isLoading }: PositionsTableProps) {
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-800 bg-[#1a1a1a]">
       <div className="overflow-x-auto">
-        <table className="w-full">
+        <table className="w-full min-w-[800px]">
           <thead>
             <tr className="border-b border-neutral-800 bg-[#141414]">
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-neutral-400">

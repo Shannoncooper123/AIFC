@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { AlertRecord, Position, PositionsSummary, ServiceInfo, WebSocketEvent } from '../types';
+import { queryClient } from '../lib/queryClient';
 
 interface AppState {
   services: Record<string, ServiceInfo>;
@@ -71,6 +72,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         const service = data.service as string | undefined;
         const serviceName = service || type.replace('_status', '');
         get().updateService(serviceName, { status: status as ServiceInfo['status'] });
+        if (type === 'workflow_status') {
+          queryClient.invalidateQueries({ queryKey: ['workflow-runs'] });
+        }
         break;
       }
       

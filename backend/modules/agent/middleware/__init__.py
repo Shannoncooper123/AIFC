@@ -1,8 +1,8 @@
 """Agent Middleware 模块"""
-from .context_injection_middleware import ContextInjectionMiddleware
 from .decision_verification_middleware import DecisionVerificationMiddleware
+from .workflow_trace_middleware import WorkflowTraceMiddleware
 
 __all__ = [
-    'ContextInjectionMiddleware',
     'DecisionVerificationMiddleware',
+    'WorkflowTraceMiddleware',
 ]

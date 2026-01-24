@@ -5,8 +5,7 @@ import {
   ChevronDown, 
   CheckCircle2, 
   XCircle, 
-  Loader2,
-  Clock
+  Loader2
 } from 'lucide-react';
 import type { WorkflowSpan, WorkflowSpanChild, WorkflowArtifact } from '../../../types';
 import { formatDuration } from '../../../utils';
@@ -26,7 +25,24 @@ interface SpanItemProps {
   selectedNode: SelectedNode;
   onSelectNode: (node: SelectedNode) => void;
   allArtifacts: WorkflowArtifact[];
+  focusedSpanId?: string | null;
+  onFocusSpan?: (spanId: string) => void;
+  registerSpanRef?: (spanId: string, element: HTMLDivElement | null) => void;
 }
+
+const getStatusBorderColor = (status: string) => {
+  switch (status) {
+    case 'success': return 'border-l-emerald-500/50';
+    case 'error': return 'border-l-rose-500/50';
+    case 'running': return 'border-l-yellow-500/50';
+    default: return 'border-l-transparent';
+  }
+};
+
+const truncateError = (error: string | undefined, maxLength: number = 50): string => {
+  if (!error) return '';
+  return error.length > maxLength ? `${error.slice(0, maxLength)}...` : error;
+};
 
 export function SpanItem({
   span,
@@ -38,6 +54,9 @@ export function SpanItem({
   selectedNode,
   onSelectNode,
   allArtifacts,
+  focusedSpanId,
+  onFocusSpan,
+  registerSpanRef,
 }: SpanItemProps) {
   const isExpanded = expandedSpans.has(span.span_id);
   const hasChildren = span.children.length > 0 || span.artifacts.length > 0;
@@ -152,26 +171,33 @@ export function SpanItem({
   if (isFiltered) return null;
 
   const isSelected = selectedNode?.type === 'span' && selectedNode.data.span_id === span.span_id;
+  const isFocused = focusedSpanId === span.span_id;
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'success': return <CheckCircle2 size={14} className="text-emerald-500/80" />;
-      case 'error': return <XCircle size={14} className="text-rose-500/80" />;
-      case 'running': return <Loader2 size={14} className="text-neutral-400 animate-spin" />;
-      default: return <div className="w-3.5 h-3.5 rounded-full bg-neutral-700" />;
+      case 'success': return <CheckCircle2 size={14} className="text-emerald-500/60" />;
+      case 'error': return <XCircle size={14} className="text-rose-500/60" />;
+      case 'running': return <Loader2 size={14} className="text-yellow-500/60 animate-spin" />;
+      default: return null;
     }
   };
 
+  const displayName = getNodeDisplayName(span.node);
+
   return (
-    <div className="select-none">
+    <div 
+      className="select-none"
+      ref={(el) => registerSpanRef?.(span.span_id, el)}
+    >
       <div
-        className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer transition-all duration-200 group ${
-          isSelected ? 'bg-neutral-800 border-l-2 border-neutral-400' : 'hover:bg-neutral-900 border-l-2 border-transparent'
+        className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer transition-all duration-200 group border-l-2 ${getStatusBorderColor(span.status)} ${
+          isSelected ? 'bg-blue-900/20 border-l-neutral-400' : isFocused ? 'bg-neutral-800/50 ring-1 ring-neutral-600' : 'hover:bg-neutral-900'
         }`}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={(e) => {
           e.stopPropagation();
           onSelectNode({ type: 'span', data: span });
+          onFocusSpan?.(span.span_id);
           if (isExpandable && !isExpanded) toggleSpan(span.span_id);
         }}
       >
@@ -187,28 +213,41 @@ export function SpanItem({
           ) : <div className="w-4" />}
         </div>
 
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <Workflow size={14} className="text-neutral-400" />
-          <span className={`text-sm font-medium truncate ${isSelected ? 'text-white' : 'text-neutral-300'}`}>
-            {getNodeDisplayName(span.node)}
-          </span>
-          {span.symbol && (
-            <span className="px-1.5 py-0.5 text-[10px] rounded bg-neutral-800 text-neutral-400 border border-neutral-700">
-              {span.symbol}
+        <div className="flex flex-col flex-1 min-w-0 gap-0.5">
+          <div className="flex items-center gap-2">
+            <Workflow size={14} className="text-neutral-400" />
+            <span className={`text-sm font-semibold truncate ${isSelected ? 'text-white' : 'text-neutral-200'}`}>
+              {displayName}
             </span>
+          </div>
+          {span.symbol && (
+            <div className="flex items-center gap-2 pl-6">
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-neutral-800/50 text-neutral-500 border border-neutral-700/50">
+                {span.symbol}
+              </span>
+            </div>
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {span.duration_ms && (
-            <span className="text-xs text-neutral-500 flex items-center gap-1">
-              <Clock size={10} />
+            <span className="text-xs text-neutral-500">
               {formatDuration(span.duration_ms)}
             </span>
           )}
           {getStatusIcon(span.status)}
         </div>
       </div>
+
+      {span.status === 'error' && span.error && (
+        <div 
+          className="text-xs text-rose-400/80 truncate pl-8 py-0.5"
+          style={{ paddingLeft: `${depth * 12 + 32}px` }}
+          title={span.error}
+        >
+          {truncateError(span.error)}
+        </div>
+      )}
 
       {isExpanded && isExpandable && (
         <div>
@@ -228,6 +267,9 @@ export function SpanItem({
                     selectedNode={selectedNode}
                     onSelectNode={onSelectNode}
                     allArtifacts={allArtifacts}
+                    focusedSpanId={focusedSpanId}
+                    onFocusSpan={onFocusSpan}
+                    registerSpanRef={registerSpanRef}
                   />
                 );
               })}
@@ -236,7 +278,7 @@ export function SpanItem({
 
           <div className="flex flex-col relative">
             <div 
-              className="absolute top-0 bottom-0 border-l border-neutral-800" 
+              className="absolute top-0 bottom-0 border-l border-neutral-700/50" 
               style={{ left: `${depth * 12 + 15}px` }} 
             />
             

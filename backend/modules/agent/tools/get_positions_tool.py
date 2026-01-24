@@ -2,10 +2,8 @@
 from langchain.tools import tool
 from typing import List, Dict, Any
 
-from modules.agent.engine import get_engine
-from modules.monitor.clients.binance_rest import BinanceRestClient
-from modules.monitor.data.models import Kline
-from modules.config.settings import get_config
+from modules.agent.tools.tool_utils import require_engine, make_runtime_error
+from modules.agent.utils.profit_protection import fmt6, fmt2, calculate_protection
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.tool.get_positions')
@@ -31,9 +29,9 @@ def get_positions_tool() -> str | Dict[str, str]:
         无持仓且无挂单时返回包含 "message" 键的字典。
     """
     try:
-        eng = get_engine()
-        if eng is None:
-            return {"error": "TOOL_RUNTIME_ERROR: 交易引擎未初始化"}
+        eng, error = require_engine()
+        if error:
+            return make_runtime_error(error)
         
         positions = eng.get_positions_summary()
         pending_orders = eng.get_pending_orders_summary()
@@ -60,8 +58,7 @@ def get_positions_tool() -> str | Dict[str, str]:
             unrealized_pnl = pos.get('unrealized_pnl', 0.0)
             roe = pos.get('roe', 0.0)
             
-            # 计算浮盈保护建议
-            protection_info = _calculate_protection(pos)
+            protection_info = calculate_protection(pos)
             
             # 格式化持仓信息
             position_block = [
@@ -120,109 +117,4 @@ def get_positions_tool() -> str | Dict[str, str]:
         
     except Exception as e:
         logger.error(f"get_positions 执行失败: {e}")
-        return {"error": f"TOOL_RUNTIME_ERROR: 查询持仓失败 - {str(e)}"}
-
-# 安全格式化函数已移动到模块内，供工具使用
-# 安全格式化函数，避免 None 参与数值格式化导致报错
-def fmt6(val):
-    try:
-        return "-" if val is None else f"{float(val):.6f}"
-    except Exception:
-        return "-"
-
-def fmt2(val):
-    try:
-        return "-" if val is None else f"{float(val):.2f}"
-    except Exception:
-        return "-"
-
-
-def _calculate_protection(pos: Dict[str, Any]) -> str:
-    """计算浮盈保护建议
-    
-    Args:
-        pos: 持仓信息字典
-        
-    Returns:
-        保护建议字符串，如果无需保护或计算失败则返回相应说明
-    """
-    try:
-        side = pos.get('side', '')
-        entry_price = float(pos.get('entry_price', 0))
-        mark_price = float(pos.get('mark_price', 0))
-        current_sl = float(pos.get('sl_price') or 0)
-        original_sl = float(pos.get('original_sl_price') or 0)
-        
-        if current_sl == 0:
-            return "未设置止损，无法计算R数"
-        
-        # 使用original_sl_price计算初始R（开仓时的风险），如果没有则使用当前SL
-        if original_sl != 0:
-            initial_r = abs(entry_price - original_sl)
-        else:
-            initial_r = abs(entry_price - current_sl)
-        
-        if initial_r == 0:
-            return "SL与入场价相同，无法计算R数"
-        
-        # 计算浮盈R数和百分比
-        if side == 'long':
-            profit_r = (mark_price - entry_price) / initial_r
-            profit_pct = ((mark_price - entry_price) / entry_price) * 100
-        else:  # short
-            profit_r = (entry_price - mark_price) / initial_r
-            profit_pct = ((entry_price - mark_price) / entry_price) * 100
-        
-        # 判断保护需求（优先级：5% → 2R → 1R）
-        
-        # 规则3: 浮盈>5% → 保护至少2%
-        if profit_pct > 5.0:
-            if side == 'long':
-                min_protected_sl = entry_price * 1.02  # 保护2%利润
-                if current_sl < min_protected_sl:
-                    return (f"⚠️ 浮盈{profit_pct:.2f}% ({profit_r:.2f}R) → 必须保护至少2%利润 "
-                           f"→ 建议移动SL至${min_protected_sl:.2f}")
-                else:
-                    return f"✓ 浮盈{profit_pct:.2f}% ({profit_r:.2f}R)，已保护至${current_sl:.2f} (≥2%保护线)"
-            else:  # short
-                min_protected_sl = entry_price * 0.98  # 保护2%利润
-                if current_sl > min_protected_sl:
-                    return (f"⚠️ 浮盈{profit_pct:.2f}% ({profit_r:.2f}R) → 必须保护至少2%利润 "
-                           f"→ 建议移动SL至${min_protected_sl:.2f}")
-                else:
-                    return f"✓ 浮盈{profit_pct:.2f}% ({profit_r:.2f}R)，已保护至${current_sl:.2f} (≤2%保护线)"
-        
-        # 规则2: 浮盈>2R → 移动至+1R
-        elif profit_r > 2.0:
-            if side == 'long':
-                target_sl = entry_price + initial_r  # +1R
-                if current_sl < target_sl:
-                    return (f"⚠️ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%) → 必须移动SL至+1R锁定利润 "
-                           f"→ 建议SL=${target_sl:.2f}")
-                else:
-                    return f"✓ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%)，已保护至${current_sl:.2f} (≥+1R)"
-            else:  # short
-                target_sl = entry_price - initial_r  # +1R
-                if current_sl > target_sl:
-                    return (f"⚠️ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%) → 必须移动SL至+1R锁定利润 "
-                           f"→ 建议SL=${target_sl:.2f}")
-                else:
-                    return f"✓ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%)，已保护至${current_sl:.2f} (≤+1R)"
-        
-        # 规则1: 浮盈>1R → 移动至保本
-        elif profit_r > 1.0:
-            if abs(current_sl - entry_price) > (entry_price * 0.0001):  # 允许0.01%误差
-                return (f"⚠️ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%) → 必须移动SL至保本 "
-                       f"→ 建议SL=${entry_price:.2f}")
-            else:
-                return f"✓ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%)，已保本 (SL=${current_sl:.2f})"
-        else:
-            # 浮盈不足或负浮盈
-            if profit_r >= 0:
-                return f"浮盈{profit_r:.2f}R ({profit_pct:.2f}%)，未达保护阈值，继续持有"
-            else:
-                return f"浮亏{profit_r:.2f}R ({profit_pct:.2f}%)，需关注止损有效性"
-    
-    except Exception as e:
-        logger.error(f"计算浮盈保护失败: {e}")
-        return f"计算失败: {str(e)}"
+        return make_runtime_error(f"查询持仓失败 - {str(e)}")

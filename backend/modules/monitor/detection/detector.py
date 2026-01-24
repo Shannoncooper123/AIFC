@@ -87,12 +87,4 @@ class AnomalyDetector:
             return 2
         else:
             return 1
-    
-    def set_strategy(self, strategy: DetectionStrategy):
-        """设置检测策略
-        
-        Args:
-            strategy: 新的检测策略
-        """
-        self.strategy = strategy
 

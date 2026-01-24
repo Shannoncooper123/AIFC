@@ -1,23 +1,16 @@
 from typing import Any, Dict, Optional
 from langchain.tools import tool
-from modules.monitor.utils.logger import setup_logger
-from modules.monitor.clients.binance_rest import BinanceRestClient
+from modules.monitor.utils.logger import get_logger
 from modules.monitor.data.models import Kline
-from modules.config.settings import get_config
+from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, get_binance_client
 
-
-logger = setup_logger()
-
-
-def _error(msg: str, feedback: str = "") -> Dict[str, Any]:
-    return {"error": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。", "feedback": feedback}
+logger = get_logger('agent.tool.calc_metrics')
 
 
 def _get_latest_price(symbol: str) -> float | None:
     """获取指定交易对的最新价格（使用1m K线的收盘价）"""
     try:
-        cfg = get_config()
-        client = BinanceRestClient(cfg)
+        client = get_binance_client()
         raw = client.get_klines(symbol, "1m", 1)
         if raw and len(raw) > 0:
             k = Kline.from_rest_api(raw[0])
@@ -89,19 +82,19 @@ def calc_metrics_tool(
         )
         
         if not isinstance(symbol, str) or not symbol:
-            return _error("参数 symbol 必须为非空字符串，如 'BTCUSDT'", feedback)
+            return make_input_error("参数 symbol 必须为非空字符串，如 'BTCUSDT'", feedback)
         
         if not isinstance(side, str) or side not in ("BUY", "SELL"):
-            return _error("参数 side 必须为 'BUY' 或 'SELL'（大写）", feedback)
+            return make_input_error("参数 side 必须为 'BUY' 或 'SELL'（大写）", feedback)
         
         if not isinstance(tp_price, (int, float)) or tp_price <= 0:
-            return _error("参数 tp_price 必须为正数", feedback)
+            return make_input_error("参数 tp_price 必须为正数", feedback)
         
         if not isinstance(sl_price, (int, float)) or sl_price <= 0:
-            return _error("参数 sl_price 必须为正数", feedback)
+            return make_input_error("参数 sl_price 必须为正数", feedback)
         
         if not isinstance(feedback, str) or not feedback:
-            return _error("参数 feedback 必须为非空字符串，详细分析当前的阶段并给出下一步计划", feedback)
+            return make_input_error("参数 feedback 必须为非空字符串，详细分析当前的阶段并给出下一步计划", feedback)
 
         # 2. 确定入场价格（市价自动获取）
         entry_price = _get_latest_price(symbol)
@@ -118,9 +111,9 @@ def calc_metrics_tool(
         
         if side == "BUY":
             if not (tp > entry_price > sl):
-                return _error(
+                return make_input_error(
                     f"多头要求 tp_price > entry_price > sl_price，当前: tp={tp}, entry={entry_price}, sl={sl}。"
-                    f"请调整 TP/SL 价格后重试。",
+                    f"请调整 TP/SL 价格后重试",
                     feedback
                 )
             sl_dist = entry_price - sl
@@ -129,9 +122,9 @@ def calc_metrics_tool(
             side_norm = "long"
         else:  # SELL
             if not (sl > entry_price > tp):
-                return _error(
+                return make_input_error(
                     f"空头要求 sl_price > entry_price > tp_price，当前: sl={sl}, entry={entry_price}, tp={tp}。"
-                    f"请调整 TP/SL 价格后重试。",
+                    f"请调整 TP/SL 价格后重试",
                     feedback
                 )
             sl_dist = sl - entry_price

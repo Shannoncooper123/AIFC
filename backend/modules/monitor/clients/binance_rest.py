@@ -46,6 +46,17 @@ class BinanceRestClient:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
     
+    def close(self):
+        """关闭 Session 连接池"""
+        if self.session:
+            self.session.close()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+    
     @retry_on_exception(max_retries=5, delay=1.0, exceptions=(requests.RequestException,))
     def get_exchange_info(self) -> Dict[str, Any]:
         """获取交易所信息

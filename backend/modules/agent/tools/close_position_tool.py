@@ -1,9 +1,10 @@
 """平仓工具（全平）"""
 from langchain.tools import tool
 from typing import Optional, Dict, Any
-from modules.agent.engine import get_engine
+from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, require_engine
 from modules.agent.utils.workflow_trace_storage import get_current_run_id
 from modules.monitor.utils.logger import get_logger
+
 logger = get_logger('agent.tool.close_position')
 
 
@@ -36,14 +37,11 @@ def close_position_tool(
         这4个检查点参数仅用于决策验证和置信度计算。
         系统会进行加权评分后决定是否放行。
     """
-    def _error(msg: str) -> Dict[str, str]:
-        return {"error": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。"}
-    logger = get_logger('agent.tool.close_position')
     try:
-        eng = get_engine()
-        if eng is None:
-            logger.error("close_position_tool: 引擎未初始化")
-            return _error("交易引擎未初始化")
+        eng, error = require_engine()
+        if error:
+            logger.error(f"close_position_tool: {error}")
+            return make_input_error(error)
         logger.info(
             f"close_position_tool: symbol={symbol}, "
             f"checkpoints=[trend_reversed:{trend_reversed}, structure_broken:{structure_broken}, "
@@ -57,5 +55,5 @@ def close_position_tool(
             logger.info(f"close_position_tool: 成功 -> id={res.get('id')}, symbol={res.get('symbol')}, status={res.get('status')}, close_price={res.get('close_price')}\n")
         return res
     except Exception as e:
-        logger.error(f"close_position_tool: 异常 -> {e}")
-        return {"error": f"TOOL_RUNTIME_ERROR: 平仓失败 - {str(e)}"}
+        logger.error(f"close_position_tool: 异常 -> {e}", exc_info=True)
+        return make_runtime_error(f"平仓失败 - {str(e)}")

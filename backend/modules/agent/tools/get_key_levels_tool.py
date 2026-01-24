@@ -4,13 +4,12 @@ from langchain.tools import tool
 from modules.config.settings import get_config
 from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.data.models import Kline
-from modules.monitor.utils.logger import setup_logger
+from modules.monitor.utils.logger import get_logger
 from modules.monitor.indicators.atr import calculate_atr_list
 
-logger = setup_logger()
+from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, get_binance_client
 
-def _error(msg: str, feedback: str) -> Dict[str, Any]:
-    return {"error": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。", "feedback": feedback if isinstance(feedback, str) else ""}
+logger = get_logger('agent.tool.get_key_levels')
 
 def _swing_points(kl: List[Kline]) -> Dict[str, List[Dict[str, Any]]]:
     highs: List[Dict[str, Any]] = []
@@ -90,20 +89,19 @@ def get_key_levels_tool(symbol: str, interval: str, feedback: str, limit: int = 
     try:
         logger.info(f"get_key_levels_tool 被调用 - symbol={symbol}, interval={interval}, limit={limit}, feedback={feedback}")
         if not isinstance(symbol, str) or not symbol.strip():
-            return _error("参数 symbol 必须为非空字符串，如 'BTCUSDT'", feedback)
+            return make_input_error("参数 symbol 必须为非空字符串，如 'BTCUSDT'", feedback)
         if not isinstance(interval, str) or not interval.strip():
-            return _error("参数 interval 必须为非空字符串，如 '1h' 或 '4h'", feedback)
+            return make_input_error("参数 interval 必须为非空字符串，如 '1h' 或 '4h'", feedback)
         valid = ['1h', '4h', '15m']
         if interval not in valid:
-            return _error(f"无效的 interval: {interval}，仅支持: {', '.join(valid)}", feedback)
+            return make_input_error(f"无效的 interval: {interval}，仅支持: {', '.join(valid)}", feedback)
         if not isinstance(limit, int) or limit < 60 or limit > 500:
-            return _error("参数 limit 必须为 60..500 的整数", feedback)
+            return make_input_error("参数 limit 必须为 60..500 的整数", feedback)
 
-        cfg = get_config()
-        client = BinanceRestClient(cfg)
+        client = get_binance_client()
         raw = client.get_klines(symbol, interval, limit)
         if not raw:
-            return {"error": "TOOL_RUNTIME_ERROR: 未获取到K线数据", "feedback": feedback}
+            return make_runtime_error("未获取到K线数据", feedback)
 
         kl: List[Kline] = [Kline.from_rest_api(item) for item in raw]
         closes = [k.close for k in kl]

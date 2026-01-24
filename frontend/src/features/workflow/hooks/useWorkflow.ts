@@ -9,6 +9,7 @@ import {
   getWorkflowTimeline,
   getWorkflowArtifacts,
 } from '../../../services/api';
+import { REFRESH_INTERVALS } from '../../../utils';
 
 /**
  * 获取 workflow 运行列表
@@ -17,6 +18,7 @@ export function useWorkflowRuns(limit = 50) {
   return useQuery({
     queryKey: ['workflow-runs'],
     queryFn: () => getWorkflowRuns(limit),
+    refetchInterval: REFRESH_INTERVALS.WORKFLOW,
   });
 }
 
@@ -28,6 +30,7 @@ export function useWorkflowTimeline(runId: string | null) {
     queryKey: ['workflow-timeline', runId],
     queryFn: () => getWorkflowTimeline(runId as string),
     enabled: Boolean(runId),
+    refetchInterval: Boolean(runId) ? REFRESH_INTERVALS.WORKFLOW : false,
   });
 }
 
@@ -39,6 +42,7 @@ export function useWorkflowArtifacts(runId: string | null) {
     queryKey: ['workflow-artifacts', runId],
     queryFn: () => getWorkflowArtifacts(runId as string),
     enabled: Boolean(runId),
+    refetchInterval: Boolean(runId) ? REFRESH_INTERVALS.WORKFLOW : false,
   });
 }
 

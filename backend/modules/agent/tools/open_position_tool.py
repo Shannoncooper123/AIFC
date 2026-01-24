@@ -3,6 +3,7 @@ from langchain.tools import tool
 from typing import Optional, Dict, Any, List
 from modules.agent.engine import get_engine
 from modules.agent.utils.workflow_trace_storage import get_current_run_id
+from modules.constants import DEFAULT_LEVERAGE
 from modules.monitor.utils.logger import get_logger
 from modules.monitor.alerts.notifier import EmailNotifier
 from modules.config.settings import get_config
@@ -153,8 +154,7 @@ def open_position_tool(
     margin_usdt: Optional[float] = None,
     tp_price: Optional[float] = None,
     sl_price: Optional[float] = None,
-    limit_price: Optional[float] = None,
-    runtime = None  # 用于访问state
+    runtime = None
 ) -> Dict[str, Any]:
     """开仓/加仓或标记开仓阶段完成。仅支持市价单（order_type 固定为 "market"）。
     
@@ -179,7 +179,6 @@ def open_position_tool(
         margin_usdt: 保证金金额（side 不为 NULL 时必填）
         tp_price: 止盈价格（side 不为 NULL 时必填）
         sl_price: 止损价格（side 不为 NULL 时必填）
-        limit_price: 已废弃，忽略
     
     Returns:
         side="BUY"/"SELL" 时返回持仓结构化字典或错误字典。
@@ -188,9 +187,7 @@ def open_position_tool(
         - 开仓金额不建议超过可用保证金的5%（参考值）
         - 建议先调用 get_kline_image 分析 4h/1h/15m/3m 多周期 K 线图像，确保信息充分
     """
-    def _error(msg: str) -> Dict[str, str]:
-        return {"error": f"DATA_ACQUISITION_ERROR: {msg}"}
-    logger = get_logger('agent.tool.open_position')
+    from modules.agent.tools.tool_utils import make_input_error, make_runtime_error
 
     try:
         # 处理 NULL 选项（标记开仓阶段完成，不实际开仓）
@@ -204,34 +201,27 @@ def open_position_tool(
         config = get_config()
         trading_mode = config.get('trading', {}).get('mode', 'simulator')
         if trading_mode == 'live':
-            leverage = int(config.get('trading', {}).get('max_leverage', 10))
+            leverage = int(config.get('trading', {}).get('max_leverage', DEFAULT_LEVERAGE))
         else:
-            leverage = int(config.get('agent', {}).get('simulator', {}).get('max_leverage', 10))
+            leverage = int(config.get('agent', {}).get('simulator', {}).get('max_leverage', DEFAULT_LEVERAGE))
         
-        # 如果不是 NULL，则需要验证所有参数
         if not symbol or margin_usdt is None:
             logger.error("open_position_tool: side 不为 NULL 时缺少必填参数")
-            return _error("side 不为 NULL 时，symbol、margin_usdt 为必填参数（margin_usdt 为开仓保证金金额，单位USDT）")
+            return make_input_error("side 不为 NULL 时，symbol、margin_usdt 为必填参数（margin_usdt 为开仓保证金金额，单位USDT）")
         
-        # 订单类型校验
         if order_type != "market":
             logger.error(f"open_position_tool: 订单类型无效 {order_type}")
-            return _error("order_type 必须为 'market'")
+            return make_input_error("order_type 必须为 'market'")
         
-        # 获取引擎实例
         eng = get_engine()
         if eng is None:
             logger.error("open_position_tool: 引擎未初始化")
-            return _error("交易引擎未初始化")
+            return make_input_error("交易引擎未初始化")
         
-        # 不再支持限价单分支
-        
-        # 保证金输入（margin_usdt）必须为正
         if not isinstance(margin_usdt, (int, float)) or margin_usdt <= 0:
             logger.error("open_position_tool: 参数 保证金 非法")
-            return _error("margin_usdt（保证金金额）必须为正数")
+            return make_input_error("margin_usdt（保证金金额）必须为正数")
         
-        # 校验保证金上限：单仓保证金 ≤ 当前剩余可用保证金的 5%
         try:
             account_summary = eng.get_account_summary()
             account_balance = float(account_summary.get('balance', 0))
@@ -242,22 +232,21 @@ def open_position_tool(
                 logger.error(
                     f"open_position_tool: 保证金超限！请求={margin_usdt:.2f}U，上限={max_margin_for_new_position:.2f}U (可用={available_balance:.2f}U × 5%)"
                 )
-                return _error(
-                    f"保证金超限：当前可用保证金={available_balance:.2f}U，单仓上限={max_margin_for_new_position:.2f}U（5%）。"
+                return make_input_error(
+                    f"保证金超限：当前可用保证金={available_balance:.2f}U，单仓上限={max_margin_for_new_position:.2f}U（5%）"
                 )
         except Exception as e:
             logger.warning(f"保证金上限校验时出错（继续执行）: {e}")
         
-        # 止盈止损价格校验
         if tp_price is None or sl_price is None:
             logger.error("open_position_tool: 缺少止盈止损价格")
-            return _error("side 不为 NULL 时，tp_price 和 sl_price 为必填参数")
+            return make_input_error("side 不为 NULL 时，tp_price 和 sl_price 为必填参数")
         if not isinstance(tp_price, (int, float)) or tp_price <= 0:
             logger.error(f"open_position_tool: tp_price非法 {tp_price}")
-            return _error("tp_price必须为正数价格")
+            return make_input_error("tp_price必须为正数价格")
         if not isinstance(sl_price, (int, float)) or sl_price <= 0:
             logger.error(f"open_position_tool: sl_price非法 {sl_price}")
-            return _error("sl_price必须为正数价格")
+            return make_input_error("sl_price必须为正数价格")
         
         # 转换side参数：BUY -> long, SELL -> short
         engine_side = "long" if side == "BUY" else "short"
@@ -285,5 +274,5 @@ def open_position_tool(
         
         return res
     except Exception as e:
-        logger.error(f"open_position_tool: 异常 -> {e}")
+        logger.error(f"open_position_tool: 异常 -> {e}", exc_info=True)
         return {"error": f"TOOL_RUNTIME_ERROR: 开仓失败 - {str(e)}"}

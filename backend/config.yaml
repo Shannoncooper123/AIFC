@@ -47,9 +47,9 @@ thresholds:
 # 告警配置
 alert:
   cooldown_minutes: 0   # 同币种告警间隔（分钟）
-  send_delay_seconds: 3  # 延迟发送时间（秒），等待一波所有币种处理完
   max_batch_size: 10     # 单次告警最多包含的币种数（已优化追涨风险评估，可安全增加）
   send_email: false      # 是否发送告警邮件（false=禁用告警邮件，仅写入JSONL）
+  debounce_seconds: 10   # 防抖延迟（秒），收集同一周期内的告警后批量发送
   
 # WebSocket配置
 websocket:

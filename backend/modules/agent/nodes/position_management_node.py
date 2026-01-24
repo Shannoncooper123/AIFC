@@ -11,8 +11,9 @@ from langchain_openai import ChatOpenAI
 from modules.agent.state import AgentState
 from modules.agent.middleware.vision_middleware import VisionMiddleware
 from modules.agent.middleware.workflow_trace_middleware import WorkflowTraceMiddleware
+from modules.agent.utils.profit_protection import fmt6, fmt2, calculate_protection
 from modules.config.settings import get_config
-from modules.monitor.utils.logger import setup_logger
+from modules.monitor.utils.logger import get_logger
 from modules.agent.utils.trace_decorators import traced_node
 from modules.agent.engine import get_engine
 
@@ -20,99 +21,7 @@ from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
 from modules.agent.tools.close_position_tool import close_position_tool
 from modules.agent.tools.update_tp_sl_tool import update_tp_sl_tool
 
-logger = setup_logger()
-
-
-def _fmt6(val) -> str:
-    """格式化数值为6位小数"""
-    try:
-        return "-" if val is None else f"{float(val):.6f}"
-    except Exception:
-        return "-"
-
-
-def _fmt2(val) -> str:
-    """格式化数值为2位小数"""
-    try:
-        return "-" if val is None else f"{float(val):.2f}"
-    except Exception:
-        return "-"
-
-
-def _calculate_protection(pos: Dict[str, Any]) -> str:
-    """计算浮盈保护建议"""
-    try:
-        side = pos.get('side', '')
-        entry_price = float(pos.get('entry_price', 0))
-        mark_price = float(pos.get('mark_price', 0))
-        current_sl = float(pos.get('sl_price') or 0)
-        original_sl = float(pos.get('original_sl_price') or 0)
-        
-        if current_sl == 0:
-            return "未设置止损，无法计算R数"
-        
-        if original_sl != 0:
-            initial_r = abs(entry_price - original_sl)
-        else:
-            initial_r = abs(entry_price - current_sl)
-        
-        if initial_r == 0:
-            return "SL与入场价相同，无法计算R数"
-        
-        if side == 'long':
-            profit_r = (mark_price - entry_price) / initial_r
-            profit_pct = ((mark_price - entry_price) / entry_price) * 100
-        else:
-            profit_r = (entry_price - mark_price) / initial_r
-            profit_pct = ((entry_price - mark_price) / entry_price) * 100
-        
-        if profit_pct > 5.0:
-            if side == 'long':
-                min_protected_sl = entry_price * 1.02
-                if current_sl < min_protected_sl:
-                    return (f"⚠️ 浮盈{profit_pct:.2f}% ({profit_r:.2f}R) → 必须保护至少2%利润 "
-                           f"→ 建议移动SL至${min_protected_sl:.2f}")
-                else:
-                    return f"✓ 浮盈{profit_pct:.2f}% ({profit_r:.2f}R)，已保护至${current_sl:.2f} (≥2%保护线)"
-            else:
-                min_protected_sl = entry_price * 0.98
-                if current_sl > min_protected_sl:
-                    return (f"⚠️ 浮盈{profit_pct:.2f}% ({profit_r:.2f}R) → 必须保护至少2%利润 "
-                           f"→ 建议移动SL至${min_protected_sl:.2f}")
-                else:
-                    return f"✓ 浮盈{profit_pct:.2f}% ({profit_r:.2f}R)，已保护至${current_sl:.2f} (≤2%保护线)"
-        
-        elif profit_r > 2.0:
-            if side == 'long':
-                target_sl = entry_price + initial_r
-                if current_sl < target_sl:
-                    return (f"⚠️ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%) → 必须移动SL至+1R锁定利润 "
-                           f"→ 建议SL=${target_sl:.2f}")
-                else:
-                    return f"✓ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%)，已保护至${current_sl:.2f} (≥+1R)"
-            else:
-                target_sl = entry_price - initial_r
-                if current_sl > target_sl:
-                    return (f"⚠️ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%) → 必须移动SL至+1R锁定利润 "
-                           f"→ 建议SL=${target_sl:.2f}")
-                else:
-                    return f"✓ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%)，已保护至${current_sl:.2f} (≤+1R)"
-        
-        elif profit_r > 1.0:
-            if abs(current_sl - entry_price) > (entry_price * 0.0001):
-                return (f"⚠️ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%) → 必须移动SL至保本 "
-                       f"→ 建议SL=${entry_price:.2f}")
-            else:
-                return f"✓ 浮盈{profit_r:.2f}R ({profit_pct:.2f}%)，已保本 (SL=${current_sl:.2f})"
-        else:
-            if profit_r >= 0:
-                return f"浮盈{profit_r:.2f}R ({profit_pct:.2f}%)，未达保护阈值，继续持有"
-            else:
-                return f"浮亏{profit_r:.2f}R ({profit_pct:.2f}%)，需关注止损有效性"
-    
-    except Exception as e:
-        logger.error(f"计算浮盈保护失败: {e}")
-        return f"计算失败: {str(e)}"
+logger = get_logger('agent.nodes.position_management')
 
 
 def _format_positions_context() -> str:
@@ -141,15 +50,15 @@ def _format_positions_context() -> str:
             unrealized_pnl = pos.get('unrealized_pnl', 0.0)
             roe = pos.get('roe', 0.0)
             
-            protection_info = _calculate_protection(pos)
+            protection_info = calculate_protection(pos)
             
             position_block = [
                 f"[持仓 #{idx}] {symbol} ({'多头' if side == 'long' else '空头'}持仓)",
                 f"  持仓信息:",
-                f"    数量: {_fmt6(qty)}, 均价: ${_fmt6(entry_price)}",
-                f"    止盈: ${_fmt6(tp_price)}, 止损: ${_fmt6(sl_price)}",
-                f"    当前价: ${_fmt6(mark_price)}",
-                f"    未实现盈亏: ${_fmt2(unrealized_pnl)}, ROE: {_fmt2(roe)}%",
+                f"    数量: {fmt6(qty)}, 均价: ${fmt6(entry_price)}",
+                f"    止盈: ${fmt6(tp_price)}, 止损: ${fmt6(sl_price)}",
+                f"    当前价: ${fmt6(mark_price)}",
+                f"    未实现盈亏: ${fmt2(unrealized_pnl)}, ROE: {fmt2(roe)}%",
             ]
             
             if protection_info:

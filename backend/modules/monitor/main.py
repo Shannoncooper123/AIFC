@@ -95,7 +95,7 @@ def initialize_system(config: Dict):
     
     # 8.1 设置聚合告警回调（解耦）
     alert_manager.set_send_callback(create_send_alerts_callback(notifier, config))
-    logger.info(f"   ✓ 延迟={config['alert'].get('send_delay_seconds', 3)}秒")
+    logger.info(f"   ✓ 防抖={config['alert'].get('debounce_seconds', 10)}秒")
     
     return {
         'rest_client': rest_client,
@@ -124,26 +124,23 @@ def process_kline(symbol: str, kline_data: Dict, components: Dict):
     # 3. K线收盘：清除实时最低价
     components['kline_manager'].clear_realtime_low(symbol)
     
-    # 4. 检查K线周期切换（自动发送上一周期告警）
-    components['alert_manager'].check_kline_cycle(kline.timestamp)
-    
-    # 5. 计算指标
+    # 4. 计算指标
     indicators = components['indicator_calculator'].calculate_all(symbol)
     if not indicators:
         return
     
-    # 6. 异常检测
+    # 5. 异常检测
     anomaly = components['detector'].detect(indicators)
     if not anomaly:
         return
     
     anomaly.price = kline.close
     
-    # 7. 冷却检查
+    # 6. 冷却检查
     if not components['alert_manager'].should_alert(symbol):
         return
     
-    # 8. 加入队列
+    # 7. 加入队列（防抖机制会在10秒内无新告警后自动触发发送）
     components['alert_manager'].add_alert(anomaly)
     
     # 记录日志

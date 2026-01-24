@@ -15,9 +15,9 @@ from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
 from modules.agent.tools.open_position_tool import open_position_tool
 from modules.agent.tools.trend_comparison_tool import trend_comparison_tool
 from modules.agent.utils.trace_decorators import traced_node
-from modules.monitor.utils.logger import setup_logger
+from modules.monitor.utils.logger import get_logger
 
-logger = setup_logger()
+logger = get_logger('agent.nodes.single_symbol_analysis')
 
 
 def _format_account_summary(account: Dict[str, Any]) -> str:
