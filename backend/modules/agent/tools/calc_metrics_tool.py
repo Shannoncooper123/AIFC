@@ -25,7 +25,7 @@ def _get_latest_price(symbol: str) -> float | None:
     "calc_metrics",
     description=(
         "交易指标计算器：计算 R:R、1R/2R 触发价位。"
-        "仅支持市价模式，自动获取最新价作为入场价。"
+        "支持市价模式（自动获取最新价）和挂单模式（指定 limit_price）。"
         "纯计算工具，不提供交易建议。"
     ),
     parse_docstring=True,
@@ -36,16 +36,18 @@ def calc_metrics_tool(
     tp_price: float,
     sl_price: float,
     feedback: str,
+    limit_price: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """交易指标计算器：计算R:R、1R/2R触发价位（仅支持市价模式）。
+    """交易指标计算器：计算R:R、1R/2R触发价位（支持市价/挂单模式）。
 
     概要:
-        - 市价模式：自动获取 symbol 的最新价格作为入场价
+        - 市价模式：不传入 limit_price，自动获取 symbol 的最新价格作为入场价
+        - 挂单模式：传入 limit_price，以此价格作为入场价计算
         - 自动计算 R:R、1R/2R 触发价位
         - 纯计算工具，不提供任何交易建议
 
     返回结构化字典，包含：
-        - inputs: 原始入参回显（含自动获取的 entry_price）
+        - inputs: 原始入参回显（含使用的 entry_price）
         - metrics: entry_price, sl_distance, tp_distance, rr, r1_price, r2_price
         - checks: sl_distance_pct（止损距离百分比）
         - feedback: 原路返回的分析进度说明
@@ -57,11 +59,12 @@ def calc_metrics_tool(
         tp_price: 止盈价格（正数，绝对价格）。
         sl_price: 止损价格（正数，绝对价格）。
         feedback: 当前分析进度总结，详细说明当前的分析阶段与下一步计划。必须为非空字符串。
+        limit_price: 可选。挂单价格（正数）。如果提供，将使用此价格作为入场价进行计算；如果不提供，则自动获取当前市价。
     """
     try:
         # 1. 参数校验
         logger.info(
-            f"calc_metrics_tool 被调用 - symbol={symbol}, side={side}, tp={tp_price}, sl={sl_price}, feedback={feedback}"
+            f"calc_metrics_tool 被调用 - symbol={symbol}, side={side}, tp={tp_price}, sl={sl_price}, limit_price={limit_price}, feedback={feedback}"
         )
         
         if not isinstance(symbol, str) or not symbol:
@@ -78,15 +81,23 @@ def calc_metrics_tool(
         
         if not isinstance(feedback, str) or not feedback:
             return make_input_error("参数 feedback 必须为非空字符串，详细分析当前的阶段并给出下一步计划", feedback)
+            
+        if limit_price is not None:
+            if not isinstance(limit_price, (int, float)) or limit_price <= 0:
+                return make_input_error("参数 limit_price 必须为正数", feedback)
 
-        # 2. 确定入场价格（市价自动获取）
-        entry_price = _get_latest_price(symbol)
-        if entry_price is None or entry_price <= 0:
-            return {
-                "error": f"TOOL_RUNTIME_ERROR: 无法获取 {symbol} 的最新价格，请检查 symbol 或稍后重试。",
-                "feedback": feedback,
-            }
-        logger.info(f"calc_metrics_tool: 市价模式，自动获取 {symbol} 最新价格 -> {entry_price}")
+        # 2. 确定入场价格（挂单价 或 市价）
+        if limit_price is not None and limit_price > 0:
+            entry_price = float(limit_price)
+            logger.info(f"calc_metrics_tool: 挂单模式，使用指定价格 -> {entry_price}")
+        else:
+            entry_price = _get_latest_price(symbol)
+            if entry_price is None or entry_price <= 0:
+                return {
+                    "error": f"TOOL_RUNTIME_ERROR: 无法获取 {symbol} 的最新价格，请检查 symbol 或稍后重试。",
+                    "feedback": feedback,
+                }
+            logger.info(f"calc_metrics_tool: 市价模式，自动获取 {symbol} 最新价格 -> {entry_price}")
 
         # 3. 价格关系校验
         tp = float(tp_price)
@@ -135,6 +146,7 @@ def calc_metrics_tool(
                 "entry_price": round(entry_price, 8),
                 "tp_price": round(tp, 8),
                 "sl_price": round(sl, 8),
+                "limit_price": round(float(limit_price), 8) if limit_price else None,
             },
             "metrics": {
                 "entry_price": round(entry_price, 8),
