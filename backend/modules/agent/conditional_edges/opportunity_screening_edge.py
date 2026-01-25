@@ -1,6 +1,7 @@
 """条件边：机会筛选后"""
-from modules.agent.state import AgentState
+from modules.agent.state import AgentState, SymbolAnalysisState
 from langgraph.types import Send
+
 
 def after_opportunity_screening(state: AgentState):
     """
@@ -12,24 +13,18 @@ def after_opportunity_screening(state: AgentState):
     """
     if state.opportunities:
         print(f"发现 {len(state.opportunities)} 个机会，分发进行分析: {state.opportunities}")
-        # 为每个机会创建一个 Send 对象，分发到 analyze_symbol 节点并发执行
         sends = []
         for s in state.opportunities:
-            # 获取该币种的持仓信息（如果存在）
             specific_position = state.symbol_positions_map.get(s)
             filtered_positions = [specific_position] if specific_position else []
             
-            subgraph_state = AgentState(
+            subgraph_state = SymbolAnalysisState(
                 current_symbol=s,
                 symbol_contexts=state.symbol_contexts,
                 market_context=state.market_context,
                 account_summary=state.account_summary,
-                positions_summary=filtered_positions,  # 只传该币种的持仓
+                positions_summary=filtered_positions,
                 position_history=state.position_history,
-                long_short_ratio=state.long_short_ratio,  # 传递整体多空比
-                symbol_positions_map=state.symbol_positions_map,  # 传递完整映射以备需要
-                previous_symbol_focus_map=state.previous_symbol_focus_map,
-                position_next_focus=state.position_next_focus,
             )
             sends.append(Send("analyze_symbol", subgraph_state))
         return sends

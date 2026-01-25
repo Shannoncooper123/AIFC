@@ -14,6 +14,45 @@ from modules.monitor.indicators.atr import calculate_atr
 logger = get_logger('agent.tool.open_position')
 
 
+def _format_position_result(res: Dict[str, Any], margin_usdt: float, leverage: int) -> str:
+    """格式化开仓结果为简洁易读的字符串
+    
+    Args:
+        res: 引擎返回的持仓字典
+        margin_usdt: 保证金
+        leverage: 杠杆
+    
+    Returns:
+        格式化的字符串
+    """
+    symbol = res.get('symbol', 'UNKNOWN')
+    side = res.get('side', 'unknown')
+    entry_price = res.get('entry_price', 0)
+    tp_price = res.get('tp_price', 0)
+    sl_price = res.get('sl_price', 0)
+    qty = res.get('qty', 0)
+    notional = res.get('notional_usdt', margin_usdt * leverage)
+    
+    side_cn = '做多' if side == 'long' else '做空'
+    
+    if side == 'long':
+        tp_pct = ((tp_price - entry_price) / entry_price * 100) if entry_price else 0
+        sl_pct = ((entry_price - sl_price) / entry_price * 100) if entry_price else 0
+    else:
+        tp_pct = ((entry_price - tp_price) / entry_price * 100) if entry_price else 0
+        sl_pct = ((sl_price - entry_price) / entry_price * 100) if entry_price else 0
+    
+    rr_ratio = tp_pct / sl_pct if sl_pct > 0 else 0
+    
+    return f"""✅ 开仓成功
+
+【{symbol}】{side_cn} | {leverage}x杠杆
+  入场价: ${entry_price:.6g}
+  数量: {qty:.4f}
+  保证金: ${margin_usdt:.2f} | 名义价值: ${notional:.2f}
+  止盈: ${tp_price:.6g} (+{tp_pct:.1f}%)
+  止损: ${sl_price:.6g} (-{sl_pct:.1f}%)
+  风险回报比: {rr_ratio:.1f}:1"""
 
 
 
@@ -35,6 +74,11 @@ def _send_position_open_email(symbol: str, side: str, margin_usdt: float, levera
         from datetime import datetime, timezone
         
         config = get_config()
+        
+        if not config['env'].get('email_enabled', False):
+            logger.info("邮件功能未启用，跳过开仓邮件发送")
+            return
+        
         notifier = EmailNotifier(config)
         
         # 获取收件邮箱
@@ -155,7 +199,7 @@ def open_position_tool(
     tp_price: Optional[float] = None,
     sl_price: Optional[float] = None,
     runtime = None
-) -> Dict[str, Any]:
+) -> str | Dict[str, Any]:
     """开仓/加仓或标记开仓阶段完成。仅支持市价单（order_type 固定为 "market"）。
     
     当 side="NULL" 时：
@@ -181,7 +225,7 @@ def open_position_tool(
         sl_price: 止损价格（side 不为 NULL 时必填）
     
     Returns:
-        side="BUY"/"SELL" 时返回持仓结构化字典或错误字典。
+        成功时返回格式化的开仓信息字符串，失败时返回错误字典。
         
     注意：
         - 开仓金额不建议超过可用保证金的5%（参考值）
@@ -262,17 +306,17 @@ def open_position_tool(
         res = eng.open_position(symbol, engine_side, float(notional), int(leverage), tp_price, sl_price, run_id=run_id)
         if isinstance(res, dict) and 'error' in res:
             logger.error(f"open_position_tool: 失败 -> {res['error']}")
-        else:
-            logger.info(f"open_position_tool: 成功 -> id={res.get('id')}, symbol={res.get('symbol')}, side={res.get('side')}, entry={res.get('entry_price')}\n")
-            
-            # 仓成功后发送邮件通知
-            try:
-                _send_position_open_email(symbol, engine_side, margin_usdt, leverage, 
-                                         res.get('entry_price'), tp_price, sl_price, notional)
-            except Exception as email_error:
-                logger.warning(f"open_position_tool: 发送开仓邮件失败 - {email_error}")
+            return res
         
-        return res
+        logger.info(f"open_position_tool: 成功 -> id={res.get('id')}, symbol={res.get('symbol')}, side={res.get('side')}, entry={res.get('entry_price')}\n")
+        
+        try:
+            _send_position_open_email(symbol, engine_side, margin_usdt, leverage, 
+                                     res.get('entry_price'), tp_price, sl_price, notional)
+        except Exception as email_error:
+            logger.warning(f"open_position_tool: 发送开仓邮件失败 - {email_error}")
+        
+        return _format_position_result(res, margin_usdt, leverage)
     except Exception as e:
         logger.error(f"open_position_tool: 异常 -> {e}", exc_info=True)
         return {"error": f"TOOL_RUNTIME_ERROR: 开仓失败 - {str(e)}"}

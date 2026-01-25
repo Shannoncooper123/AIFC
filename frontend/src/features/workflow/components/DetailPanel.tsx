@@ -14,7 +14,7 @@ import { formatDuration, formatTime } from '../../../utils';
 interface MessageItem {
   role: string;
   content?: string | unknown[];
-  tool_calls?: Array<{ name: string; args_keys: string[] }>;
+  tool_calls?: MessageToolCall[];
 }
 
 interface ToolCallItem {
@@ -22,6 +22,12 @@ interface ToolCallItem {
   id?: string;
   args?: Record<string, unknown>;
   args_keys?: string[];
+}
+
+interface MessageToolCall {
+  name: string;
+  args_keys?: string[];
+  args?: Record<string, unknown>;
 }
 
 export type SelectedNode = 
@@ -626,7 +632,7 @@ export function DetailPanel({ selectedNode, allArtifacts = [] }: DetailPanelProp
                     <div className="text-[10px] text-neutral-500 mb-2">Tool Calls:</div>
                     {msg.tool_calls.map((tc, i) => (
                       <div key={i} className="text-xs font-mono text-neutral-400">
-                        {tc.name}({tc.args_keys.join(', ')})
+                        {tc.name}({tc.args ? Object.entries(tc.args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ') : tc.args_keys?.join(', ') || ''})
                       </div>
                     ))}
                   </div>

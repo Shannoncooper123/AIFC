@@ -24,9 +24,9 @@ def _get_latest_price(symbol: str) -> float | None:
 @tool(
     "calc_metrics",
     description=(
-        "交易计算器：便捷计算 rr、1R/2R 触发价位与 TP/SL 建议。"
+        "交易指标计算器：计算 R:R、1R/2R 触发价位。"
         "仅支持市价模式，自动获取最新价作为入场价。"
-        "返回的 rr/触发价仅用于参考，自主判断。"
+        "纯计算工具，不提供交易建议。"
     ),
     parse_docstring=True,
 )
@@ -37,12 +37,12 @@ def calc_metrics_tool(
     sl_price: float,
     feedback: str,
 ) -> Dict[str, Any]:
-    """交易计算器：计算R:R、1R/2R触发价位、建议TP/SL（仅支持市价模式）。
+    """交易指标计算器：计算R:R、1R/2R触发价位（仅支持市价模式）。
 
     概要:
         - 市价模式：自动获取 symbol 的最新价格作为入场价
-        - 自动计算 R:R、1R/2R 触发价位、建议 TP/SL
-        - **风控辅助**：提供 R:R 质量评估（Excellent/Good/Poor），辅助决策。
+        - 自动计算 R:R、1R/2R 触发价位
+        - 纯计算工具，不提供任何交易建议
 
     Args:
         symbol: 交易对，如 "BTCUSDT"。必须为非空字符串。
@@ -52,7 +52,6 @@ def calc_metrics_tool(
         sl_price: 止损价格（正数，绝对价格）。
         feedback: 当前分析进度总结，详细说明当前的分析阶段与下一步计划。
             必须为非空字符串，用于追溯决策逻辑。
-        入场价格不提供，工具会自动获取最新市价。
 
     Returns:
         Dict[str, Any]: 结构化结果，主要包含：
@@ -65,11 +64,7 @@ def calc_metrics_tool(
                 - r1_price (float): 1R 触发价（用于移动保护到盈亏平衡）。
                 - r2_price (float): 2R 触发价（用于启用追踪止盈）。
             - checks:
-                - sl_distance_pct (float): 止损距离百分比（仅供参考）。
-            - suggestions:
-                - is_rr_valid (bool): R:R 是否达标 (>= 1.5)。
-                - quality (str): 交易质量评价 (Excellent/Good/Poor)。
-                - action_suggestion (str): 基于 R:R 的行动建议。
+                - sl_distance_pct (float): 止损距离百分比。
             - feedback (str): 原路返回调用时提供的分析进度说明。
 
     Raises:
@@ -141,29 +136,10 @@ def calc_metrics_tool(
         r1_price = entry_price + sign * sl_dist
         r2_price = entry_price + sign * (2.0 * sl_dist)
 
-        # 6. 质量评估与建议
-        is_rr_valid = rr >= 1.5
-        if rr >= 2.0:
-            quality = "Excellent"
-            action_suggestion = "R:R 优秀，建议执行。"
-        elif rr >= 1.5:
-            quality = "Good"
-            action_suggestion = "R:R 达标，可以执行。"
-        else:
-            quality = "Poor (Risk/Reward too low)"
-            action_suggestion = "R:R 不足 1.5，建议拒绝开仓或等待更优入场位。"
-
         checks = {
             "sl_distance_pct": round(sl_dist_pct, 2),
         }
 
-        suggestions = {
-            "is_rr_valid": is_rr_valid,
-            "quality": quality,
-            "action_suggestion": action_suggestion,
-        }
-
-        # 7. 返回结果
         result = {
             "inputs": {
                 "symbol": symbol,
@@ -181,7 +157,6 @@ def calc_metrics_tool(
                 "r2_price": round(r2_price, 8),
             },
             "checks": checks,
-            "suggestions": suggestions,
             "feedback": feedback,
         }
 

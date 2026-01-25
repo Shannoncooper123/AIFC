@@ -26,6 +26,13 @@ logger = None
 ws_manager = None
 symbol_updater = None
 
+_cycle_stats = {
+    'last_cycle_time': None,
+    'closed_count': 0,
+    'anomaly_count': 0,
+    'top_indicators': {},
+}
+
 
 def signal_handler(sig, frame):
     """信号处理器（优雅关闭）"""
@@ -86,8 +93,11 @@ def initialize_system(config: Dict):
     # 7. 邮件通知器
     logger.info("7. 初始化QQ邮箱...")
     notifier = EmailNotifier(config)
-    notifier.send_test_email()
-    logger.info(f"   ✓ {config['env']['smtp_user']}")
+    if notifier.is_enabled():
+        notifier.send_test_email()
+        logger.info(f"   ✓ {config['env']['smtp_user']}")
+    else:
+        logger.info("   ⊘ 邮件功能未启用（缺少SMTP环境变量配置）")
     
     # 8. 告警管理器
     logger.info("8. 初始化告警管理器...")
@@ -98,6 +108,7 @@ def initialize_system(config: Dict):
     logger.info(f"   ✓ 防抖={config['alert'].get('debounce_seconds', 10)}秒")
     
     return {
+        'config': config,
         'rest_client': rest_client,
         'kline_manager': kline_manager,
         'symbols': symbols,
@@ -109,38 +120,66 @@ def initialize_system(config: Dict):
     }
 
 
+def _print_cycle_summary(config: Dict):
+    """打印周期汇总日志"""
+    global _cycle_stats
+    
+    interval = config['kline']['interval']
+    closed = _cycle_stats['closed_count']
+    anomaly = _cycle_stats['anomaly_count']
+    
+    if closed == 0:
+        return
+    
+    top_indicators = _cycle_stats['top_indicators']
+    top_3 = sorted(top_indicators.items(), key=lambda x: x[1], reverse=True)[:3]
+    top_str = ', '.join([f"{k}={v}" for k, v in top_3]) if top_3 else "无"
+    
+    logger.info(f"[{interval}周期] 收盘={closed}个, 异常={anomaly}个, 热门指标: {top_str}")
+    
+    _cycle_stats['closed_count'] = 0
+    _cycle_stats['anomaly_count'] = 0
+    _cycle_stats['top_indicators'] = {}
+
+
 def process_kline(symbol: str, kline_data: Dict, components: Dict):
     """处理K线数据"""
-    # 1. 更新K线
+    global _cycle_stats
+    
     kline = Kline.from_dict(kline_data)
     components['kline_manager'].update(symbol, kline)
     
-    # 2. 实时K线处理（未收盘）
     if not kline.is_closed:
-        # 更新实时最低价
         components['kline_manager'].update_realtime_low(symbol, kline.low)
-        return  # 未收盘K线不进行后续处理
+        return
     
-    # 3. K线收盘：清除实时最低价
     components['kline_manager'].clear_realtime_low(symbol)
     
-    # 4. 计算指标
+    current_time = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')
+    if _cycle_stats['last_cycle_time'] != current_time:
+        if _cycle_stats['last_cycle_time'] is not None:
+            _print_cycle_summary(components['config'] if 'config' in components else load_config())
+        _cycle_stats['last_cycle_time'] = current_time
+    
+    _cycle_stats['closed_count'] += 1
+    
     indicators = components['indicator_calculator'].calculate_all(symbol)
     if not indicators:
         return
     
-    # 5. 异常检测
     anomaly = components['detector'].detect(indicators)
     if not anomaly:
         return
     
+    _cycle_stats['anomaly_count'] += 1
+    for ind in anomaly.triggered_indicators:
+        _cycle_stats['top_indicators'][ind] = _cycle_stats['top_indicators'].get(ind, 0) + 1
+    
     anomaly.price = kline.close
     
-    # 6. 冷却检查
     if not components['alert_manager'].should_alert(symbol):
         return
     
-    # 7. 加入队列（防抖机制会在10秒内无新告警后自动触发发送）
     components['alert_manager'].add_alert(anomaly)
     
     # 记录日志
@@ -204,8 +243,9 @@ def main():
         
         # 11. 开始监控
         logger.info("=" * 60)
+        email_status = config['env']['alert_email'] if config['env'].get('email_enabled') else '邮件已禁用'
         logger.info(f"✅ 监控启动 | {len(components['symbols'])}个交易对 | "
-                    f"{config['kline']['interval']}间隔 | {config['env']['alert_email']}")
+                    f"{config['kline']['interval']}间隔 | {email_status}")
         logger.info("=" * 60)
         
         # 保持运行

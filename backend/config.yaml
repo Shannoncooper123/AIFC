@@ -6,7 +6,7 @@
 
 # K线配置
 kline:
-  interval: "15m"          # 支持：1m/3m/5m/15m/30m/1h/4h/1d
+  interval: "3m"          # 支持：1m/3m/5m/15m/30m/1h/4h/1d
   history_size: 100        # 实时计算保留的K线数量
   warmup_size: 150         # 启动时预加载的历史K线数量
 

@@ -90,7 +90,11 @@ def _serialize_message(msg: Any) -> dict:
         result = {"role": "ai", "content": str(msg.content) if msg.content else ""}
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             result["tool_calls"] = [
-                {"name": tc.get("name", "unknown"), "args_keys": list(tc.get("args", {}).keys())}
+                {
+                    "name": tc.get("name", "unknown"), 
+                    "args_keys": list(tc.get("args", {}).keys()),
+                    "args": tc.get("args", {})
+                }
                 for tc in msg.tool_calls
             ]
         return result
@@ -110,6 +114,10 @@ class WorkflowTraceMiddleware(AgentMiddleware[dict, Any]):
         self._current_model_span_id: str | None = None
         self._model_call_seq = 0
         self._image_metas: list = []
+
+    def set_image_metas(self, metas: list) -> None:
+        """设置预生成的图像元数据（用于非工具生成的图像，如 opening_decision 节点直接生成的图像）"""
+        self._image_metas = metas
 
     def before_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         """模型调用前记录输入状态"""

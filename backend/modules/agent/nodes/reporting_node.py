@@ -34,17 +34,26 @@ def reporting_node(state: AgentState, config: RunnableConfig):
             pos_summary_str += "无持仓或无操作。"
         pos_summary_str += "\n\n"
 
-        analysis_results_str = "各交易对机会分析结论:\n"
+        analysis_results_str = "各交易对技术分析结论:\n"
         if state.analysis_results:
             for symbol, result in state.analysis_results.items():
                 analysis_results_str += f"- {symbol}: {result}\n"
         else:
-            analysis_results_str += "无新的交易机会分析结论。\n"
+            analysis_results_str += "无新的技术分析结论。\n"
+        analysis_results_str += "\n"
+
+        opening_decision_str = "各交易对开仓决策结果:\n"
+        if state.opening_decision_results:
+            for symbol, result in state.opening_decision_results.items():
+                opening_decision_str += f"- {symbol}: {result}\n"
+        else:
+            opening_decision_str += "无开仓决策执行。\n"
 
         reporting_input = (
             market_context_str
             + pos_summary_str
             + analysis_results_str
+            + opening_decision_str
         )
         logger.info(f"向 Reporting Agent 提供输入:\n{reporting_input}")
 

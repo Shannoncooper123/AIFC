@@ -1,5 +1,6 @@
 """FastAPI 主应用入口"""
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,10 +12,18 @@ from app.core.config import get_settings
 from app.services.thread_manager import thread_manager
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+class FlushingStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+handler = FlushingStreamHandler(sys.stdout)
+handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+root_logger.addHandler(handler)
+
 logger = logging.getLogger(__name__)
 
 

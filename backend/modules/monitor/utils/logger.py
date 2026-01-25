@@ -4,6 +4,13 @@ import sys
 from typing import Optional
 
 
+class FlushingStreamHandler(logging.StreamHandler):
+    """每次写入后自动刷新的 StreamHandler"""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+
 def setup_logger(name: str = 'crypto-monitor', level: str = 'INFO') -> logging.Logger:
     """配置并返回日志记录器
     
@@ -16,27 +23,24 @@ def setup_logger(name: str = 'crypto-monitor', level: str = 'INFO') -> logging.L
     """
     logger = logging.getLogger(name)
     
-    # 避免重复添加处理器
     if logger.handlers:
         return logger
     
-    # 设置日志级别
     log_level = getattr(logging, level.upper(), logging.INFO)
     logger.setLevel(log_level)
     
-    # 创建控制台处理器
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = FlushingStreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     
-    # 创建格式化器
     formatter = logging.Formatter(
-        '[%(asctime)s] %(levelname)s - %(message)s',
+        '[%(asctime)s] %(levelname)s - %(name)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     console_handler.setFormatter(formatter)
     
-    # 添加处理器
     logger.addHandler(console_handler)
+    
+    logger.propagate = False
     
     return logger
 
@@ -51,6 +55,12 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
         日志记录器
     """
     if name:
-        return logging.getLogger(f'crypto-monitor.{name}')
+        full_name = f'crypto-monitor.{name}'
+        child_logger = logging.getLogger(full_name)
+        
+        root_logger = logging.getLogger('crypto-monitor')
+        if not root_logger.handlers:
+            setup_logger()
+        
+        return child_logger
     return logging.getLogger('crypto-monitor')
-

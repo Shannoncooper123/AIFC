@@ -6,13 +6,20 @@
  * 节点显示名称映射
  */
 const NODE_NAME_MAP: Record<string, string> = {
-  context_injection: '📋 上下文注入',
-  position_management: '💼 持仓管理',
-  analyze_symbol: '📊 币种分析',
-  single_symbol_analysis: '📊 币种分析',
-  reporting: '📝 报告生成',
-  analysis_barrier: '⏸️ 分析屏障',
-  join_node: '🔗 汇合节点',
+  context_injection: '上下文注入',
+  position_management: '持仓管理',
+  analyze_symbol: '币种分析',
+  analysis: '技术分析',
+  decision: '开仓决策',
+  single_symbol_analysis: '技术分析',
+  opening_decision: '开仓决策',
+  reporting: '报告生成',
+  barrier: '占位节点',
+  analysis_barrier: '占位节点',
+  join_node: '汇合节点',
+  pm_barrier: '持仓屏障',
+  ab_barrier_1: '占位节点',
+  ab_barrier_2: '占位节点',
 };
 
 /**
@@ -22,7 +29,7 @@ const NODE_NAME_MAP: Record<string, string> = {
  */
 export function getNodeDisplayName(node: string): string {
   if (node.startsWith('tool:')) {
-    return `🔧 ${node.replace('tool:', '')}`;
+    return node.replace('tool:', '');
   }
   return NODE_NAME_MAP[node] || node;
 }

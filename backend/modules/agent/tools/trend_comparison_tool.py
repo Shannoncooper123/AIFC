@@ -93,7 +93,7 @@ def trend_comparison_tool(symbol: str, interval: str, feedback: str) -> List[Dic
     
     try:
         return_limit = 30  # 最终返回30根K线
-        fetch_limit = 60   # 实际获取60根K线（确保指标计算完整）
+        fetch_limit = 80   # 实际获取80根K线（window=20 + return=30 + buffer=30）
         
         # 记录工具调用
         logger.info(f"trend_comparison_tool 被调用 - symbol={symbol}, interval={interval}, feedback={feedback}")
@@ -169,8 +169,8 @@ def trend_comparison_tool(symbol: str, interval: str, feedback: str) -> List[Dic
             
             logger.info(f"趋势对比指标计算完成 - {symbol} vs BTC，共{len(all_points)}个数据点")
         
-        # 只返回最后 return_limit 个数据点
-        series = all_points[-return_limit:] if len(all_points) >= return_limit else all_points
+        valid_points = [p for p in all_points if p.get("trend_comparison") is not None]
+        series = valid_points[-return_limit:] if len(valid_points) >= return_limit else valid_points
         
         # 在第一个元素中添加 feedback 字段
         if series:

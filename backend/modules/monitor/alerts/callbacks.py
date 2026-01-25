@@ -18,10 +18,13 @@ def create_send_alerts_callback(notifier: EmailNotifier, config: Dict):
     - 将聚合告警以结构化JSON写入JSONL供旁路Agent读取
     """
     def _callback(alerts: List[AnomalyResult]):
-        # 检查是否启用告警邮件发送
-        send_email_enabled = config.get('alert', {}).get('send_email', True)
+        # 检查邮件功能是否启用（环境变量配置）
+        email_env_enabled = config.get('env', {}).get('email_enabled', False)
+        # 检查是否启用告警邮件发送（config.yaml配置）
+        send_email_enabled = email_env_enabled and config.get('alert', {}).get('send_email', True)
         
-        logger.info(f"📧 聚合告警 ({len(alerts)}个币种) [邮件发送: {'启用' if send_email_enabled else '禁用'}]")
+        email_status = '启用' if send_email_enabled else ('禁用(缺少SMTP配置)' if not email_env_enabled else '禁用(config.yaml)')
+        logger.info(f"📧 聚合告警 ({len(alerts)}个币种) [邮件发送: {email_status}]")
         
         # 使用普通监控的告警路径（规则策略使用独立的实时告警）
         agent_cfg = config.get('agent', {})

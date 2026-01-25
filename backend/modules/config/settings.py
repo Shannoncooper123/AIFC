@@ -118,6 +118,13 @@ class ConfigLoader:
         env_config['smtp_use_tls'] = os.getenv('SMTP_USE_TLS', 'true').lower() == 'true'
         env_config['alert_email'] = os.getenv('ALERT_EMAIL', '')
         
+        # 邮件功能是否启用（当SMTP_USER、SMTP_PASSWORD、ALERT_EMAIL都配置时才启用）
+        env_config['email_enabled'] = bool(
+            env_config['smtp_user'] and 
+            env_config['smtp_password'] and 
+            env_config['alert_email']
+        )
+        
         # 日志级别
         env_config['log_level'] = os.getenv('LOG_LEVEL', 'INFO')
         
@@ -129,18 +136,12 @@ class ConfigLoader:
     
     def _validate_config(self, config: Dict[str, Any]):
         """验证配置完整性"""
-        # 验证必需的环境变量
         env = config['env']
-        required_env = ['smtp_user', 'smtp_password', 'alert_email']
         
-        missing = [key for key in required_env if not env.get(key)]
-        if missing:
-            missing_str = ', '.join(k.upper() for k in missing)
-            raise ValueError(f"缺少必需的环境变量: {missing_str}。请检查.env文件")
-        
-        # 验证邮箱格式
-        if '@' not in env['smtp_user'] or '@' not in env['alert_email']:
-            raise ValueError("邮箱格式不正确")
+        # 邮件配置验证（仅当启用时验证格式）
+        if env.get('email_enabled'):
+            if '@' not in env['smtp_user'] or '@' not in env['alert_email']:
+                raise ValueError("邮箱格式不正确")
         
         # 验证K线间隔
         if config['kline']['interval'] not in VALID_INTERVALS:

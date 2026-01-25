@@ -22,11 +22,16 @@ def send_email_tool(subject: str, body_html: str) -> bool | dict:
     def _error(msg: str) -> dict:
         return {"error": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。"}
     try:
+        cfg = get_config()
+        
+        if not cfg['env'].get('email_enabled', False):
+            return {"status": "skipped", "message": "邮件功能未启用（缺少SMTP环境变量配置）"}
+        
         if not isinstance(subject, str) or not subject.strip():
             return _error("参数 subject 必须为非空字符串")
         if not isinstance(body_html, str) or not body_html.strip():
             return _error("参数 body_html 必须为非空字符串（HTML）")
-        cfg = get_config()
+        
         notifier = EmailNotifier(cfg)
         target = cfg['agent'].get('report_email') or cfg['env']['alert_email']
         if not target:

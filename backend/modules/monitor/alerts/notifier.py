@@ -18,12 +18,21 @@ class EmailNotifier:
             config: 配置字典
         """
         env = config['env']
-        self.smtp_host = env['smtp_host']
-        self.smtp_port = env['smtp_port']
-        self.smtp_user = env['smtp_user']
-        self.smtp_password = env['smtp_password']
-        self.smtp_use_tls = env['smtp_use_tls']
-        self.alert_email = env['alert_email']
+        self.enabled = env.get('email_enabled', False)
+        self.smtp_host = env.get('smtp_host', '')
+        self.smtp_port = env.get('smtp_port', 587)
+        self.smtp_user = env.get('smtp_user', '')
+        self.smtp_password = env.get('smtp_password', '')
+        self.smtp_use_tls = env.get('smtp_use_tls', True)
+        self.alert_email = env.get('alert_email', '')
+    
+    def is_enabled(self) -> bool:
+        """检查邮件功能是否启用
+        
+        Returns:
+            是否启用
+        """
+        return self.enabled
     
     def send_test_email(self) -> bool:
         """发送测试邮件
@@ -31,6 +40,10 @@ class EmailNotifier:
         Returns:
             是否成功
         """
+        if not self.enabled:
+            print("邮件功能未启用（缺少SMTP配置），跳过测试邮件发送")
+            return True
+        
         try:
             subject = "加密货币监控系统 - 测试邮件"
             body = f"""
@@ -57,6 +70,9 @@ class EmailNotifier:
         Returns:
             是否成功
         """
+        if not self.enabled:
+            return True
+        
         if not alerts:
             return False
         
@@ -195,16 +211,17 @@ class EmailNotifier:
         Returns:
             是否成功
         """
+        if not self.enabled:
+            return True
+        
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
         msg['From'] = self.smtp_user
         msg['To'] = self.alert_email
         
-        # 添加HTML内容
         html_part = MIMEText(html_body, 'html', 'utf-8')
         msg.attach(html_part)
         
-        # 发送邮件
         try:
             if self.smtp_use_tls:
                 server = smtplib.SMTP(self.smtp_host, self.smtp_port)
