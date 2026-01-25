@@ -45,11 +45,11 @@ class VisionMiddleware(AgentMiddleware):
                         'kline_count': content.get('kline_count', 0)
                     }
                     self.pending_images.append(image_info)
-                    simplified_content = f"""[KLINE_IMAGE]K线图已生成
+                    simplified_content = f"""[KLINE_IMAGE]K线图已生成在用户消息内
 
-**交易对**: {content.get('symbol')}
-**时间周期**: {', '.join(content.get('intervals', []))}
-**K线数量**: 每个周期 {content.get('kline_count')} 根
+交易对: {content.get('symbol')}
+时间周期: {', '.join(content.get('intervals', []))}
+K线数量:  {content.get('kline_count')} 根
 """
                     return ToolMessage(
                         content=simplified_content,
