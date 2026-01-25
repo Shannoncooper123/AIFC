@@ -294,7 +294,7 @@ def get_kline_image_tool(
 ) -> str:
     """获取单周期K线图并进行视觉分析（含技术指标：EMA、MACD、RSI、Bollinger Bands）。
     
-    该工具生成指定时间周期的K线蜡烛图，返回包括趋势方向、支撑阻力位、技术形态等关键技术分析结果。
+    该工具生成指定时间周期的K线图，返回包括趋势方向、支撑阻力位、技术形态等关键技术分析结果。
     返回JSON字符串，包含 success、symbol、intervals、kline_count、image_data（base64图像）。错误时返回 {"error": "..."}。
     
     Args:
