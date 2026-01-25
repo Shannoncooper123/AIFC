@@ -1,12 +1,13 @@
-import { Briefcase, History, TrendingUp, TrendingDown } from 'lucide-react';
+import { Briefcase, History, TrendingUp, TrendingDown, Clock } from 'lucide-react';
 import { formatCurrency } from '../../../utils';
 
-export type PositionsTab = 'open' | 'history';
+export type PositionsTab = 'open' | 'history' | 'orders';
 
 interface PositionsTabsProps {
   activeTab: PositionsTab;
   onTabChange: (tab: PositionsTab) => void;
   openPositionsCount?: number;
+  ordersCount?: number;
   historyCount?: number;
   totalPnl?: number;
   historyLimit: number;
@@ -17,6 +18,7 @@ export function PositionsTabs({
   activeTab,
   onTabChange,
   openPositionsCount,
+  ordersCount,
   historyCount,
   totalPnl = 0,
   historyLimit,
@@ -40,6 +42,22 @@ export function PositionsTabs({
           {openPositionsCount !== undefined && (
             <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
               {openPositionsCount}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => onTabChange('orders')}
+          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
+            activeTab === 'orders'
+              ? 'bg-neutral-800 text-white'
+              : 'text-neutral-400 hover:text-white'
+          }`}
+        >
+          <Clock className="h-4 w-4" />
+          Pending Orders
+          {ordersCount !== undefined && (
+            <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
+              {ordersCount}
             </span>
           )}
         </button>

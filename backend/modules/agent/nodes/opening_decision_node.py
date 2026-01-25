@@ -13,6 +13,7 @@ from modules.agent.middleware.workflow_trace_middleware import WorkflowTraceMidd
 from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.open_position_tool import open_position_tool
+from modules.agent.tools.create_limit_order_tool import create_limit_order_tool
 from modules.agent.tools.tool_utils import get_binance_client
 from modules.agent.utils.trace_decorators import traced_node
 from modules.agent.utils.workflow_trace_storage import get_current_run_id, save_image_artifact, get_existing_artifacts
@@ -173,6 +174,7 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
         tools = [
             calc_metrics_tool,
             open_position_tool,
+            create_limit_order_tool,
         ]
 
         prompt_path = os.path.join(os.path.dirname(__file__), 'prompts/opening_decision_prompt.md')

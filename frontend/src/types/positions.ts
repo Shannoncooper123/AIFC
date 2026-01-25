@@ -34,3 +34,20 @@ export interface PositionHistory {
   open_run_id?: string;
   close_run_id?: string;
 }
+
+export interface LimitOrder {
+  id: string;
+  symbol: string;
+  side: string;
+  order_type: string;
+  limit_price: number;
+  margin_usdt: number;
+  leverage: number;
+  tp_price?: number;
+  sl_price?: number;
+  create_time: string;
+  status: string;
+  filled_time?: string;
+  filled_price?: number;
+  position_id?: string;
+}

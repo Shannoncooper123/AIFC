@@ -4,6 +4,7 @@ import { PageHeader } from '../components/layout';
 import {
   PositionsTable,
   HistoryTable,
+  LimitOrdersTable,
   PositionsTabs,
   usePositionsQuery,
   usePositionHistoryQuery,
@@ -60,6 +61,7 @@ export function PositionsPage() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           openPositionsCount={positionsData?.total}
+          ordersCount={positionsData?.pending_orders?.length}
           historyCount={historyData?.total}
           totalPnl={historyData?.total_pnl ?? 0}
           historyLimit={historyLimit}
@@ -69,6 +71,11 @@ export function PositionsPage() {
         {activeTab === 'open' ? (
           <PositionsTable
             positions={positionsData?.positions ?? []}
+            isLoading={isLoadingPositions}
+          />
+        ) : activeTab === 'orders' ? (
+          <LimitOrdersTable
+            orders={positionsData?.pending_orders ?? []}
             isLoading={isLoadingPositions}
           />
         ) : (

@@ -3,9 +3,9 @@
  */
 
 import { apiClient } from './client';
-import type { Position, PositionHistory } from '../../types';
+import type { Position, PositionHistory, LimitOrder } from '../../types';
 
-export async function getPositions(): Promise<{ positions: Position[]; total: number }> {
+export async function getPositions(): Promise<{ positions: Position[]; total: number; pending_orders: LimitOrder[] }> {
   const { data } = await apiClient.get('/positions');
   return data;
 }

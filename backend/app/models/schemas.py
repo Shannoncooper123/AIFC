@@ -107,6 +107,7 @@ class PositionsResponse(BaseModel):
     """持仓列表响应"""
     positions: List[Position]
     total: int
+    pending_orders: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class PositionHistoryEntry(BaseModel):

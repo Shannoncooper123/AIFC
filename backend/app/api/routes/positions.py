@@ -118,14 +118,25 @@ async def get_positions():
     """获取当前持仓"""
     agent_config = get_config("agent")
     trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/data/trade_state.json")
+    pending_orders_path = trade_state_path.parent / "pending_orders.json"
     
-    data = await load_json_file(trade_state_path)
-    positions_data = data.get("positions", [])
+    trade_data, pending_data = await asyncio.gather(
+        load_json_file(trade_state_path),
+        load_json_file(pending_orders_path)
+    )
+    
+    positions_data = trade_data.get("positions", [])
     
     open_positions = [p for p in positions_data if p.get("status") == "open"]
     positions = [parse_position(p) for p in open_positions]
     
-    return PositionsResponse(positions=positions, total=len(positions))
+    pending_orders = pending_data if isinstance(pending_data, list) else []
+    
+    return PositionsResponse(
+        positions=positions, 
+        total=len(positions),
+        pending_orders=pending_orders
+    )
 
 
 @router.get("/history", response_model=PositionHistoryResponse)
@@ -180,17 +191,21 @@ async def get_trade_state():
     """获取完整交易状态"""
     agent_config = get_config("agent")
     trade_state_path = BASE_DIR / agent_config.get("trade_state_path", "modules/data/trade_state.json")
+    pending_orders_path = trade_state_path.parent / "pending_orders.json"
     
-    data = await load_json_file(trade_state_path)
+    trade_data, pending_data = await asyncio.gather(
+        load_json_file(trade_state_path),
+        load_json_file(pending_orders_path)
+    )
     
-    account_data = data.get("account", {})
+    account_data = trade_data.get("account", {})
     account = parse_account(account_data)
     
-    positions_data = data.get("positions", [])
+    positions_data = trade_data.get("positions", [])
     open_positions = [p for p in positions_data if p.get("status") == "open"]
     positions = [parse_position(p) for p in open_positions]
     
-    pending_orders = data.get("pending_orders", [])
+    pending_orders = pending_data if isinstance(pending_data, list) else []
     
     return TradeStateResponse(
         account=account,
