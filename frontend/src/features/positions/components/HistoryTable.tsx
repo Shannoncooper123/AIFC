@@ -77,6 +77,9 @@ export function HistoryTable({ positions, isLoading }: HistoryTableProps) {
           <thead>
             <tr className="border-b border-neutral-800 bg-[#141414]">
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-neutral-400">
+                Opened At
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-neutral-400">
                 Closed At
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-neutral-400">
@@ -115,6 +118,12 @@ export function HistoryTable({ positions, isLoading }: HistoryTableProps) {
                   key={`${position.symbol}-${position.closed_at}-${idx}`}
                   className="transition-all duration-200 hover:bg-neutral-800/50"
                 >
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <div className="flex items-center gap-2 text-sm text-neutral-300">
+                      <Clock className="h-4 w-4 text-emerald-500/60" />
+                      {formatTime(position.opened_at)}
+                    </div>
+                  </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <div className="flex items-center gap-2 text-sm text-neutral-300">
                       <Clock className="h-4 w-4 text-neutral-500" />

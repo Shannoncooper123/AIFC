@@ -1,4 +1,4 @@
-import { ArrowUpRight, ArrowDownRight, Target, ShieldAlert, ExternalLink } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Target, ShieldAlert, ExternalLink, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Position } from '../../../types';
 
@@ -39,6 +39,11 @@ export function PositionsTable({ positions, isLoading }: PositionsTableProps) {
     }).format(size);
   };
 
+  const formatTime = (ts: string | undefined) => {
+    if (!ts) return '-';
+    return new Date(ts).toLocaleString();
+  };
+
   if (isLoading) {
     return (
       <div className="overflow-hidden rounded-xl border border-neutral-800 bg-[#1a1a1a]">
@@ -67,6 +72,9 @@ export function PositionsTable({ positions, isLoading }: PositionsTableProps) {
         <table className="w-full min-w-[800px]">
           <thead>
             <tr className="border-b border-neutral-800 bg-[#141414]">
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-neutral-400">
+                Opened At
+              </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-neutral-400">
                 Symbol
               </th>
@@ -106,6 +114,12 @@ export function PositionsTable({ positions, isLoading }: PositionsTableProps) {
                   key={`${position.symbol}-${position.side}`}
                   className="transition-all duration-200 hover:bg-neutral-800/50"
                 >
+                  <td className="whitespace-nowrap px-4 py-4">
+                    <div className="flex items-center gap-2 text-sm text-neutral-300">
+                      <Clock className="h-4 w-4 text-emerald-500/60" />
+                      {formatTime(position.opened_at)}
+                    </div>
+                  </td>
                   <td className="whitespace-nowrap px-4 py-4">
                     <span className="font-medium text-white">{position.symbol}</span>
                   </td>
