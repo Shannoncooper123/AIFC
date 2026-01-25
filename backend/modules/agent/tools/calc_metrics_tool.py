@@ -44,31 +44,19 @@ def calc_metrics_tool(
         - 自动计算 R:R、1R/2R 触发价位
         - 纯计算工具，不提供任何交易建议
 
+    返回结构化字典，包含：
+        - inputs: 原始入参回显（含自动获取的 entry_price）
+        - metrics: entry_price, sl_distance, tp_distance, rr, r1_price, r2_price
+        - checks: sl_distance_pct（止损距离百分比）
+        - feedback: 原路返回的分析进度说明
+    错误时返回 {"error": "...", "feedback": ...}
+
     Args:
         symbol: 交易对，如 "BTCUSDT"。必须为非空字符串。
-        side: 仓位方向，仅支持 "BUY" 或 "SELL"（大写）。多头要求 tp > entry > sl，
-            空头要求 sl > entry > tp。
+        side: 仓位方向，仅支持 "BUY" 或 "SELL"（大写）。多头要求 tp > entry > sl，空头要求 sl > entry > tp。
         tp_price: 止盈价格（正数，绝对价格）。
         sl_price: 止损价格（正数，绝对价格）。
-        feedback: 当前分析进度总结，详细说明当前的分析阶段与下一步计划。
-            必须为非空字符串，用于追溯决策逻辑。
-
-    Returns:
-        Dict[str, Any]: 结构化结果，主要包含：
-            - inputs: 原始入参的规范化回显（含自动获取的 entry_price）。
-            - metrics:
-                - entry_price (float): 自动获取的最新价（入场价）。
-                - sl_distance (float): SL 与入场的距离（价格单位）。
-                - tp_distance (float): TP 与入场的距离（价格单位）。
-                - rr (float): 风险回报比 = tp_distance / sl_distance。
-                - r1_price (float): 1R 触发价（用于移动保护到盈亏平衡）。
-                - r2_price (float): 2R 触发价（用于启用追踪止盈）。
-            - checks:
-                - sl_distance_pct (float): 止损距离百分比。
-            - feedback (str): 原路返回调用时提供的分析进度说明。
-
-    Raises:
-        无显式异常；错误时以 {"error": "TOOL_INPUT_ERROR/TOOL_RUNTIME_ERROR: ...", "feedback": ...} 返回。
+        feedback: 当前分析进度总结，详细说明当前的分析阶段与下一步计划。必须为非空字符串。
     """
     try:
         # 1. 参数校验

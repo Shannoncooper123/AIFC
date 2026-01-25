@@ -295,14 +295,12 @@ def get_kline_image_tool(
     """获取单周期K线图并进行视觉分析（含技术指标：EMA、MACD、RSI、Bollinger Bands）。
     
     该工具生成指定时间周期的K线蜡烛图，返回包括趋势方向、支撑阻力位、技术形态等关键技术分析结果。
+    返回JSON字符串，包含 success、symbol、intervals、kline_count、image_data（base64图像）。错误时返回 {"error": "..."}。
     
     Args:
         symbol: 交易对，如 "BTCUSDT"
         interval: 时间周期，如 "15m"、"1h"、"4h"、"1d"。默认为 "1h"。注意：仅支持单个周期。
-        feedback: 分析进度笔记。请填写：1) 上一周期分析的关键结论（趋势方向、关键位、动能状态）；2) 本次调用的分析目的（如"验证4h趋势是否与1d一致"或"寻找1h级别的入场触发信号"）。"
-    
-    Returns:
-        包含图像数据和元数据的JSON字符串
+        feedback: 分析进度笔记。请填写：1) 上一周期分析的关键结论（趋势方向、关键位、动能状态）；2) 本次调用的分析目的（如"验证4h趋势是否与1d一致"或"寻找1h级别的入场触发信号"）。
     """
     def _make_error(msg: str) -> str:
         import json

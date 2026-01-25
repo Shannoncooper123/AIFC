@@ -15,7 +15,7 @@ from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.open_position_tool import open_position_tool
 from modules.agent.tools.tool_utils import get_binance_client
 from modules.agent.utils.trace_decorators import traced_node
-from modules.agent.utils.workflow_trace_storage import get_current_run_id, save_image_artifact
+from modules.agent.utils.workflow_trace_storage import get_current_run_id, save_image_artifact, get_existing_artifacts
 from modules.monitor.data.models import Kline
 from modules.monitor.utils.logger import get_logger
 
@@ -41,7 +41,10 @@ def _format_account_summary(account: Dict[str, Any]) -> str:
 
 
 def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
-    """生成多周期K线图像用于复核，并保存 artifacts
+    """获取多周期K线图像用于复核
+    
+    优先复用 single_symbol_analysis 节点中已生成的图像，避免重复生成。
+    仅当图像不存在时才重新生成。
     
     Returns:
         (images, image_metas): images 用于构建消息，image_metas 用于 trace 匹配
@@ -50,36 +53,56 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
     
     images = []
     image_metas = []
-    client = get_binance_client()
     run_id = get_current_run_id()
     
-    for interval in intervals:
-        try:
-            fetch_limit = 300
-            display_limit = 200
-            raw = client.get_klines(symbol, interval, fetch_limit)
-            
-            if not raw:
-                logger.warning(f"未获取到 {symbol} {interval} K线数据")
-                continue
+    existing_artifacts = {}
+    if run_id:
+        existing_artifacts = get_existing_artifacts(run_id, symbol, intervals)
+        if existing_artifacts:
+            logger.info(f"复用已存在的 artifact: {list(existing_artifacts.keys())}")
+    
+    missing_intervals = [iv for iv in intervals if iv not in existing_artifacts]
+    
+    for interval in existing_artifacts:
+        images.append({
+            "interval": interval,
+            "image_base64": existing_artifacts[interval],
+        })
+        image_metas.append({"symbol": symbol, "interval": interval})
+    
+    if missing_intervals:
+        logger.info(f"需要生成缺失的图像: {missing_intervals}")
+        client = get_binance_client()
+        
+        for interval in missing_intervals:
+            try:
+                fetch_limit = 300
+                display_limit = 200
+                raw = client.get_klines(symbol, interval, fetch_limit)
                 
-            klines = [Kline.from_rest_api(item) for item in raw]
-            image_base64 = _plot_candlestick_chart(klines, symbol, interval, display_limit)
-            
-            images.append({
-                "interval": interval,
-                "image_base64": image_base64,
-            })
-            
-            if run_id:
-                save_image_artifact(run_id, symbol, interval, image_base64)
-            image_metas.append({"symbol": symbol, "interval": interval})
-            
-            logger.info(f"生成 {symbol} {interval} 复核图像成功")
-            
-        except Exception as e:
-            logger.error(f"生成 {symbol} {interval} 图像失败: {e}")
-            continue
+                if not raw:
+                    logger.warning(f"未获取到 {symbol} {interval} K线数据")
+                    continue
+                    
+                klines = [Kline.from_rest_api(item) for item in raw]
+                image_base64 = _plot_candlestick_chart(klines, symbol, interval, display_limit)
+                
+                images.append({
+                    "interval": interval,
+                    "image_base64": image_base64,
+                })
+                
+                if run_id:
+                    save_image_artifact(run_id, symbol, interval, image_base64)
+                image_metas.append({"symbol": symbol, "interval": interval})
+                
+                logger.info(f"生成 {symbol} {interval} 复核图像成功")
+                
+            except Exception as e:
+                logger.error(f"生成 {symbol} {interval} 图像失败: {e}")
+                continue
+    
+    images.sort(key=lambda x: intervals.index(x["interval"]) if x["interval"] in intervals else 999)
     
     return images, image_metas
 

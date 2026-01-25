@@ -12,13 +12,12 @@ from datetime import datetime, timezone
 def write_report_tool(summary: str, symbol_focus_map: dict, position_next_focus: str) -> str | dict:
     """归档本次分析的结论。
     
+    成功时返回字符串 "report_written:<path>"；失败时返回 {"error": "..."}。
+    
     Args:
         summary: 分析概览，包含本轮分析的总结与核心决策与理由的简洁文本。
         symbol_focus_map: 每个币种的下一轮分析重点映射（字典：symbol → 关注点/计划/触发条件）。
         position_next_focus: 下一轮持仓管理的关注重点摘要文本（多行或单行，简洁可审计）。
-    
-    Returns:
-        成功时返回字符串 "report_written:<path>"；失败时返回错误字典 {"error": "..."}。
     """
     def _error(msg: str) -> dict:
         return {"error": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。"}

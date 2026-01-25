@@ -327,3 +327,45 @@ def save_image_artifact(
     }
     append_event({"type": "artifact", "run_id": run_id, "ts": _now_iso(), "payload": artifact}, cfg)
     return artifact
+
+
+def get_existing_artifacts(
+    run_id: str,
+    symbol: str,
+    intervals: List[str],
+    cfg: Optional[Dict[str, Any]] = None
+) -> Dict[str, str]:
+    """获取已存在的图像 artifact（base64 编码）
+    
+    Args:
+        run_id: 运行 ID
+        symbol: 交易对
+        intervals: 需要获取的周期列表
+        cfg: 配置
+        
+    Returns:
+        {interval: base64_image} 字典，仅包含已存在的图像
+    """
+    artifacts_dir = _get_artifacts_dir(cfg)
+    run_dir = os.path.join(artifacts_dir, run_id)
+    
+    if not os.path.exists(run_dir):
+        return {}
+    
+    result = {}
+    for interval in intervals:
+        pattern = f"{symbol}_{interval}_"
+        matching_files = [f for f in os.listdir(run_dir) if f.startswith(pattern) and f.endswith('.png')]
+        
+        if matching_files:
+            matching_files.sort(reverse=True)
+            latest_file = matching_files[0]
+            file_path = os.path.join(run_dir, latest_file)
+            
+            try:
+                with open(file_path, "rb") as f:
+                    result[interval] = base64.b64encode(f.read()).decode('utf-8')
+            except Exception as e:
+                logger.warning(f"读取 artifact 失败 {file_path}: {e}")
+    
+    return result

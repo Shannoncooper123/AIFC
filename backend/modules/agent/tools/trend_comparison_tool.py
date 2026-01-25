@@ -66,7 +66,7 @@ def _calculate_zscore_trend(klines_data: List[Kline], window: int = 20) -> List[
     description="对比目标币种相对于BTC的趋势强度（基于Z-score标准化）",
     parse_docstring=True
 )
-def trend_comparison_tool(symbol: str, interval: str, feedback: str) -> List[Dict[str, Any]]:
+def trend_comparison_tool(symbol: str, interval: str, feedback: str) -> List[float]:
     """对比目标币种相对于BTC的趋势强度时间序列（固定30根）。
     
     通过计算目标币种和BTC的Z-score差值，判断该币种相对市场（BTC）的相对强弱：
@@ -75,30 +75,23 @@ def trend_comparison_tool(symbol: str, interval: str, feedback: str) -> List[Dic
     - **持续正值**：强势特征，适合做多
     - **持续负值**：弱势特征，适合做空或观望
     
+    返回：30个浮点数列表，从旧到新排列，正值表示强于BTC，负值表示弱于BTC。
+    
     Args:
         symbol: 交易对，如 ETHUSDT。注意：如果是 BTCUSDT，所有值将返回0
         interval: K线间隔，如 3m、15m、1h、4h
         feedback: 当前分析进度总结，详细说明当前的分析阶段，并给出下一步的计划
-    
-    Returns:
-        趋势对比数据列表（30个数据点），每个元素包含：
-        - trend_comparison: 趋势对比值（目标币种Z-score - BTC Z-score）
-        - symbol_zscore: 目标币种的Z-score
-        - btc_zscore: BTC的Z-score
-        
-        注：工具自动获取60根K线确保指标完整计算，返回最近30个数据点
     """
-    def _error(msg: str) -> List[Dict[str, Any]]:
-        return [{"error": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。", "feedback": feedback if isinstance(feedback, str) else ""}]
+    def _error(msg: str) -> str:
+        import json
+        return json.dumps({"error": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。"}, ensure_ascii=False)
     
     try:
-        return_limit = 30  # 最终返回30根K线
-        fetch_limit = 80   # 实际获取80根K线（window=20 + return=30 + buffer=30）
+        return_limit = 30
+        fetch_limit = 80
         
-        # 记录工具调用
         logger.info(f"trend_comparison_tool 被调用 - symbol={symbol}, interval={interval}, feedback={feedback}")
         
-        # 参数校验
         if not isinstance(symbol, str) or not symbol:
             return _error("参数 symbol 必须为非空字符串，如 'ETHUSDT'")
         if not isinstance(interval, str) or not interval:
@@ -112,72 +105,47 @@ def trend_comparison_tool(symbol: str, interval: str, feedback: str) -> List[Dic
         from modules.agent.tools.tool_utils import get_binance_client
         client = get_binance_client()
         
-        # 获取目标币种K线数据
         raw = client.get_klines(symbol, interval, fetch_limit)
         if not raw:
-            return [{"error": "TOOL_RUNTIME_ERROR: 未获取到K线数据，请检查 symbol/interval 或稍后重试。", "feedback": feedback}]
+            import json
+            return json.dumps({"error": "TOOL_RUNTIME_ERROR: 未获取到K线数据"}, ensure_ascii=False)
         
         klines: List[Kline] = [Kline.from_rest_api(item) for item in raw]
-        all_points: List[Dict[str, Any]] = []
+        all_values: List[float] = []
         
-        # 如果目标币种是BTCUSDT，所有对比值返回0
         if symbol.upper() == 'BTCUSDT':
             logger.info(f"目标币种为BTCUSDT，趋势对比值全部返回0")
-            for i in range(len(klines)):
-                point = {
-                    "trend_comparison": 0.0,
-                    "symbol_zscore": 0.0,
-                    "btc_zscore": 0.0
-                }
-                all_points.append(point)
+            all_values = [0.0] * len(klines)
         else:
-            # 获取BTC的K线数据
             raw_btc = client.get_klines('BTCUSDT', interval, fetch_limit)
             if not raw_btc:
-                return [{"error": "TOOL_RUNTIME_ERROR: 未获取到BTC K线数据", "feedback": feedback}]
+                import json
+                return json.dumps({"error": "TOOL_RUNTIME_ERROR: 未获取到BTC K线数据"}, ensure_ascii=False)
             
             btc_klines: List[Kline] = [Kline.from_rest_api(item) for item in raw_btc]
             
-            # 确保两个币种的K线数量一致
             min_len = min(len(klines), len(btc_klines))
             klines = klines[:min_len]
             btc_klines = btc_klines[:min_len]
             
-            # 计算两个币种的Z-score
             symbol_zscores = _calculate_zscore_trend(klines)
             btc_zscores = _calculate_zscore_trend(btc_klines)
             
-            # 计算趋势对比值
             for i in range(len(klines)):
                 symbol_z = symbol_zscores[i]
                 btc_z = btc_zscores[i]
                 
                 if symbol_z is not None and btc_z is not None:
-                    trend_comp = symbol_z - btc_z
-                    point = {
-                        "trend_comparison": round(float(trend_comp), 4),
-                        "symbol_zscore": round(float(symbol_z), 4),
-                        "btc_zscore": round(float(btc_z), 4)
-                    }
-                else:
-                    point = {
-                        "trend_comparison": None,
-                        "symbol_zscore": None,
-                        "btc_zscore": None
-                    }
-                all_points.append(point)
+                    trend_comp = round(float(symbol_z - btc_z), 2)
+                    all_values.append(trend_comp)
             
-            logger.info(f"趋势对比指标计算完成 - {symbol} vs BTC，共{len(all_points)}个数据点")
+            logger.info(f"趋势对比指标计算完成 - {symbol} vs BTC，共{len(all_values)}个有效数据点")
         
-        valid_points = [p for p in all_points if p.get("trend_comparison") is not None]
-        series = valid_points[-return_limit:] if len(valid_points) >= return_limit else valid_points
-        
-        # 在第一个元素中添加 feedback 字段
-        if series:
-            series[0]["feedback"] = feedback
+        series = all_values[-return_limit:] if len(all_values) >= return_limit else all_values
         
         return series
         
     except Exception as e:
         logger.error(f"计算趋势对比指标失败: {e}", exc_info=True)
-        return [{"error": f"TOOL_RUNTIME_ERROR: 计算趋势对比指标失败 - {str(e)}", "feedback": feedback if isinstance(feedback, str) else ""}]
+        import json
+        return json.dumps({"error": f"TOOL_RUNTIME_ERROR: 计算趋势对比指标失败 - {str(e)}"}, ensure_ascii=False)

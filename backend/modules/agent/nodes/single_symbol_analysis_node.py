@@ -155,7 +155,7 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
             model=os.getenv('AGENT_MODEL'),
             api_key=os.getenv('AGENT_API_KEY'),
             base_url=os.getenv('AGENT_BASE_URL') or None,
-            temperature=0.2,
+            temperature=0.1,
             timeout=600,
             max_tokens=16000,
             logprobs=False,
