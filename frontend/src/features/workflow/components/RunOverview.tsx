@@ -48,7 +48,7 @@ export function RunOverview({
         </div>
         <div>
           <div className="text-neutral-400">节点数</div>
-          <div className="text-white mt-1">{timeline.spans.length}</div>
+          <div className="text-white mt-1">{timeline.traces.length}</div>
         </div>
         <div>
           <div className="text-neutral-400">图像数</div>

@@ -8,7 +8,7 @@ import {
   XCircle,
   Loader2,
 } from 'lucide-react';
-import type { WorkflowTimeline, WorkflowSpan, WorkflowArtifact } from '../../../types';
+import type { WorkflowTimeline, WorkflowTraceItem, WorkflowArtifact } from '../../../types';
 import { formatDuration } from '../../../utils';
 import { getStatusColor, getStatusBgColor } from '../utils/workflowHelpers';
 
@@ -55,65 +55,60 @@ function getStatusText(status: string): string {
 
 /**
  * 统计所有 model_call 和 tool_call 数量
- * @param spans - 工作流 span 列表
+ * @param traces - 工作流 trace 列表
  * @returns 统计结果
  */
-function countCalls(spans: WorkflowSpan[]): { modelCalls: number; toolCalls: number } {
+function countCalls(traces: WorkflowTraceItem[]): { modelCalls: number; toolCalls: number } {
   let modelCalls = 0;
   let toolCalls = 0;
 
-  function traverse(spanList: WorkflowSpan[]) {
-    for (const span of spanList) {
-      for (const child of span.children) {
-        if (child.type === 'model_call') {
-          modelCalls++;
-        } else if (child.type === 'tool_call') {
-          toolCalls++;
-        }
+  function traverse(traceList: WorkflowTraceItem[]) {
+    for (const trace of traceList) {
+      if (trace.type === 'model_call') {
+        modelCalls++;
+      } else if (trace.type === 'tool_call') {
+        toolCalls++;
       }
-      if (span.nested_spans && span.nested_spans.length > 0) {
-        traverse(span.nested_spans);
+      if (trace.children && trace.children.length > 0) {
+        traverse(trace.children);
       }
     }
   }
 
-  traverse(spans);
-  return { modelCalls: Math.ceil(modelCalls / 2), toolCalls };
+  traverse(traces);
+  return { modelCalls, toolCalls };
 }
 
 /**
  * 提取最后一个 AI 响应内容
- * @param spans - 工作流 span 列表
+ * @param traces - 工作流 trace 列表
  * @returns 最后的 AI 响应内容
  */
-function extractLastAIResponse(spans: WorkflowSpan[]): string | null {
+function extractLastAIResponse(traces: WorkflowTraceItem[]): string | null {
   let lastResponse: string | null = null;
   let lastTimestamp = 0;
 
-  function traverse(spanList: WorkflowSpan[]) {
-    for (const span of spanList) {
-      for (const child of span.children) {
-        if (child.type === 'model_call') {
-          const payload = child.payload as Record<string, unknown> | undefined;
-          const phase = payload?.phase as string | undefined;
-          const responseContent = payload?.response_content as string | undefined;
-          
-          if (phase === 'after' && responseContent) {
-            const childTs = child.ts ? new Date(child.ts).getTime() : 0;
-            if (childTs > lastTimestamp) {
-              lastTimestamp = childTs;
-              lastResponse = responseContent;
-            }
+  function traverse(traceList: WorkflowTraceItem[]) {
+    for (const trace of traceList) {
+      if (trace.type === 'model_call') {
+        const payload = trace.payload as Record<string, unknown> | undefined;
+        const responseContent = payload?.response_content as string | undefined;
+        
+        if (responseContent) {
+          const traceTs = trace.start_time ? new Date(trace.start_time).getTime() : 0;
+          if (traceTs > lastTimestamp) {
+            lastTimestamp = traceTs;
+            lastResponse = responseContent;
           }
         }
       }
-      if (span.nested_spans && span.nested_spans.length > 0) {
-        traverse(span.nested_spans);
+      if (trace.children && trace.children.length > 0) {
+        traverse(trace.children);
       }
     }
   }
 
-  traverse(spans);
+  traverse(traces);
   return lastResponse;
 }
 
@@ -124,13 +119,13 @@ export function ExecutionSummary({ timeline, allArtifacts }: ExecutionSummaryPro
   const status = timeline.status || 'unknown';
   
   const { modelCalls, toolCalls } = useMemo(
-    () => countCalls(timeline.spans),
-    [timeline.spans]
+    () => countCalls(timeline.traces),
+    [timeline.traces]
   );
 
   const lastAIResponse = useMemo(
-    () => extractLastAIResponse(timeline.spans),
-    [timeline.spans]
+    () => extractLastAIResponse(timeline.traces),
+    [timeline.traces]
   );
 
   return (
