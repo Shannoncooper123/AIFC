@@ -84,9 +84,21 @@ def update_tp_sl_tool(symbol: str,
         res = eng.update_tp_sl(symbol, tp_price, sl_price)
         if isinstance(res, dict) and 'error' in res:
             logger.error(f"update_tp_sl_tool: 失败 -> {res['error']}")
-        else:
-            logger.info(f"update_tp_sl_tool: 成功 -> id={res.get('id')}, symbol={res.get('symbol')}, tp={res.get('tp_price')}, sl={res.get('sl_price')}\n")
-        return res
+            return res
+        
+        logger.info(f"update_tp_sl_tool: 成功 -> id={res.get('id')}, symbol={res.get('symbol')}, tp={res.get('tp_price')}, sl={res.get('sl_price')}\n")
+        return {
+            "success": True,
+            "symbol": res.get("symbol"),
+            "side": res.get("side"),
+            "entry_price": res.get("entry_price"),
+            "tp_price": res.get("tp_price"),
+            "sl_price": res.get("sl_price"),
+            "qty": res.get("qty"),
+            "margin_used": res.get("margin_used"),
+            "leverage": res.get("leverage"),
+            "latest_mark_price": res.get("latest_mark_price"),
+        }
     except Exception as e:
         logger.error(f"update_tp_sl_tool: 异常 -> {e}")
         return make_runtime_error(f"更新TP/SL失败 - {str(e)}")

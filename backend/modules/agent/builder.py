@@ -11,16 +11,10 @@ from modules.agent.nodes.single_symbol_analysis_node import single_symbol_analys
 from modules.agent.nodes.opening_decision_node import opening_decision_node
 from modules.agent.nodes.position_management_node import position_management_node
 from modules.agent.conditional_edges import after_opportunity_screening
-from modules.agent.utils.workflow_trace_storage import (
-    get_current_run_id,
-    get_current_span_id,
-    set_current_symbol,
-    start_span,
-    end_span,
-)
+from modules.agent.utils.trace_utils import traced_node
 
 
-def _barrier_node(state: Union[AgentState, SymbolAnalysisState], config: RunnableConfig) -> Dict[str, Any]:
+def _barrier_node(state: Union[AgentState, SymbolAnalysisState], *, config: RunnableConfig) -> Dict[str, Any]:
     """占位节点，用于 super step 对齐"""
     return {}
 
@@ -28,8 +22,10 @@ def _barrier_node(state: Union[AgentState, SymbolAnalysisState], config: Runnabl
 def _create_symbol_analysis_subgraph() -> StateGraph:
     """创建单币种分析子图（使用精简的 SymbolAnalysisState）"""
     subgraph = StateGraph(SymbolAnalysisState)
+    
     subgraph.add_node("analysis", single_symbol_analysis_node)
     subgraph.add_node("decision", opening_decision_node)
+    
     subgraph.set_entry_point("analysis")
     subgraph.add_edge("analysis", "decision")
     subgraph.add_edge("decision", END)
@@ -39,47 +35,18 @@ def _create_symbol_analysis_subgraph() -> StateGraph:
 _compiled_subgraph = _create_symbol_analysis_subgraph()
 
 
-def _symbol_analysis_node(state: SymbolAnalysisState, config: RunnableConfig) -> Dict[str, Any]:
+@traced_node("analyze_symbol")
+def _symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableConfig) -> Dict[str, Any]:
     """
     子图包装节点：执行单币种分析 + 开仓决策。
-    创建父 span 以实现层级化 trace 结构。
+    装饰器自动创建节点级 trace 以实现层级化 trace 结构。
     """
-    run_id = get_current_run_id()
-    parent_span_id = get_current_span_id()
-    symbol = state.current_symbol
+    result = _compiled_subgraph.invoke(state, config)
     
-    if symbol:
-        set_current_symbol(symbol)
-    
-    span_id = None
-    if run_id:
-        span_id = start_span(
-            run_id=run_id,
-            node="analyze_symbol",
-            parent_span_id=parent_span_id,
-            symbol=symbol,
-        )
-    
-    try:
-        result = _compiled_subgraph.invoke(state, config)
-        
-        output_summary = {
-            "analyzed_symbol": symbol,
-            "has_analysis": bool(result.get("analysis_results")),
-            "has_decision": bool(result.get("opening_decision_results")),
-        }
-        
-        if run_id and span_id:
-            end_span(run_id, span_id, status="success", output_summary=output_summary)
-        
-        return {
-            "analysis_results": result.get("analysis_results", {}),
-            "opening_decision_results": result.get("opening_decision_results", {}),
-        }
-    except Exception as e:
-        if run_id and span_id:
-            end_span(run_id, span_id, status="error", error=str(e))
-        raise
+    return {
+        "analysis_results": result.get("analysis_results", {}),
+        "opening_decision_results": result.get("opening_decision_results", {}),
+    }
 
 
 def create_workflow(config: Dict[str, Any]) -> StateGraph:

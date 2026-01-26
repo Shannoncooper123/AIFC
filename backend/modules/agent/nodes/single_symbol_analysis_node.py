@@ -1,19 +1,18 @@
-"""工作流节点：单币种深度分析"""
+"""工作流节点：单币种深度分析（双向分析：做多+做空）"""
 import os
-from typing import Any, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple
 
-from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
-from modules.agent.middleware.vision_middleware import VisionMiddleware
-from modules.agent.middleware.workflow_trace_middleware import WorkflowTraceMiddleware
 from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
 from modules.agent.tools.trend_comparison_tool import trend_comparison_tool
-from modules.agent.utils.trace_decorators import traced_node
+from modules.agent.utils.trace_agent import create_trace_agent
+from modules.agent.utils.trace_utils import traced_node
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.single_symbol_analysis')
@@ -112,22 +111,115 @@ def _build_supplemental_context(
     return context
 
 
+def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
+    """
+    创建方向性分析 subagent
+    
+    Args:
+        direction: "long" 或 "short"
+        
+    Returns:
+        (subagent, node_name) 元组
+    """
+    tools = [
+        get_kline_image_tool,
+        trend_comparison_tool,
+        calc_metrics_tool,
+    ]
+    
+    prompt_filename = f"single_symbol_analysis_{direction}_prompt.md"
+    prompt_path = os.path.join(os.path.dirname(__file__), f'prompts/{prompt_filename}')
+    with open(prompt_path, 'r', encoding='utf-8') as f:
+        prompt = f.read().strip()
+    
+    node_name = f"single_symbol_analysis_{direction}"
+    
+    model = ChatOpenAI(
+        model=os.getenv('AGENT_MODEL'),
+        api_key=os.getenv('AGENT_API_KEY'),
+        base_url=os.getenv('AGENT_BASE_URL') or None,
+        temperature=0.1,
+        timeout=600,
+        max_tokens=16000,
+        logprobs=False,
+        extra_body={"thinking": {"type": "enabled"}},
+    )
+    
+    subagent = create_trace_agent(
+        model=model,
+        tools=tools,
+        system_prompt=prompt,
+        node_name=node_name,
+    )
+    
+    return subagent, node_name
+
+
+def _run_directional_analysis(
+    direction: str,
+    symbol: str,
+    combined_message: str,
+    config: RunnableConfig,
+) -> Tuple[str, str, Optional[str]]:
+    """
+    执行单方向分析
+    
+    Args:
+        direction: "long" 或 "short"
+        symbol: 交易对
+        combined_message: 输入消息
+        config: RunnableConfig（包含 trace context）
+        
+    Returns:
+        (direction, result, error) 元组
+    """
+    direction_cn = "做多" if direction == "long" else "做空"
+    node_name = f"single_symbol_analysis_{direction}"
+    
+    try:
+        logger.info(f"开始 {symbol} {direction_cn}分析...")
+        
+        subagent, _ = _create_directional_subagent(direction)
+        
+        subagent_messages = [
+            HumanMessage(content=combined_message),
+        ]
+        
+        result = subagent.invoke(
+            {"messages": subagent_messages},
+            config=config,
+        )
+        
+        analysis_output = result["messages"][-1].content if isinstance(result, dict) else str(result)
+        
+        logger.info(f"{symbol} {direction_cn}分析完成 (返回长度: {len(analysis_output)})")
+        
+        return direction, analysis_output, None
+        
+    except Exception as e:
+        logger.error(f"{symbol} {direction_cn}分析执行失败: {e}", exc_info=True)
+        return direction, "", str(e)
+
+
 @traced_node("single_symbol_analysis")
 def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableConfig) -> Dict[str, Any]:
     """
-    对当前状态中的单个币种进行深度技术分析。
+    对当前状态中的单个币种进行双向深度技术分析（做多+做空）。
     
-    本节点专注于多周期分析，不执行开仓操作。
-    分析结论将传递给下游的开仓决策节点。
+    本节点并行执行两个 subagent：
+    - Long Subagent: 专注于识别做多机会
+    - Short Subagent: 专注于识别做空机会
     
-    返回部分状态更新字典：{"analysis_results": {symbol: result}}
+    两个 subagent 的分析结论将合并后传递给下游的开仓决策节点。
+    
+    返回部分状态更新字典：{"analysis_results": {symbol: combined_result}}
     """
     symbol = state.current_symbol
     if not symbol:
         return {"error": "single_symbol_analysis_node: 缺少 current_symbol，跳过分析。"}
 
     logger.info("=" * 60)
-    logger.info(f"单币种分析节点执行: {symbol}")
+    logger.info(f"单币种双向分析节点执行: {symbol}")
     logger.info("=" * 60)
 
     market_context = state.symbol_contexts.get(symbol) or state.market_context
@@ -136,42 +228,6 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
         return {"analysis_results": {symbol: "分析失败: 缺少上下文"}}
 
     try:
-        tools = [
-            get_kline_image_tool,
-            trend_comparison_tool,
-            calc_metrics_tool,
-        ]
-
-        prompt_path = os.path.join(os.path.dirname(__file__), 'prompts/single_symbol_analysis_prompt.md')
-        with open(prompt_path, 'r', encoding='utf-8') as f:
-            prompt = f.read().strip()
-
-        middlewares = [
-            VisionMiddleware(),
-            WorkflowTraceMiddleware("single_symbol_analysis"),
-        ]
-
-        model = ChatOpenAI(
-            model=os.getenv('AGENT_MODEL'),
-            api_key=os.getenv('AGENT_API_KEY'),
-            base_url=os.getenv('AGENT_BASE_URL') or None,
-            temperature=0.1,
-            timeout=600,
-            max_tokens=16000,
-            logprobs=False,
-            extra_body={"thinking": {"type": "enabled"}},
-        )
-
-        subagent = create_agent(
-            model=model,
-            tools=tools,
-            system_prompt=prompt,
-            debug=False,
-            middleware=middlewares,
-        )
-
-        logger.info(f"开始为 {symbol} 执行技术分析...")
-
         has_existing_position = bool(state.positions_summary)
         position_status_hint = ""
         if has_existing_position:
@@ -193,22 +249,67 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
             task_prompt,
         ])
 
-        subagent_messages = [
-            HumanMessage(content=combined_message),
-        ]
-        result = subagent.invoke(
-            {"messages": subagent_messages},
-            config=config,
-        )
-
-        analysis_output = result["messages"][-1].content if isinstance(result, dict) else str(result)
+        logger.info(f"开始为 {symbol} 执行双向技术分析（做多+做空并行）...")
+        
+        long_result = None
+        short_result = None
+        errors = []
+        
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {
+                executor.submit(
+                    _run_directional_analysis,
+                    direction,
+                    symbol,
+                    combined_message,
+                    config,
+                ): direction
+                for direction in ["long", "short"]
+            }
+            
+            for future in as_completed(futures):
+                direction, result, error = future.result()
+                if error:
+                    errors.append(f"{direction}: {error}")
+                else:
+                    if direction == "long":
+                        long_result = result
+                    else:
+                        short_result = result
+        
+        combined_analysis_parts = []
+        
+        if long_result:
+            combined_analysis_parts.append("=" * 40)
+            combined_analysis_parts.append("【做多方向分析】")
+            combined_analysis_parts.append("=" * 40)
+            combined_analysis_parts.append(long_result)
+        else:
+            combined_analysis_parts.append("【做多方向分析】: 分析失败")
+        
+        combined_analysis_parts.append("")
+        
+        if short_result:
+            combined_analysis_parts.append("=" * 40)
+            combined_analysis_parts.append("【做空方向分析】")
+            combined_analysis_parts.append("=" * 40)
+            combined_analysis_parts.append(short_result)
+        else:
+            combined_analysis_parts.append("【做空方向分析】: 分析失败")
+        
+        if errors:
+            combined_analysis_parts.append("")
+            combined_analysis_parts.append("【分析错误】")
+            combined_analysis_parts.extend(errors)
+        
+        combined_analysis = "\n".join(combined_analysis_parts)
 
         logger.info("=" * 60)
-        logger.info(f"{symbol} 技术分析完成 (返回长度: {len(analysis_output)})")
+        logger.info(f"{symbol} 双向技术分析完成 (合并结果长度: {len(combined_analysis)})")
         logger.info("=" * 60)
 
-        return {"analysis_results": {symbol: analysis_output}, "current_symbol": symbol}
+        return {"analysis_results": {symbol: combined_analysis}, "current_symbol": symbol}
 
     except Exception as e:
-        logger.error(f"{symbol} 技术分析执行失败: {e}", exc_info=True)
+        logger.error(f"{symbol} 双向技术分析执行失败: {e}", exc_info=True)
         return {"analysis_results": {symbol: f"分析执行失败: {str(e)}"}, "current_symbol": symbol}

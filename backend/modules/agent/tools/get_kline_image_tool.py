@@ -1,6 +1,7 @@
 """获取K线图图像的工具（含技术指标）"""
 import base64
 import io
+import warnings
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from langchain.tools import tool
@@ -231,23 +232,34 @@ def _plot_candlestick_chart(klines: List[Kline], symbol: str, interval: str, vis
     ax_macd.grid(True, alpha=0.3, linestyle='--')
     ax_macd.axhline(y=0, color='gray', linewidth=0.8, linestyle='--', alpha=0.5)
     
-    valid_indices = [i for i in indices if i < len(plot_hist) and plot_hist[i] is not None]
-    if valid_indices:
-        colors = ['#26a69a' if plot_hist[i] >= 0 else '#ef5350' for i in valid_indices]
-        ax_macd.bar(valid_indices, [plot_hist[i] for i in valid_indices], 
-                   color=colors, alpha=0.6, width=0.8, label='Histogram')
+    has_macd_legend = False
+    if plot_hist:
+        valid_indices = [i for i in indices if i < len(plot_hist)]
+        if valid_indices:
+            colors = ['#26a69a' if plot_hist[i] >= 0 else '#ef5350' for i in valid_indices]
+            ax_macd.bar(valid_indices, [plot_hist[i] for i in valid_indices], 
+                       color=colors, alpha=0.6, width=0.8, label='Histogram')
+            has_macd_legend = True
     
-    valid_indices = [i for i in indices if i < len(plot_macd) and plot_macd[i] is not None]
-    if valid_indices:
-        ax_macd.plot(valid_indices, [plot_macd[i] for i in valid_indices], 
-                    color='#2196f3', linewidth=1.5, label='MACD')
-        valid_signal_indices = [i for i in valid_indices if i < len(plot_signal) and plot_signal[i] is not None]
-        if valid_signal_indices:
-            ax_macd.plot(valid_signal_indices, [plot_signal[i] for i in valid_signal_indices], 
-                        color='#ff9800', linewidth=1.5, label='Signal')
+    if plot_macd:
+        valid_indices = [i for i in indices if i < len(plot_macd)]
+        if valid_indices:
+            ax_macd.plot(valid_indices, [plot_macd[i] for i in valid_indices], 
+                        color='#2196f3', linewidth=1.5, label='MACD')
+            has_macd_legend = True
+            if plot_signal:
+                valid_signal_indices = [i for i in valid_indices if i < len(plot_signal)]
+                if valid_signal_indices:
+                    ax_macd.plot(valid_signal_indices, [plot_signal[i] for i in valid_signal_indices], 
+                                color='#ff9800', linewidth=1.5, label='Signal')
+    
+    if not has_macd_legend:
+        ax_macd.text(0.5, 0.5, 'Insufficient data for MACD', transform=ax_macd.transAxes,
+                    ha='center', va='center', fontsize=10, color='gray', alpha=0.7)
     
     ax_macd.set_ylabel('MACD', fontsize=10)
-    ax_macd.legend(loc='upper left', fontsize=8, framealpha=0.8)
+    if has_macd_legend:
+        ax_macd.legend(loc='upper left', fontsize=8, framealpha=0.8)
     ax_macd.tick_params(axis='y', labelright=True)
     plt.setp(ax_macd.get_xticklabels(), visible=False)
     
@@ -262,20 +274,30 @@ def _plot_candlestick_chart(klines: List[Kline], symbol: str, interval: str, vis
     ax_rsi.fill_between(indices, 70, 100, color='#ef5350', alpha=0.1)
     ax_rsi.fill_between(indices, 0, 30, color='#26a69a', alpha=0.1)
     
-    valid_indices = [i for i in indices if i < len(plot_rsi) and plot_rsi[i] is not None]
-    if valid_indices:
-        ax_rsi.plot(valid_indices, [plot_rsi[i] for i in valid_indices], 
-                   color='#9c27b0', linewidth=1.5, label='RSI')
+    has_rsi_legend = False
+    if plot_rsi:
+        valid_indices = [i for i in indices if i < len(plot_rsi) and plot_rsi[i] is not None]
+        if valid_indices:
+            ax_rsi.plot(valid_indices, [plot_rsi[i] for i in valid_indices], 
+                       color='#9c27b0', linewidth=1.5, label='RSI')
+            has_rsi_legend = True
+    
+    if not has_rsi_legend:
+        ax_rsi.text(0.5, 0.5, 'Insufficient data for RSI', transform=ax_rsi.transAxes,
+                   ha='center', va='center', fontsize=10, color='gray', alpha=0.7)
     
     ax_rsi.set_ylim(0, 100)
     ax_rsi.set_ylabel('RSI', fontsize=10)
     ax_rsi.set_xlabel('Candle Index', fontsize=10)
-    ax_rsi.legend(loc='upper left', fontsize=8, framealpha=0.8)
+    if has_rsi_legend:
+        ax_rsi.legend(loc='upper left', fontsize=8, framealpha=0.8)
     ax_rsi.tick_params(axis='y', labelright=True)
     ax_rsi.set_xticks(xticks)
     ax_rsi.set_xticklabels(xtick_labels, rotation=30, fontsize=9)
     
-    plt.tight_layout(rect=[0, 0.01, 1, 0.98])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        plt.tight_layout(rect=[0, 0.01, 1, 0.98])
     
     buffer = io.BytesIO()
     fig.savefig(buffer, format='png', bbox_inches='tight', dpi=100)
@@ -291,24 +313,22 @@ def get_kline_image_tool(
     symbol: str,
     interval: str = "1h",
     feedback: str = "",
-) -> str:
+) -> List[Dict[str, Any]]:
     """获取单周期K线图并进行视觉分析（含技术指标：EMA、MACD、RSI、Bollinger Bands）。
     
-    该工具生成指定时间周期的K线图，返回包括趋势方向、支撑阻力位、技术形态等关键技术分析结果。
-    返回JSON字符串，包含 success、symbol、intervals、kline_count、image_data（base64图像）。错误时返回 {"error": "..."}。
+    该工具生成指定时间周期的K线图，返回多模态内容（文本描述+图像），供模型进行视觉分析。
+    返回格式为 list[dict]，包含文本和图像内容块。错误时返回包含错误信息的文本块。
     
     Args:
         symbol: 交易对，如 "BTCUSDT"
         interval: 时间周期，如 "15m"、"1h"、"4h"、"1d"。默认为 "1h"。注意：仅支持单个周期。
         feedback: 分析进度笔记。请填写：1) 上一周期分析的关键结论（趋势方向、关键位、动能状态）；2) 本次调用的分析目的（如"验证4h趋势是否与1d一致"或"寻找1h级别的入场触发信号"）。
     """
-    def _make_error(msg: str) -> str:
-        import json
-        return json.dumps({"error": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。", "success": False}, ensure_ascii=False)
+    def _make_error(msg: str) -> List[Dict[str, Any]]:
+        return [{"type": "text", "text": f"TOOL_INPUT_ERROR: {msg}. 请修正参数后重试。"}]
     
-    def _make_runtime_error(msg: str) -> str:
-        import json
-        return json.dumps({"error": f"TOOL_RUNTIME_ERROR: {msg}", "success": False}, ensure_ascii=False)
+    def _make_runtime_error(msg: str) -> List[Dict[str, Any]]:
+        return [{"type": "text", "text": f"TOOL_RUNTIME_ERROR: {msg}"}]
     
     try:
         limit = 200
@@ -343,14 +363,19 @@ def get_kline_image_tool(
         logger.info(f"生成 {symbol} {interval} K线图（含技术指标）")
         image_base64 = _plot_candlestick_chart(klines, symbol, interval, limit)
         
-        import json
-        return json.dumps({
-            "success": True,
-            "symbol": symbol,
-            "intervals": [interval],
-            "kline_count": limit,
-            "image_data": image_base64,
-        }, ensure_ascii=False)
+        return [
+            {
+                "type": "text",
+                "text": f"K线图生成成功\n交易对: {symbol}\n时间周期: {interval}\nK线数量: {limit}"
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{image_base64}",
+                    "detail": "high"
+                }
+            }
+        ]
         
     except Exception as e:
         logger.error(f"K线图分析失败: {e}", exc_info=True)

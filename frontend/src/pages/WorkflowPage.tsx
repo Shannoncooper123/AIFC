@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Activity, RefreshCw } from 'lucide-react';
 import { Card, Loading } from '../components/ui';
@@ -12,30 +12,20 @@ import {
 
 export function WorkflowPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialRunId = searchParams.get('run_id');
   
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId);
+  const selectedRunId = useMemo(() => searchParams.get('run_id'), [searchParams]);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 
-  useEffect(() => {
-    const runIdFromUrl = searchParams.get('run_id');
-    if (runIdFromUrl && runIdFromUrl !== selectedRunId) {
-      setSelectedRunId(runIdFromUrl);
-      setSelectedSymbol(null);
-    }
-  }, [searchParams]);
+  const handleSelectRun = useCallback((runId: string) => {
+    setSelectedSymbol(null);
+    setSearchParams({ run_id: runId });
+  }, [setSearchParams]);
 
   const { data: runsData, refetch: refetchRuns } = useWorkflowRuns(50);
   const timelineQuery = useWorkflowTimeline(selectedRunId);
 
   const timeline = timelineQuery.data?.timeline;
   const uniqueSymbols = useUniqueSymbols(timeline);
-
-  const handleSelectRun = (runId: string) => {
-    setSelectedRunId(runId);
-    setSelectedSymbol(null);
-    setSearchParams({ run_id: runId });
-  };
 
   return (
     <div className="space-y-6">

@@ -1,20 +1,21 @@
 from typing import Dict, Any
 import os
-from langchain.agents import create_agent
+
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
+
 from modules.agent.state import AgentState
 from modules.agent.tools.write_report_tool import write_report_tool
+from modules.agent.utils.trace_agent import create_trace_agent
+from modules.agent.utils.trace_utils import traced_node
 from modules.monitor.utils.logger import get_logger
-from modules.agent.middleware.workflow_trace_middleware import WorkflowTraceMiddleware
-from modules.agent.utils.trace_decorators import traced_node
 
 logger = get_logger('agent.nodes.reporting')
 
 
 @traced_node("reporting")
-def reporting_node(state: AgentState, config: RunnableConfig):
+def reporting_node(state: AgentState, *, config: RunnableConfig):
     """
     汇总前序节点输出，使用 Reporting 子Agent 生成结构化总结，并直接调用 write_report 工具归档。
     此节点不返回任何内容。
@@ -24,7 +25,6 @@ def reporting_node(state: AgentState, config: RunnableConfig):
     logger.info("=" * 60)
     
     try:
-        # 1. 准备 Reporting Agent 的输入，直接拼接字符串
         market_context_str = f"市场宏观背景分析:\n{state.market_context}\n\n"
         
         pos_summary_str = "当前持仓管理总结:\n"
@@ -57,15 +57,12 @@ def reporting_node(state: AgentState, config: RunnableConfig):
         )
         logger.info(f"向 Reporting Agent 提供输入:\n{reporting_input}")
 
-        # 2. 定义工具
         tools = [write_report_tool]
 
-        # 3. 加载prompt
         prompt_path = os.path.join(os.path.dirname(__file__), 'prompts/reporting_prompt.md')
         with open(prompt_path, 'r', encoding='utf-8') as f:
             prompt_template = f.read().strip()
 
-        # 4. 初始化模型
         model = ChatOpenAI(
             model=os.getenv('AGENT_MODEL'),
             api_key=os.getenv('AGENT_API_KEY'),
@@ -75,12 +72,11 @@ def reporting_node(state: AgentState, config: RunnableConfig):
             max_tokens=4096,
         )
 
-        # 5. 创建Agent
-        reporting_agent = create_agent(
+        reporting_agent = create_trace_agent(
             model=model,
             tools=tools,
             system_prompt=prompt_template,
-            middleware=[WorkflowTraceMiddleware("reporting")],
+            node_name="reporting",
         )
 
         logger.info("开始调用 Reporting Agent...")

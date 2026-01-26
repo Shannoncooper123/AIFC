@@ -214,8 +214,45 @@ class WorkflowRunEvent(BaseModel):
     output_summary: Optional[Dict[str, Any]] = None
 
 
+class WorkflowTraceItem(BaseModel):
+    """
+    Workflow Trace 项（新的层级化结构）
+    
+    type 字段标识类型：
+    - node: LangGraph 节点
+    - agent: Agent 调用
+    - model_call: 模型调用
+    - tool_call: 工具调用
+    - artifact: 图片等产物
+    """
+    trace_id: str
+    parent_trace_id: Optional[str] = None
+    type: str
+    name: str
+    symbol: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    duration_ms: Optional[int] = None
+    status: Optional[str] = None
+    error: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+    children: List["WorkflowTraceItem"] = Field(default_factory=list)
+    artifacts: List["WorkflowArtifact"] = Field(default_factory=list)
+
+
+class WorkflowTimeline(BaseModel):
+    """Workflow 时间线（树形结构）"""
+    run_id: str
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    duration_ms: Optional[int] = None
+    status: Optional[str] = None
+    symbols: List[str] = Field(default_factory=list)
+    traces: List[WorkflowTraceItem] = Field(default_factory=list)
+
+
 class WorkflowSpanChild(BaseModel):
-    """Span 子事件（工具调用、模型调用等）"""
+    """Span 子事件（兼容旧接口）"""
     type: str
     ts: str
     seq: int
@@ -228,7 +265,7 @@ class WorkflowSpanChild(BaseModel):
 
 
 class WorkflowSpan(BaseModel):
-    """Workflow Span（节点执行）"""
+    """Workflow Span（兼容旧接口）"""
     span_id: str
     parent_span_id: Optional[str] = None
     node: str
@@ -242,17 +279,6 @@ class WorkflowSpan(BaseModel):
     children: List[WorkflowSpanChild] = Field(default_factory=list)
     artifacts: List["WorkflowArtifact"] = Field(default_factory=list)
     nested_spans: List["WorkflowSpan"] = Field(default_factory=list)
-
-
-class WorkflowTimeline(BaseModel):
-    """Workflow 时间线（树形结构）"""
-    run_id: str
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    duration_ms: Optional[int] = None
-    status: Optional[str] = None
-    symbols: List[str] = Field(default_factory=list)
-    spans: List[WorkflowSpan] = Field(default_factory=list)
 
 
 class WorkflowRunsResponse(BaseModel):
@@ -278,10 +304,14 @@ class WorkflowArtifact(BaseModel):
     run_id: str
     type: str
     file_path: str
+    trace_id: Optional[str] = None
+    parent_trace_id: Optional[str] = None
     span_id: Optional[str] = None
     symbol: Optional[str] = None
     interval: Optional[str] = None
+    image_id: Optional[str] = None
     created_at: Optional[str] = None
 
 
+WorkflowTraceItem.model_rebuild()
 WorkflowSpan.model_rebuild()

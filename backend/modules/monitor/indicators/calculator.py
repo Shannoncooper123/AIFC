@@ -119,12 +119,13 @@ class IndicatorCalculator:
         # 标准差
         stddev = calculate_std_dev(closes, self.stddev_period) or 0.0
         
-        # 形态：外包线
+        # 形态：外包线（使用严格模式，要求实体吞没）
         is_engulfing = False
         engulfing_type = '非外包'
+        engulfing_strict = self.config['thresholds'].get('engulfing_strict_mode', True)
         if len(klines) >= 2:
-            is_engulfing = is_engulfing_bar(klines[-1], klines[-2])
-            engulfing_type = get_engulfing_type(klines[-1], klines[-2])
+            is_engulfing = is_engulfing_bar(klines[-1], klines[-2], require_body_engulf=engulfing_strict)
+            engulfing_type = get_engulfing_type(klines[-1], klines[-2], strict=engulfing_strict)
         
         # 形态：长影线比例
         upper_wick_ratio, lower_wick_ratio = calculate_wick_ratios(latest_kline)
@@ -260,10 +261,14 @@ class IndicatorCalculator:
                                 self.config['thresholds'].get('oi_zscore', 2.5)
                             )
                         
-                        # 分析背离
+                        # 分析背离（使用可配置阈值）
                         if len(price_changes) >= self.oi_divergence_window and len(oi_changes) >= self.oi_divergence_window:
+                            price_threshold = self.config['thresholds'].get('oi_divergence_price_threshold', 0.5)
+                            oi_threshold = self.config['thresholds'].get('oi_divergence_oi_threshold', 1.0)
                             is_oi_divergence, oi_divergence_type = analyze_oi_divergence(
-                                price_changes, oi_changes, self.oi_divergence_window
+                                price_changes, oi_changes, self.oi_divergence_window,
+                                price_threshold=price_threshold,
+                                oi_threshold=oi_threshold
                             )
                         
             except Exception as e:

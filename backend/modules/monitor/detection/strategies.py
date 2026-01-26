@@ -35,8 +35,8 @@ class MultiIndicatorStrategy(DetectionStrategy):
         thresholds = config['thresholds']
         triggered = []
         
-        # ATR异常检测
-        if indicators.atr_zscore > thresholds['atr_zscore']:
+        # ATR异常检测（双向检测：异常高波动或异常低波动）
+        if abs(indicators.atr_zscore) > thresholds['atr_zscore']:
             triggered.append('ATR')
         
         # 价格变化率异常检测

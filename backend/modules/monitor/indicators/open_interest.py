@@ -76,32 +76,57 @@ def calculate_oi_ma(oi_values: List[float], period: int = 20) -> Optional[float]
     return sum(recent_oi) / period
 
 
-def analyze_oi_divergence(price_changes: List[float], oi_changes: List[float], 
-                          window: int = 5) -> Tuple[bool, str]:
+def analyze_oi_divergence(
+    price_changes: List[float], 
+    oi_changes: List[float], 
+    window: int = 5,
+    price_threshold: float = 0.5,
+    oi_threshold: float = 1.0
+) -> Tuple[bool, str]:
     """分析价格和持仓量的背离
     
+    背离分析逻辑：
+    1. 看涨背离（底部信号）：价格持续下跌但持仓量上升
+       - 表示空头在加仓，但价格下跌动能减弱
+       - 可能预示底部反转
+    
+    2. 看跌背离（顶部信号）：价格持续上涨但持仓量下降
+       - 表示多头在减仓，上涨缺乏后续资金支撑
+       - 可能预示顶部反转
+    
+    3. 增强信号：价格和持仓量同向变动
+       - 价格涨+持仓涨：强势上涨，多头加仓
+       - 价格跌+持仓跌：弱势下跌，多头平仓
+    
     Args:
-        price_changes: 价格变化率列表
-        oi_changes: 持仓量变化率列表
+        price_changes: 价格变化率列表（百分比）
+        oi_changes: 持仓量变化率列表（百分比）
         window: 分析窗口（最近N个数据点）
+        price_threshold: 价格变化阈值（百分比，默认0.5%）
+        oi_threshold: 持仓量变化阈值（百分比，默认1.0%）
         
     Returns:
         (是否背离, 背离类型)
-        背离类型: "看涨背离"（价格跌，持仓涨）/ "看跌背离"（价格涨，持仓跌）/ "无背离"
+        背离类型: "看涨背离"/"看跌背离"/"无背离"
     """
     if len(price_changes) < window or len(oi_changes) < window:
         return False, "无背离"
     
-    # 计算最近窗口的平均变化
-    recent_price_change = sum(price_changes[-window:]) / window
-    recent_oi_change = sum(oi_changes[-window:]) / window
+    recent_price = price_changes[-window:]
+    recent_oi = oi_changes[-window:]
     
-    # 看涨背离：价格下跌但持仓量上升（可能是底部反转信号）
-    if recent_price_change < -0.5 and recent_oi_change > 1.0:
+    avg_price_change = sum(recent_price) / window
+    avg_oi_change = sum(recent_oi) / window
+    
+    price_trend_down = avg_price_change < -price_threshold
+    price_trend_up = avg_price_change > price_threshold
+    oi_increasing = avg_oi_change > oi_threshold
+    oi_decreasing = avg_oi_change < -oi_threshold
+    
+    if price_trend_down and oi_increasing:
         return True, "看涨背离"
     
-    # 看跌背离：价格上涨但持仓量下降（可能是顶部反转信号）
-    if recent_price_change > 0.5 and recent_oi_change < -1.0:
+    if price_trend_up and oi_decreasing:
         return True, "看跌背离"
     
     return False, "无背离"

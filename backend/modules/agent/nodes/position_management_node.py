@@ -1,20 +1,17 @@
 """工作流节点：持仓管理"""
 import os
-from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 
-from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
 from modules.agent.state import AgentState
-from modules.agent.middleware.vision_middleware import VisionMiddleware
-from modules.agent.middleware.workflow_trace_middleware import WorkflowTraceMiddleware
 from modules.agent.utils.profit_protection import fmt6, fmt2, calculate_protection
+from modules.agent.utils.trace_agent import create_trace_agent
+from modules.agent.utils.trace_utils import traced_node
 from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
-from modules.agent.utils.trace_decorators import traced_node
 from modules.agent.engine import get_engine
 
 from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
@@ -78,7 +75,7 @@ def _format_positions_context() -> str:
 
 
 @traced_node("position_management")
-def position_management_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
+def position_management_node(state: AgentState, *, config: RunnableConfig) -> Dict[str, Any]:
     """
     执行持仓管理逻辑，并封装持仓管理子Agent的逻辑。
     
@@ -100,9 +97,6 @@ def position_management_node(state: AgentState, config: RunnableConfig) -> Dict[
 
     try:
         cfg = get_config()
-        
-        # 从运行时配置中获取 session_id（RunnableConfig 已在上层统一包装）
-        session_id = config.get("configurable", {}).get("session_id", "default_session")
 
         tools = [
             get_kline_image_tool,
@@ -113,11 +107,6 @@ def position_management_node(state: AgentState, config: RunnableConfig) -> Dict[
         prompt_path = os.path.join(os.path.dirname(__file__), 'prompts/position_management_prompt.md')
         with open(prompt_path, 'r', encoding='utf-8') as f:
             prompt = f.read().strip()
-        
-        middlewares = [
-            VisionMiddleware(),
-            WorkflowTraceMiddleware("position_management"),
-        ]
         
         model = ChatOpenAI(
             model=os.getenv('AGENT_MODEL'),
@@ -130,12 +119,11 @@ def position_management_node(state: AgentState, config: RunnableConfig) -> Dict[
             extra_body={"thinking": {"type": "enabled"}},
         )
         
-        subagent = create_agent(
+        subagent = create_trace_agent(
             model=model,
             tools=tools,
             system_prompt=prompt,
-            debug=False,
-            middleware=middlewares,
+            node_name="position_management",
         )
         
         logger.info("开始执行持仓管理...")

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from modules.agent.trade_simulator.models import Account, Position
 from modules.agent.trade_simulator.storage import ConfigFacade
+from modules.agent.utils.trace_context import get_current_workflow_run_id
 from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.utils.logger import get_logger
 
@@ -68,8 +69,7 @@ class PositionManager:
 
     def open_position(self, symbol: str, side: str, quote_notional_usdt: float, leverage: int,
                       tp_price: Optional[float] = None, sl_price: Optional[float] = None,
-                      entry_price: Optional[float] = None, pre_reserved_margin: bool = False,
-                      run_id: Optional[str] = None) -> Dict[str, Any]:
+                      entry_price: Optional[float] = None, pre_reserved_margin: bool = False) -> Dict[str, Any]:
         """开仓或加仓
         
         Args:
@@ -91,7 +91,10 @@ class PositionManager:
             - 工具层统一处理用户输入（保证金）到名义价值的转换
             - 引擎层基于名义价值计算数量和保证金需求
             - 保持与历史逻辑兼容
+            
+            run_id 通过 trace_context 自动获取
         """
+        run_id = get_current_workflow_run_id()
         with self.lock:
             logger.info(f"open_position: symbol={symbol}, side={side}, lev={leverage}, notional={quote_notional_usdt}, tp_price={tp_price}, sl_price={sl_price}")
 
@@ -228,8 +231,7 @@ class PositionManager:
             return self.state.pos_to_dict(self.positions[symbol])
 
     def close_position(self, position_id: Optional[str] = None, symbol: Optional[str] = None,
-                       close_reason: Optional[str] = None, close_price: Optional[float] = None,
-                       run_id: Optional[str] = None) -> Dict[str, Any]:
+                       close_reason: Optional[str] = None, close_price: Optional[float] = None) -> Dict[str, Any]:
         """平仓（全平）
         
         Args:
@@ -237,8 +239,11 @@ class PositionManager:
             symbol: 交易对（可选）
             close_reason: 平仓原因（可选）
             close_price: 指定平仓价格（可选），如果提供则使用此价格，否则使用当前市场价格
-            run_id: workflow run_id（可选），Agent主动平仓时传入，止盈止损自动触发时为None
+        
+        Note:
+            run_id 通过 trace_context 自动获取（Agent主动平仓时有值，止盈止损自动触发时为None）
         """
+        run_id = get_current_workflow_run_id()
         with self.lock:
             # 查找持仓
             pos: Optional[Position] = None

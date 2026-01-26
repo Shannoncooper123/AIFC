@@ -22,7 +22,6 @@ class EngineProtocol(Protocol):
         leverage: int,
         tp_price: Optional[float] = None,
         sl_price: Optional[float] = None,
-        run_id: Optional[str] = None,
     ) -> Dict[str, Any]: ...
     def close_position(
         self,
@@ -30,7 +29,6 @@ class EngineProtocol(Protocol):
         symbol: Optional[str] = None,
         close_reason: Optional[str] = None,
         close_price: Optional[float] = None,
-        run_id: Optional[str] = None,
     ) -> Dict[str, Any]: ...
     def update_tp_sl(
         self,

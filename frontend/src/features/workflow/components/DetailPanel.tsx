@@ -6,10 +6,16 @@ import {
   ChevronDown,
   Workflow,
   X,
-  Maximize2
+  Maximize2,
+  Box,
+  Bot,
+  Brain,
+  Wrench,
+  Image as ImageIcon
 } from 'lucide-react';
-import type { WorkflowSpan, WorkflowSpanChild, WorkflowArtifact } from '../../../types';
+import type { WorkflowSpan, WorkflowSpanChild, WorkflowArtifact, WorkflowTraceItem, TraceType } from '../../../types';
 import { formatDuration, formatTime } from '../../../utils';
+import { getTraceTypeName, getTraceTypeColor } from '../utils/workflowHelpers';
 
 interface MessageItem {
   role: string;
@@ -34,6 +40,7 @@ export type SelectedNode =
   | { type: 'span'; data: WorkflowSpan }
   | { type: 'tool'; data: WorkflowSpanChild }
   | { type: 'model'; data: { before: WorkflowSpanChild; after?: WorkflowSpanChild } }
+  | { type: 'trace'; data: WorkflowTraceItem }
   | null;
 
 interface DetailPanelProps {
@@ -358,27 +365,13 @@ function ArtifactImage({ artifact }: { artifact: WorkflowArtifact }) {
 }
 
 function MessageContent({ content, allArtifacts = [] }: { content: string | unknown[] | undefined; allArtifacts?: WorkflowArtifact[] }) {
-  const usedArtifactIds = new Set<string>();
+  const parseImageId = (url: string): string | null => {
+    const match = url.match(/^\[IMAGE:([^\]]+)\]$/);
+    return match?.[1] || null;
+  };
   
-  const findMatchingArtifact = (meta: { symbol?: string; interval?: string } | undefined): WorkflowArtifact | undefined => {
-    if (!meta?.symbol || !meta?.interval) {
-      return allArtifacts.find(a => !usedArtifactIds.has(a.artifact_id));
-    }
-    
-    const match = allArtifacts.find(
-      a => a.symbol === meta.symbol && a.interval === meta.interval && !usedArtifactIds.has(a.artifact_id)
-    );
-    
-    if (match) {
-      usedArtifactIds.add(match.artifact_id);
-      return match;
-    }
-    
-    const fallback = allArtifacts.find(a => !usedArtifactIds.has(a.artifact_id));
-    if (fallback) {
-      usedArtifactIds.add(fallback.artifact_id);
-    }
-    return fallback;
+  const findArtifactByImageId = (imageId: string): WorkflowArtifact | undefined => {
+    return allArtifacts.find(a => a.image_id === imageId);
   };
   
   if (!content) {
@@ -405,26 +398,27 @@ function MessageContent({ content, allArtifacts = [] }: { content: string | unkn
           if (itemObj.type === 'image_url') {
             const imageUrl = itemObj.image_url as { url?: string; detail?: string } | undefined;
             const url = imageUrl?.url || (itemObj.url as string);
-            const artifactMeta = itemObj._artifact_meta as { symbol?: string; interval?: string } | undefined;
-            
-            if (url === '[IMAGE_ARTIFACT]') {
-              const artifact = findMatchingArtifact(artifactMeta);
-              if (artifact) {
-                return <ArtifactImage key={idx} artifact={artifact} />;
-              }
-              return (
-                <div key={idx} className="p-3 rounded bg-[#141414] border border-neutral-800/50 text-neutral-500 text-xs">
-                  <span className="text-neutral-400">[Image]</span> Artifact not found
-                  {artifactMeta && <span className="ml-2">({artifactMeta.symbol} {artifactMeta.interval})</span>}
-                </div>
-              );
-            }
             
             if (url) {
+              const imageId = parseImageId(url);
+              if (imageId) {
+                const artifact = findArtifactByImageId(imageId);
+                if (artifact) {
+                  return <ArtifactImage key={idx} artifact={artifact} />;
+                }
+                return (
+                  <div key={idx} className="p-3 rounded bg-[#141414] border border-neutral-800/50 text-neutral-500 text-xs">
+                    <span className="text-neutral-400">[Image]</span> Artifact not found
+                    <span className="ml-2 text-neutral-600">({imageId})</span>
+                  </div>
+                );
+              }
+              
               const isBase64 = url.startsWith('data:image');
               if (isBase64) {
                 return <ExpandableBase64Image key={idx} src={url} />;
               }
+              
               return (
                 <div key={idx} className="p-3 rounded bg-[#141414] border border-neutral-800/50 text-neutral-500 text-xs">
                   <span className="text-neutral-400">[Image]</span> External URL
@@ -549,6 +543,26 @@ function MetadataRow({ label, value }: { label: string; value: string | undefine
       </div>
     </div>
   );
+}
+
+function TraceTypeIcon({ type, size = 16 }: { type: TraceType; size?: number }) {
+  const colorClass = getTraceTypeColor(type);
+  switch (type) {
+    case 'workflow':
+      return <Workflow size={size} className={colorClass} />;
+    case 'node':
+      return <Box size={size} className={colorClass} />;
+    case 'agent':
+      return <Bot size={size} className={colorClass} />;
+    case 'model_call':
+      return <Brain size={size} className={colorClass} />;
+    case 'tool_call':
+      return <Wrench size={size} className={colorClass} />;
+    case 'artifact':
+      return <ImageIcon size={size} className={colorClass} />;
+    default:
+      return <Box size={size} className="text-neutral-400" />;
+  }
 }
 
 export function DetailPanel({ selectedNode, allArtifacts = [] }: DetailPanelProps) {
@@ -688,13 +702,12 @@ export function DetailPanel({ selectedNode, allArtifacts = [] }: DetailPanelProp
 
   const renderToolDetail = (data: WorkflowSpanChild) => {
     const payload = data.payload as Record<string, unknown> | undefined;
-    const input = payload?.input;
-    const output = payload?.output as Record<string, unknown> | undefined;
+    const input = payload?.input as Record<string, unknown> | undefined;
+    const output = payload?.output;
     
     const isKlineImageTool = data.tool_name === 'get_kline_image';
-    const toolSymbol = data.symbol || output?.symbol as string;
-    const toolIntervals = output?.intervals as string[] | undefined;
-    const toolInterval = toolIntervals?.[0];
+    const toolSymbol = data.symbol || (input?.symbol as string);
+    const toolInterval = input?.interval as string | undefined;
     
     const matchingArtifact = isKlineImageTool 
       ? allArtifacts.find(a => 
@@ -718,15 +731,9 @@ export function DetailPanel({ selectedNode, allArtifacts = [] }: DetailPanelProp
         {isKlineImageTool && matchingArtifact ? (
           <div className="space-y-4">
             <ExpandableImage artifact={matchingArtifact} />
-            <JsonViewer data={{
-              success: output?.success,
-              symbol: output?.symbol,
-              intervals: output?.intervals,
-              kline_count: output?.kline_count,
-            }} />
           </div>
         ) : output ? (
-          <JsonViewer data={output} />
+          <MessageContent content={output as string | unknown[]} allArtifacts={allArtifacts} />
         ) : (
           <div className="p-4 rounded bg-[#141414] border border-neutral-800/50 text-neutral-500 text-sm italic">
             No output data
@@ -754,6 +761,191 @@ export function DetailPanel({ selectedNode, allArtifacts = [] }: DetailPanelProp
     );
   };
 
+  const renderTraceDetail = (data: WorkflowTraceItem) => {
+    const payload = data.payload || {};
+    
+    const renderModelCallDetail = () => {
+      const recentMessages = (payload.messages || []) as MessageItem[];
+      const toolCalls = (payload.tool_calls || []) as ToolCallItem[];
+      const responseContent = payload.response_content as string | undefined;
+      
+      return (
+        <div className="space-y-6">
+          <SectionLabel>Input</SectionLabel>
+          {recentMessages.length > 0 ? (
+            <div className="space-y-3">
+              {recentMessages.map((msg, idx) => (
+                <div key={idx} className="space-y-1">
+                  <div className="text-[10px] font-medium text-neutral-500 uppercase">
+                    {msg.role}
+                  </div>
+                  <MessageContent content={msg.content} allArtifacts={allArtifacts} />
+                  {msg.tool_calls && msg.tool_calls.length > 0 && (
+                    <div className="mt-2 p-3 rounded bg-[#141414] border border-neutral-800/50">
+                      <div className="text-[10px] text-neutral-500 mb-2">Tool Calls:</div>
+                      {msg.tool_calls.map((tc, i) => (
+                        <div key={i} className="text-xs font-mono text-neutral-400">
+                          {tc.name}({tc.args ? Object.entries(tc.args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ') : tc.args_keys?.join(', ') || ''})
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-4 rounded bg-[#141414] border border-neutral-800/50 text-neutral-500 text-sm italic">
+              No input messages
+            </div>
+          )}
+
+          <SectionLabel>Output</SectionLabel>
+          {responseContent ? (
+            <TextContent content={responseContent} />
+          ) : toolCalls.length > 0 ? (
+            <div className="space-y-3">
+              {toolCalls.map((tc, idx) => (
+                <div key={idx} className="rounded bg-[#141414] border border-neutral-800/50 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-neutral-800/50 flex items-center justify-between">
+                    <span className="text-sm font-mono text-neutral-300">{tc.name}</span>
+                    {tc.id && <span className="text-xs font-mono text-neutral-600">{tc.id}</span>}
+                  </div>
+                  <div className="p-3">
+                    <JsonViewer data={tc.args} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-4 rounded bg-[#141414] border border-neutral-800/50 text-neutral-500 text-sm italic">
+              No output content
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const renderToolCallDetail = () => {
+      const input = payload.input as Record<string, unknown> | undefined;
+      const output = payload.output;
+      
+      const isKlineImageTool = data.name === 'get_kline_image';
+      const toolSymbol = data.symbol || (input?.symbol as string);
+      const toolInterval = input?.interval as string | undefined;
+      
+      const matchingArtifact = isKlineImageTool 
+        ? allArtifacts.find(a => 
+            a.symbol === toolSymbol && 
+            (!toolInterval || a.interval === toolInterval)
+          )
+        : undefined;
+
+      return (
+        <div className="space-y-6">
+          <SectionLabel>Input</SectionLabel>
+          {input ? (
+            <JsonViewer data={input} />
+          ) : (
+            <div className="p-4 rounded bg-[#141414] border border-neutral-800/50 text-neutral-500 text-sm italic">
+              No input arguments
+            </div>
+          )}
+
+          <SectionLabel>Output</SectionLabel>
+          {isKlineImageTool && matchingArtifact ? (
+            <div className="space-y-4">
+              <ExpandableImage artifact={matchingArtifact} />
+            </div>
+          ) : output ? (
+            <MessageContent content={output as string | unknown[]} allArtifacts={allArtifacts} />
+          ) : (
+            <div className="p-4 rounded bg-[#141414] border border-neutral-800/50 text-neutral-500 text-sm italic">
+              No output data
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const renderNodeOrAgentDetail = () => {
+      return (
+        <div className="space-y-6">
+          <SectionLabel>Payload</SectionLabel>
+          {Object.keys(payload).length > 0 ? (
+            <JsonViewer data={payload} />
+          ) : (
+            <div className="p-4 rounded bg-[#141414] border border-neutral-800/50 text-neutral-500 text-sm italic">
+              No payload data
+            </div>
+          )}
+
+          {data.artifacts.length > 0 && (
+            <>
+              <SectionLabel>Artifacts</SectionLabel>
+              <div className="space-y-3">
+                {data.artifacts.map((artifact) => (
+                  <div key={artifact.artifact_id} className="space-y-2">
+                    <div className="text-xs text-neutral-500">
+                      {artifact.symbol} - {artifact.interval}
+                    </div>
+                    <ExpandableImage artifact={artifact} />
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <div className="space-y-6">
+        {data.type === 'model_call' && renderModelCallDetail()}
+        {data.type === 'tool_call' && renderToolCallDetail()}
+        {(data.type === 'node' || data.type === 'agent' || data.type === 'workflow') && renderNodeOrAgentDetail()}
+        {data.type === 'artifact' && (
+          <div className="space-y-6">
+            <SectionLabel>Image Preview</SectionLabel>
+            <ExpandableImage artifact={{
+              artifact_id: payload.artifact_id as string || data.trace_id,
+              run_id: '',
+              type: 'kline_image',
+              file_path: payload.file_path as string || '',
+              trace_id: data.trace_id,
+              parent_trace_id: data.parent_trace_id,
+              symbol: payload.symbol as string || data.symbol,
+              interval: payload.interval as string,
+              created_at: data.start_time,
+            }} />
+            <SectionLabel>Artifact Info</SectionLabel>
+            <JsonViewer data={payload} />
+          </div>
+        )}
+
+        {data.error && (
+          <>
+            <SectionLabel>Error</SectionLabel>
+            <div className="p-4 rounded bg-red-950/30 border border-red-900/30 text-red-400 text-sm font-mono">
+              {data.error}
+            </div>
+          </>
+        )}
+
+        <CollapsibleSection label="Metadata">
+          <div className="px-1">
+            <MetadataRow label="Trace ID" value={data.trace_id} />
+            <MetadataRow label="Parent Trace ID" value={data.parent_trace_id} />
+            <MetadataRow label="Type" value={getTraceTypeName(data.type)} />
+            <MetadataRow label="Start Time" value={data.start_time ? formatTime(data.start_time) : undefined} />
+            <MetadataRow label="End Time" value={data.end_time ? formatTime(data.end_time) : undefined} />
+            <MetadataRow label="Duration" value={data.duration_ms ? `${data.duration_ms}ms` : undefined} />
+            {data.symbol && <MetadataRow label="Symbol" value={data.symbol} />}
+          </div>
+        </CollapsibleSection>
+      </div>
+    );
+  };
+
   const getNodeName = (): string => {
     switch (selectedNode.type) {
       case 'span':
@@ -762,6 +954,8 @@ export function DetailPanel({ selectedNode, allArtifacts = [] }: DetailPanelProp
         return 'ChatOpenAI';
       case 'tool':
         return selectedNode.data.tool_name || 'Tool';
+      case 'trace':
+        return selectedNode.data.name;
       default:
         return 'Unknown';
     }
@@ -780,6 +974,8 @@ export function DetailPanel({ selectedNode, allArtifacts = [] }: DetailPanelProp
       }
       case 'tool':
         return selectedNode.data.duration_ms;
+      case 'trace':
+        return selectedNode.data.duration_ms;
       default:
         return undefined;
     }
@@ -793,19 +989,37 @@ export function DetailPanel({ selectedNode, allArtifacts = [] }: DetailPanelProp
         return selectedNode.data.after ? 'success' : 'running';
       case 'tool':
         return selectedNode.data.status;
+      case 'trace':
+        return selectedNode.data.status;
       default:
         return undefined;
     }
   };
 
+  const getTraceType = (): TraceType | undefined => {
+    if (selectedNode.type === 'trace') {
+      return selectedNode.data.type;
+    }
+    return undefined;
+  };
+
   const nodeName = getNodeName();
   const duration = getDuration();
   const status = getStatus();
+  const traceType = getTraceType();
 
   return (
     <div className="h-full flex flex-col bg-[#1a1a1a]">
       <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800/50">
-        <h2 className="text-lg font-semibold text-white">{nodeName}</h2>
+        <div className="flex items-center gap-3">
+          {traceType && <TraceTypeIcon type={traceType} size={20} />}
+          <h2 className="text-lg font-semibold text-white">{nodeName}</h2>
+          {traceType && (
+            <span className={`text-xs px-2 py-0.5 rounded-full bg-neutral-800 ${getTraceTypeColor(traceType)}`}>
+              {getTraceTypeName(traceType)}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {status === 'error' && (
             <span className="text-xs text-red-400">error</span>
@@ -822,6 +1036,7 @@ export function DetailPanel({ selectedNode, allArtifacts = [] }: DetailPanelProp
         {selectedNode.type === 'span' && renderSpanDetail(selectedNode.data)}
         {selectedNode.type === 'model' && renderModelDetail(selectedNode.data.before, selectedNode.data.after)}
         {selectedNode.type === 'tool' && renderToolDetail(selectedNode.data)}
+        {selectedNode.type === 'trace' && renderTraceDetail(selectedNode.data)}
       </div>
     </div>
   );

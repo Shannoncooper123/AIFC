@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from langchain_core.runnables import RunnableConfig
 
 from modules.agent.engine import get_engine
+from modules.agent.utils.trace_utils import traced_node
 from modules.agent.state import AgentState
 from modules.agent.utils.state import load_state
 from modules.agent.trade_simulator.storage import load_position_history
@@ -13,7 +14,6 @@ from modules.constants import INDICATOR_NAMES
 from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.data.models import Kline
 from modules.monitor.utils.logger import get_logger
-from modules.agent.utils.trace_decorators import traced_node
 
 logger = get_logger('agent.nodes.context_injection')
 

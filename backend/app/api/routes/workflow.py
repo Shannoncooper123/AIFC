@@ -1,10 +1,22 @@
+"""
+Workflow Trace API - 提供 workflow 运行记录的查询接口
+
+新的 trace 结构使用 trace_id 和 parent_trace_id 建立层级关系，
+每个 trace 记录包含 type 字段标识类型：
+- workflow: 顶层工作流
+- node: LangGraph 节点
+- agent: Agent 调用
+- model_call: 模型调用
+- tool_call: 工具调用
+- artifact: 图片等产物
+"""
 import asyncio
 import json
 import logging
 import os
 import threading
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -18,8 +30,7 @@ from app.models.schemas import (
     WorkflowArtifact,
     WorkflowTimelineResponse,
     WorkflowTimeline,
-    WorkflowSpan,
-    WorkflowSpanChild,
+    WorkflowTraceItem,
 )
 from modules.agent.utils.workflow_trace_storage import get_trace_path
 
@@ -33,7 +44,7 @@ class TraceEventCache:
     
     def __init__(self, ttl_seconds: float = 2.0):
         self._events: List[Dict[str, Any]] = []
-        self._events_by_run_id: Dict[str, List[Dict[str, Any]]] = {}
+        self._events_by_workflow_run_id: Dict[str, List[Dict[str, Any]]] = {}
         self._last_load_time: float = 0
         self._last_file_mtime: float = 0
         self._ttl = ttl_seconds
@@ -60,11 +71,11 @@ class TraceEventCache:
     def _load_events(self, trace_path: str) -> None:
         """加载事件并建立索引"""
         events: List[Dict[str, Any]] = []
-        events_by_run_id: Dict[str, List[Dict[str, Any]]] = {}
+        events_by_workflow_run_id: Dict[str, List[Dict[str, Any]]] = {}
         
         if not os.path.exists(trace_path):
             self._events = events
-            self._events_by_run_id = events_by_run_id
+            self._events_by_workflow_run_id = events_by_workflow_run_id
             return
         
         with open(trace_path, "r", encoding="utf-8") as f:
@@ -75,17 +86,17 @@ class TraceEventCache:
                 try:
                     event = json.loads(line)
                     events.append(event)
-                    run_id = event.get("run_id")
-                    if run_id:
-                        if run_id not in events_by_run_id:
-                            events_by_run_id[run_id] = []
-                        events_by_run_id[run_id].append(event)
+                    workflow_run_id = event.get("workflow_run_id")
+                    if workflow_run_id:
+                        if workflow_run_id not in events_by_workflow_run_id:
+                            events_by_workflow_run_id[workflow_run_id] = []
+                        events_by_workflow_run_id[workflow_run_id].append(event)
                 except json.JSONDecodeError as e:
                     logger.warning(f"解析工作流事件JSON行失败: {e}")
                     continue
         
         self._events = events
-        self._events_by_run_id = events_by_run_id
+        self._events_by_workflow_run_id = events_by_workflow_run_id
         self._last_load_time = time.time()
         try:
             self._last_file_mtime = os.path.getmtime(trace_path)
@@ -100,13 +111,13 @@ class TraceEventCache:
                 self._load_events(trace_path)
             return self._events
     
-    def get_events_by_run_id(self, run_id: str) -> List[Dict[str, Any]]:
-        """按 run_id 获取事件（O(1) 查找）"""
+    def get_events_by_workflow_run_id(self, workflow_run_id: str) -> List[Dict[str, Any]]:
+        """按 workflow_run_id 获取事件（O(1) 查找）"""
         trace_path = get_trace_path()
         with self._lock:
             if self._should_reload(trace_path):
                 self._load_events(trace_path)
-            return self._events_by_run_id.get(run_id, [])
+            return self._events_by_workflow_run_id.get(workflow_run_id, [])
 
 
 _trace_cache = TraceEventCache(ttl_seconds=2.0)
@@ -117,9 +128,9 @@ def _read_events_sync() -> List[Dict[str, Any]]:
     return _trace_cache.get_all_events()
 
 
-def _read_events_for_run_sync(run_id: str) -> List[Dict[str, Any]]:
-    """同步读取指定 run_id 的事件（O(1) 查找）"""
-    return _trace_cache.get_events_by_run_id(run_id)
+def _read_events_for_run_sync(workflow_run_id: str) -> List[Dict[str, Any]]:
+    """同步读取指定 workflow_run_id 的事件（O(1) 查找）"""
+    return _trace_cache.get_events_by_workflow_run_id(workflow_run_id)
 
 
 async def _read_events() -> List[Dict[str, Any]]:
@@ -127,24 +138,23 @@ async def _read_events() -> List[Dict[str, Any]]:
     return await asyncio.to_thread(_read_events_sync)
 
 
-async def _read_events_for_run(run_id: str) -> List[Dict[str, Any]]:
-    """异步读取指定 run_id 的事件（在线程池中执行）"""
-    return await asyncio.to_thread(_read_events_for_run_sync, run_id)
+async def _read_events_for_run(workflow_run_id: str) -> List[Dict[str, Any]]:
+    """异步读取指定 workflow_run_id 的事件（在线程池中执行）"""
+    return await asyncio.to_thread(_read_events_for_run_sync, workflow_run_id)
 
 
 def _summarize_runs(events: List[Dict[str, Any]]) -> List[WorkflowRunSummary]:
     """汇总运行记录"""
     runs: Dict[str, WorkflowRunSummary] = {}
-    run_start_times: Dict[str, int] = {}
-    run_end_times: Dict[str, int] = {}
     
     for event in events:
-        run_id = event.get("run_id")
-        if not run_id:
+        workflow_run_id = event.get("workflow_run_id")
+        if not workflow_run_id:
             continue
-        if run_id not in runs:
-            runs[run_id] = WorkflowRunSummary(
-                run_id=run_id,
+            
+        if workflow_run_id not in runs:
+            runs[workflow_run_id] = WorkflowRunSummary(
+                run_id=workflow_run_id,
                 start_time=None,
                 end_time=None,
                 duration_ms=None,
@@ -156,24 +166,25 @@ def _summarize_runs(events: List[Dict[str, Any]]) -> List[WorkflowRunSummary]:
                 model_calls_count=0,
                 artifacts_count=0,
             )
-        run = runs[run_id]
+        
+        run = runs[workflow_run_id]
         event_type = event.get("type")
         
-        if event_type == "run_start":
-            run.start_time = event.get("ts")
-            run_start_times[run_id] = event.get("timestamp_ms", 0)
-            alert = event.get("alert", {})
-            run.symbols = alert.get("symbols", [])
-            run.pending_count = int(alert.get("pending_count", 0))
-        elif event_type == "run_end":
-            run.end_time = event.get("ts")
-            run_end_times[run_id] = event.get("timestamp_ms", 0)
-            run.status = event.get("status")
-        elif event_type == "span_start":
-            node = event.get("node", "")
-            if not node.startswith("tool:"):
-                run.nodes_count += 1
-        elif event_type == "node_event" and event.get("phase") == "start":
+        if event_type == "workflow":
+            status = event.get("status")
+            if status == "running":
+                run.start_time = event.get("start_time")
+                payload = event.get("payload", {})
+                alert = payload.get("alert", {})
+                run.symbols = alert.get("symbols", [])
+                run.pending_count = int(alert.get("pending_count", 0))
+            else:
+                run.end_time = event.get("end_time")
+                run.status = status
+                run.duration_ms = event.get("duration_ms")
+                if not run.start_time:
+                    run.start_time = event.get("start_time")
+        elif event_type == "node":
             run.nodes_count += 1
         elif event_type == "tool_call":
             run.tool_calls_count += 1
@@ -182,172 +193,124 @@ def _summarize_runs(events: List[Dict[str, Any]]) -> List[WorkflowRunSummary]:
         elif event_type == "artifact":
             run.artifacts_count += 1
     
-    for run_id, run in runs.items():
-        start_ts = run_start_times.get(run_id, 0)
-        end_ts = run_end_times.get(run_id, 0)
-        if start_ts and end_ts:
-            run.duration_ms = end_ts - start_ts
-    
     return list(runs.values())
 
 
-def _build_timeline(run_id: str, run_events: List[Dict[str, Any]]) -> WorkflowTimeline:
-    """构建时间线树形结构（接收已过滤的事件列表）"""
-    run_events = sorted(run_events, key=lambda e: (e.get("seq", 0), e.get("timestamp_ms", 0)))
+def _build_timeline(workflow_run_id: str, run_events: List[Dict[str, Any]]) -> WorkflowTimeline:
+    """
+    构建时间线树形结构
+    
+    使用 trace_id 和 parent_trace_id 建立层级关系
+    """
+    run_events = sorted(run_events, key=lambda e: e.get("timestamp_ms", 0))
     
     timeline = WorkflowTimeline(
-        run_id=run_id,
+        run_id=workflow_run_id,
         start_time=None,
         end_time=None,
         duration_ms=None,
         status=None,
         symbols=[],
-        spans=[],
+        traces=[],
     )
     
-    spans_map: Dict[str, WorkflowSpan] = {}
-    span_children: Dict[str, List[WorkflowSpanChild]] = {}
-    span_artifacts: Dict[str, List[WorkflowArtifact]] = {}
+    traces_map: Dict[str, WorkflowTraceItem] = {}
     
     for event in run_events:
-        event_type = event.get("type")
+        trace_id = event.get("trace_id")
+        if not trace_id:
+            continue
         
-        if event_type == "run_start":
-            timeline.start_time = event.get("ts")
-            alert = event.get("alert", {})
-            timeline.symbols = alert.get("symbols", [])
-            
-        elif event_type == "run_end":
-            timeline.end_time = event.get("ts")
-            timeline.status = event.get("status")
-            
-        elif event_type == "span_start":
-            span_id = event.get("span_id")
-            if span_id:
-                span = WorkflowSpan(
-                    span_id=span_id,
-                    parent_span_id=event.get("parent_span_id"),
-                    node=event.get("node", "unknown"),
-                    symbol=event.get("symbol"),
-                    start_time=event.get("ts"),
-                    end_time=None,
-                    duration_ms=None,
-                    status="running",
-                    error=None,
-                    output_summary=None,
-                    children=[],
-                    artifacts=[],
-                )
-                spans_map[span_id] = span
-                span_children[span_id] = []
-                span_artifacts[span_id] = []
-                
-        elif event_type == "span_end":
-            span_id = event.get("span_id")
-            if span_id and span_id in spans_map:
-                span = spans_map[span_id]
-                span.end_time = event.get("ts")
-                span.duration_ms = event.get("duration_ms")
-                span.status = event.get("status", "success")
-                span.error = event.get("error")
-                span.output_summary = event.get("output_summary")
-                
-        elif event_type == "tool_call":
-            span_id = event.get("span_id")
-            payload = event.get("payload", {})
-            child = WorkflowSpanChild(
-                type="tool_call",
-                ts=event.get("ts"),
-                seq=event.get("seq", 0),
-                tool_name=event.get("tool_name") or payload.get("tool_name"),
-                symbol=event.get("symbol"),
-                duration_ms=None,
-                status="success" if payload.get("success", True) else "error",
-                error=payload.get("error") if not payload.get("success", True) else None,
-                payload=payload,
-            )
-            if span_id and span_id in span_children:
-                span_children[span_id].append(child)
+        event_type = event.get("type")
+        status = event.get("status")
+        
+        if event_type == "workflow":
+            if status == "running":
+                timeline.start_time = event.get("start_time")
+                payload = event.get("payload", {})
+                alert = payload.get("alert", {})
+                timeline.symbols = alert.get("symbols", [])
             else:
-                for sid in reversed(list(spans_map.keys())):
-                    span_children[sid].append(child)
-                    break
-                    
-        elif event_type == "model_call":
-            span_id = event.get("span_id")
-            payload = event.get("payload", {})
-            child = WorkflowSpanChild(
-                type="model_call",
-                ts=event.get("ts"),
-                seq=event.get("seq", 0),
-                tool_name=None,
-                symbol=event.get("symbol"),
-                duration_ms=None,
-                status="success",
-                error=None,
-                payload=payload,
-            )
-            if span_id and span_id in span_children:
-                span_children[span_id].append(child)
+                timeline.end_time = event.get("end_time")
+                timeline.status = status
+                timeline.duration_ms = event.get("duration_ms")
+                if not timeline.start_time:
+                    timeline.start_time = event.get("start_time")
+            continue
+        
+        if trace_id in traces_map:
+            existing = traces_map[trace_id]
+            if existing.status == "running" and status != "running":
+                pass
             else:
-                for sid in reversed(list(spans_map.keys())):
-                    span_children[sid].append(child)
-                    break
-                    
-        elif event_type == "artifact":
-            payload = event.get("payload", {})
-            span_id = event.get("span_id") or payload.get("span_id")
+                continue
+        
+        trace_item = WorkflowTraceItem(
+            trace_id=trace_id,
+            parent_trace_id=event.get("parent_trace_id"),
+            type=event_type,
+            name=event.get("name", "unknown"),
+            symbol=event.get("symbol"),
+            start_time=event.get("start_time"),
+            end_time=event.get("end_time"),
+            duration_ms=event.get("duration_ms"),
+            status=status,
+            error=event.get("error"),
+            payload=event.get("payload"),
+            children=[],
+            artifacts=[],
+        )
+        
+        traces_map[trace_id] = trace_item
+    
+    child_traces_map: Dict[str, List[WorkflowTraceItem]] = {}
+    artifacts_map: Dict[str, List[WorkflowArtifact]] = {}
+    root_traces: List[WorkflowTraceItem] = []
+    
+    for trace_id, trace_item in traces_map.items():
+        parent_id = trace_item.parent_trace_id
+        
+        if trace_item.type == "artifact":
+            payload = trace_item.payload or {}
             artifact = WorkflowArtifact(
-                artifact_id=payload.get("artifact_id", ""),
-                run_id=run_id,
-                type=payload.get("type", "unknown"),
+                artifact_id=payload.get("artifact_id", trace_id),
+                run_id=workflow_run_id,
+                type=payload.get("artifact_type", "unknown"),
                 file_path=payload.get("file_path", ""),
-                span_id=span_id,
-                symbol=payload.get("symbol"),
+                trace_id=trace_id,
+                parent_trace_id=parent_id,
+                symbol=payload.get("symbol") or trace_item.symbol,
                 interval=payload.get("interval"),
-                created_at=payload.get("created_at"),
+                image_id=payload.get("image_id"),
+                created_at=trace_item.start_time,
             )
-            if span_id and span_id in span_artifacts:
-                span_artifacts[span_id].append(artifact)
+            if parent_id:
+                if parent_id not in artifacts_map:
+                    artifacts_map[parent_id] = []
+                artifacts_map[parent_id].append(artifact)
+            continue
+        
+        if parent_id and parent_id in traces_map:
+            if parent_id not in child_traces_map:
+                child_traces_map[parent_id] = []
+            child_traces_map[parent_id].append(trace_item)
+        elif parent_id == workflow_run_id or not parent_id:
+            root_traces.append(trace_item)
     
-    for span_id, span in spans_map.items():
-        span.children = span_children.get(span_id, [])
-        span.artifacts = span_artifacts.get(span_id, [])
+    def attach_children_and_artifacts(trace_item: WorkflowTraceItem) -> None:
+        """递归地将子 traces 和 artifacts 附加到父 trace"""
+        children = child_traces_map.get(trace_item.trace_id, [])
+        children.sort(key=lambda t: t.start_time or "")
+        for child in children:
+            attach_children_and_artifacts(child)
+        trace_item.children = children
+        trace_item.artifacts = artifacts_map.get(trace_item.trace_id, [])
     
-    child_spans_map: Dict[str, List[WorkflowSpan]] = {}
-    root_spans = []
+    for trace_item in root_traces:
+        attach_children_and_artifacts(trace_item)
     
-    for span_id, span in spans_map.items():
-        parent_id = span.parent_span_id
-        if parent_id and parent_id in spans_map:
-            if parent_id not in child_spans_map:
-                child_spans_map[parent_id] = []
-            child_spans_map[parent_id].append(span)
-        else:
-            root_spans.append(span)
-    
-    def attach_nested_spans(span: WorkflowSpan) -> None:
-        """递归地将子 spans 附加到父 span 的 nested_spans 字段"""
-        nested = child_spans_map.get(span.span_id, [])
-        nested.sort(key=lambda s: s.start_time or "")
-        for child_span in nested:
-            attach_nested_spans(child_span)
-        span.nested_spans = nested
-    
-    for span in root_spans:
-        attach_nested_spans(span)
-    
-    root_spans.sort(key=lambda s: s.start_time or "")
-    
-    if timeline.start_time and timeline.end_time:
-        try:
-            start_dt = datetime.fromisoformat(timeline.start_time.replace("Z", "+00:00"))
-            end_dt = datetime.fromisoformat(timeline.end_time.replace("Z", "+00:00"))
-            timeline.duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
-        except (ValueError, TypeError) as e:
-            logger.warning(f"解析时间线时间戳失败: {e}")
-    
-    timeline.spans = root_spans
+    root_traces.sort(key=lambda t: t.start_time or "")
+    timeline.traces = root_traces
     
     return timeline
 
@@ -367,7 +330,7 @@ async def get_run(run_id: str):
     run_events = await _read_events_for_run(run_id)
     if not run_events:
         raise HTTPException(status_code=404, detail=f"运行记录不存在: {run_id}")
-    run_events_sorted = sorted(run_events, key=lambda e: (e.get("seq", 0), e.get("timestamp_ms", 0)))
+    run_events_sorted = sorted(run_events, key=lambda e: e.get("timestamp_ms", 0))
     return WorkflowRunDetailResponse(
         run_id=run_id,
         events=[WorkflowRunEvent(**e) for e in run_events_sorted],
@@ -392,7 +355,18 @@ async def list_run_artifacts(run_id: str):
     for e in run_events:
         if e.get("type") == "artifact":
             payload = e.get("payload") or {}
-            artifacts.append(WorkflowArtifact(**payload))
+            artifacts.append(WorkflowArtifact(
+                artifact_id=payload.get("artifact_id", ""),
+                run_id=run_id,
+                type=payload.get("artifact_type", "unknown"),
+                file_path=payload.get("file_path", ""),
+                trace_id=e.get("trace_id"),
+                parent_trace_id=e.get("parent_trace_id"),
+                symbol=payload.get("symbol"),
+                interval=payload.get("interval"),
+                image_id=payload.get("image_id"),
+                created_at=e.get("start_time"),
+            ))
     return artifacts
 
 

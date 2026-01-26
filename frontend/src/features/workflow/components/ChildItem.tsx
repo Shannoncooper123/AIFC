@@ -111,7 +111,7 @@ function ToolCallItem({
         </div>
 
         <div className="flex items-center gap-2">
-          {tool.duration_ms && (
+          {tool.duration_ms != null && tool.duration_ms > 0 && (
             <span className="text-xs text-neutral-500">
               {formatDuration(tool.duration_ms)}
             </span>
@@ -295,7 +295,7 @@ export function ChildItem({
         </div>
 
         <div className="flex items-center gap-2">
-          {toolChild.duration_ms && (
+          {toolChild.duration_ms != null && toolChild.duration_ms > 0 && (
             <span className="text-xs text-neutral-500">
               {formatDuration(toolChild.duration_ms)}
             </span>

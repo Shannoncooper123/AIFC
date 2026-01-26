@@ -33,6 +33,16 @@ async def lifespan(app: FastAPI):
     logger.info("Crypto Monitor Backend 启动中...")
     logger.info("=" * 60)
     
+    logger.info("自动启动 Monitor 和 Workflow 服务...")
+    results = thread_manager.start_all()
+    for name, success in results.items():
+        status = "✅ 成功" if success else "❌ 失败"
+        logger.info(f"  {name}: {status}")
+    
+    logger.info("=" * 60)
+    logger.info("✅ Backend 启动完成")
+    logger.info("=" * 60)
+    
     yield
     
     logger.info("=" * 60)

@@ -2,7 +2,6 @@
 from langchain.tools import tool
 from typing import Optional, Dict, Any
 from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, require_engine
-from modules.agent.utils.workflow_trace_storage import get_current_run_id
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.tool.close_position')
@@ -14,7 +13,7 @@ def close_position_tool(
     trend_reversed: bool,
     structure_broken: bool,
     volume_confirmed: bool,
-    timing_reasonable: bool
+    timing_reasonable: bool,
 ) -> Dict[str, Any]:
     """平仓。
 
@@ -41,8 +40,7 @@ def close_position_tool(
             f"checkpoints=[trend_reversed:{trend_reversed}, structure_broken:{structure_broken}, "
             f"volume:{volume_confirmed}, timing:{timing_reasonable}]"
         )
-        run_id = get_current_run_id()
-        res = eng.close_position(symbol=symbol, run_id=run_id)
+        res = eng.close_position(symbol=symbol)
         if isinstance(res, dict) and 'error' in res:
             logger.error(f"close_position_tool: 失败 -> {res['error']}")
         else:

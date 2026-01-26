@@ -162,9 +162,18 @@ def create_limit_order_tool(
             if sl_price <= limit_price:
                 return make_input_error(f"做空限价单错误: 止损价({sl_price}) 必须高于 挂单价({limit_price})")
             
-        # 获取配置和引擎
+        config = get_config()
+        trading_mode = config.get('trading', {}).get('mode', 'simulator')
+        if trading_mode == 'live':
+            leverage = int(config.get('trading', {}).get('max_leverage', DEFAULT_LEVERAGE))
+        else:
+            leverage = int(config.get('agent', {}).get('simulator', {}).get('max_leverage', DEFAULT_LEVERAGE))
+        
+        eng = get_engine()
+        if eng is None:
+            logger.error("create_limit_order_tool: 引擎未初始化")
+            return {"error": "TOOL_RUNTIME_ERROR: 交易引擎未初始化"}
 
-        # 保证金检查
         try:
             account_summary = eng.get_account_summary()
             account_balance = float(account_summary.get('balance', 0))

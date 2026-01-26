@@ -1,7 +1,7 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import type { WorkflowTimeline, WorkflowSpan, WorkflowArtifact } from '../../../types';
-import { SpanItem } from './SpanItem';
+import type { WorkflowTimeline, WorkflowTraceItem, WorkflowArtifact } from '../../../types';
+import { TraceItem } from './TraceItem';
 import { DetailPanel, type SelectedNode } from './DetailPanel';
 
 interface TimelineViewProps {
@@ -11,297 +11,237 @@ interface TimelineViewProps {
   onSymbolSelect?: (symbol: string | null) => void;
 }
 
-interface FlatSpanItem {
-  span: WorkflowSpan;
+interface FlatTraceItem {
+  trace: WorkflowTraceItem;
   depth: number;
   parentId?: string;
 }
 
-/**
- * 收集所有 span ID
- * @param spans - 工作流 span 列表
- * @returns span ID 数组
- */
-function collectAllSpanIds(spans: WorkflowSpan[]): string[] {
+function collectAllTraceIds(traces: WorkflowTraceItem[]): string[] {
   const ids: string[] = [];
-  for (const span of spans) {
-    ids.push(span.span_id);
-    if (span.nested_spans && span.nested_spans.length > 0) {
-      ids.push(...collectAllSpanIds(span.nested_spans));
+  for (const trace of traces) {
+    ids.push(trace.trace_id);
+    if (trace.children && trace.children.length > 0) {
+      ids.push(...collectAllTraceIds(trace.children));
     }
   }
   return ids;
 }
 
-/**
- * 收集所有 artifacts
- * @param spans - 工作流 span 列表
- * @returns artifacts 数组
- */
-function collectAllArtifacts(spans: WorkflowSpan[]): WorkflowArtifact[] {
+function collectAllArtifacts(traces: WorkflowTraceItem[]): WorkflowArtifact[] {
   const artifacts: WorkflowArtifact[] = [];
-  for (const span of spans) {
-    artifacts.push(...span.artifacts);
-    if (span.nested_spans && span.nested_spans.length > 0) {
-      artifacts.push(...collectAllArtifacts(span.nested_spans));
+  for (const trace of traces) {
+    artifacts.push(...trace.artifacts);
+    if (trace.children && trace.children.length > 0) {
+      artifacts.push(...collectAllArtifacts(trace.children));
     }
   }
   return artifacts;
 }
 
-/**
- * 格式化持续时间
- * @param ms - 毫秒数
- * @returns 格式化后的时间字符串
- */
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-/**
- * 收集所有包含错误的 span 路径（需要展开的 span ID）
- * @param spans - 工作流 span 列表
- * @returns 需要展开的 span ID 集合
- */
-function collectErrorPathIds(spans: WorkflowSpan[]): string[] {
+function collectErrorPathIds(traces: WorkflowTraceItem[]): string[] {
   const ids: string[] = [];
   
-  function traverse(spanList: WorkflowSpan[]): boolean {
+  function traverse(traceList: WorkflowTraceItem[]): boolean {
     let hasErrorInChildren = false;
-    for (const span of spanList) {
-      const childHasError = span.nested_spans && span.nested_spans.length > 0 
-        ? traverse(span.nested_spans) 
+    for (const trace of traceList) {
+      const childHasError = trace.children && trace.children.length > 0 
+        ? traverse(trace.children) 
         : false;
       
-      if (span.status === 'error' || childHasError) {
-        ids.push(span.span_id);
+      if (trace.status === 'error' || childHasError) {
+        ids.push(trace.trace_id);
         hasErrorInChildren = true;
       }
     }
     return hasErrorInChildren;
   }
   
-  traverse(spans);
+  traverse(traces);
   return ids;
 }
 
-/**
- * 查找第一个错误 span
- * @param spans - 工作流 span 列表
- * @returns 第一个错误 span 或 null
- */
-function findFirstErrorSpan(spans: WorkflowSpan[]): WorkflowSpan | null {
-  for (const span of spans) {
-    if (span.status === 'error') return span;
-    if (span.nested_spans && span.nested_spans.length > 0) {
-      const found = findFirstErrorSpan(span.nested_spans);
+function findFirstErrorTrace(traces: WorkflowTraceItem[]): WorkflowTraceItem | null {
+  for (const trace of traces) {
+    if (trace.status === 'error') return trace;
+    if (trace.children && trace.children.length > 0) {
+      const found = findFirstErrorTrace(trace.children);
       if (found) return found;
     }
   }
   return null;
 }
 
-/**
- * 将嵌套的 span 结构扁平化为列表（用于键盘导航）
- * @param spans - 工作流 span 列表
- * @param expandedSpans - 已展开的 span ID 集合
- * @param depth - 当前深度
- * @param parentId - 父 span ID
- * @returns 扁平化的 span 列表
- */
-function flattenSpans(
-  spans: WorkflowSpan[], 
-  expandedSpans: Set<string>, 
+function flattenTraces(
+  traces: WorkflowTraceItem[], 
+  expandedTraces: Set<string>, 
   depth: number = 0,
   parentId?: string
-): FlatSpanItem[] {
-  const result: FlatSpanItem[] = [];
+): FlatTraceItem[] {
+  const result: FlatTraceItem[] = [];
   
-  for (const span of spans) {
-    result.push({ span, depth, parentId });
+  for (const trace of traces) {
+    result.push({ trace, depth, parentId });
     
-    if (expandedSpans.has(span.span_id) && span.nested_spans && span.nested_spans.length > 0) {
-      result.push(...flattenSpans(span.nested_spans, expandedSpans, depth + 1, span.span_id));
+    if (expandedTraces.has(trace.trace_id) && trace.children && trace.children.length > 0) {
+      result.push(...flattenTraces(trace.children, expandedTraces, depth + 1, trace.trace_id));
     }
   }
   
   return result;
 }
 
-/**
- * 检查是否存在任何错误 span
- * @param spans - 工作流 span 列表
- * @returns 是否存在错误
- */
-function hasAnyError(spans: WorkflowSpan[]): boolean {
-  for (const span of spans) {
-    if (span.status === 'error') return true;
-    if (span.nested_spans && span.nested_spans.length > 0) {
-      if (hasAnyError(span.nested_spans)) return true;
+function hasAnyError(traces: WorkflowTraceItem[]): boolean {
+  for (const trace of traces) {
+    if (trace.status === 'error') return true;
+    if (trace.children && trace.children.length > 0) {
+      if (hasAnyError(trace.children)) return true;
     }
   }
   return false;
 }
 
 export function TimelineView({ timeline, selectedSymbol, uniqueSymbols, onSymbolSelect }: TimelineViewProps) {
-  const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
+  const errorPathIds = useMemo(() => collectErrorPathIds(timeline.traces), [timeline.traces]);
+  
+  const initialExpanded = useMemo(() => {
+    return errorPathIds.length > 0 ? new Set(errorPathIds) : new Set<string>();
+  }, [errorPathIds]);
+  
+  const [expandedTraces, setExpandedTraces] = useState<Set<string>>(initialExpanded);
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
-  const [focusedSpanId, setFocusedSpanId] = useState<string | null>(null);
+  const [focusedTraceId, setFocusedTraceId] = useState<string | null>(null);
   
   const timelineContainerRef = useRef<HTMLDivElement>(null);
-  const spanRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const hasAutoExpandedRef = useRef(false);
+  const traceRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  const toggleSpan = useCallback((spanId: string) => {
-    setExpandedSpans((prev) => {
+  const toggleTrace = useCallback((traceId: string) => {
+    setExpandedTraces((prev) => {
       const next = new Set(prev);
-      if (next.has(spanId)) {
-        next.delete(spanId);
+      if (next.has(traceId)) {
+        next.delete(traceId);
       } else {
-        next.add(spanId);
+        next.add(traceId);
       }
       return next;
     });
   }, []);
 
-  const allSpanIds = useMemo(() => collectAllSpanIds(timeline.spans), [timeline.spans]);
-  const allArtifacts = useMemo(() => collectAllArtifacts(timeline.spans), [timeline.spans]);
-  const errorPathIds = useMemo(() => collectErrorPathIds(timeline.spans), [timeline.spans]);
-  const hasErrors = useMemo(() => hasAnyError(timeline.spans), [timeline.spans]);
+  const allTraceIds = useMemo(() => collectAllTraceIds(timeline.traces), [timeline.traces]);
+  const allArtifacts = useMemo(() => collectAllArtifacts(timeline.traces), [timeline.traces]);
+  const hasErrors = useMemo(() => hasAnyError(timeline.traces), [timeline.traces]);
   
-  const flatSpans = useMemo(
-    () => flattenSpans(timeline.spans, expandedSpans),
-    [timeline.spans, expandedSpans]
+  const flatTraces = useMemo(
+    () => flattenTraces(timeline.traces, expandedTraces),
+    [timeline.traces, expandedTraces]
   );
 
   const isSuccess = timeline.status === 'completed' || timeline.status === 'success';
 
-  useEffect(() => {
-    if (!hasAutoExpandedRef.current && errorPathIds.length > 0) {
-      setExpandedSpans(new Set(errorPathIds));
-      hasAutoExpandedRef.current = true;
-    }
-  }, [errorPathIds]);
-
   const expandAll = useCallback(() => {
-    setExpandedSpans(new Set(allSpanIds));
-  }, [allSpanIds]);
+    setExpandedTraces(new Set(allTraceIds));
+  }, [allTraceIds]);
 
   const collapseAll = useCallback(() => {
-    setExpandedSpans(new Set());
+    setExpandedTraces(new Set());
   }, []);
 
   const jumpToError = useCallback(() => {
-    const firstErrorSpan = findFirstErrorSpan(timeline.spans);
-    if (firstErrorSpan) {
-      const pathIds = collectErrorPathIds(timeline.spans);
-      setExpandedSpans((prev) => {
+    const firstErrorTrace = findFirstErrorTrace(timeline.traces);
+    if (firstErrorTrace) {
+      const pathIds = collectErrorPathIds(timeline.traces);
+      setExpandedTraces((prev) => {
         const next = new Set(prev);
         pathIds.forEach((id) => next.add(id));
         return next;
       });
       
-      setSelectedNode({ type: 'span', data: firstErrorSpan });
-      setFocusedSpanId(firstErrorSpan.span_id);
+      setSelectedNode({ type: 'trace', data: firstErrorTrace });
+      setFocusedTraceId(firstErrorTrace.trace_id);
       
       setTimeout(() => {
-        const spanElement = spanRefs.current.get(firstErrorSpan.span_id);
-        if (spanElement) {
-          spanElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const traceElement = traceRefs.current.get(firstErrorTrace.trace_id);
+        if (traceElement) {
+          traceElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
       }, 100);
     }
-  }, [timeline.spans]);
+  }, [timeline.traces]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (flatSpans.length === 0) return;
+    if (flatTraces.length === 0) return;
     
-    const currentIndex = focusedSpanId 
-      ? flatSpans.findIndex((item) => item.span.span_id === focusedSpanId)
+    const currentIndex = focusedTraceId 
+      ? flatTraces.findIndex((item) => item.trace.trace_id === focusedTraceId)
       : -1;
     
     switch (e.key) {
       case 'ArrowDown': {
         e.preventDefault();
-        const nextIndex = currentIndex < flatSpans.length - 1 ? currentIndex + 1 : 0;
-        const nextSpan = flatSpans[nextIndex];
-        setFocusedSpanId(nextSpan.span.span_id);
-        const spanElement = spanRefs.current.get(nextSpan.span.span_id);
-        if (spanElement) {
-          spanElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        const nextIndex = currentIndex < flatTraces.length - 1 ? currentIndex + 1 : 0;
+        const nextTrace = flatTraces[nextIndex];
+        setFocusedTraceId(nextTrace.trace.trace_id);
+        const traceElement = traceRefs.current.get(nextTrace.trace.trace_id);
+        if (traceElement) {
+          traceElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         break;
       }
       case 'ArrowUp': {
         e.preventDefault();
-        const prevIndex = currentIndex > 0 ? currentIndex - 1 : flatSpans.length - 1;
-        const prevSpan = flatSpans[prevIndex];
-        setFocusedSpanId(prevSpan.span.span_id);
-        const spanElement = spanRefs.current.get(prevSpan.span.span_id);
-        if (spanElement) {
-          spanElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        const prevIndex = currentIndex > 0 ? currentIndex - 1 : flatTraces.length - 1;
+        const prevTrace = flatTraces[prevIndex];
+        setFocusedTraceId(prevTrace.trace.trace_id);
+        const traceElement = traceRefs.current.get(prevTrace.trace.trace_id);
+        if (traceElement) {
+          traceElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         break;
       }
       case 'ArrowRight': {
         e.preventDefault();
-        if (focusedSpanId && !expandedSpans.has(focusedSpanId)) {
-          const currentSpan = flatSpans.find((item) => item.span.span_id === focusedSpanId);
-          if (currentSpan && (currentSpan.span.nested_spans?.length > 0 || currentSpan.span.children.length > 0)) {
-            toggleSpan(focusedSpanId);
+        if (focusedTraceId && !expandedTraces.has(focusedTraceId)) {
+          const currentTrace = flatTraces.find((item) => item.trace.trace_id === focusedTraceId);
+          if (currentTrace && currentTrace.trace.children?.length > 0) {
+            toggleTrace(focusedTraceId);
           }
         }
         break;
       }
       case 'ArrowLeft': {
         e.preventDefault();
-        if (focusedSpanId && expandedSpans.has(focusedSpanId)) {
-          toggleSpan(focusedSpanId);
+        if (focusedTraceId && expandedTraces.has(focusedTraceId)) {
+          toggleTrace(focusedTraceId);
         }
         break;
       }
       case 'Enter': {
         e.preventDefault();
-        if (focusedSpanId) {
-          const currentSpan = flatSpans.find((item) => item.span.span_id === focusedSpanId);
-          if (currentSpan) {
-            setSelectedNode({ type: 'span', data: currentSpan.span });
+        if (focusedTraceId) {
+          const currentTrace = flatTraces.find((item) => item.trace.trace_id === focusedTraceId);
+          if (currentTrace) {
+            setSelectedNode({ type: 'trace', data: currentTrace.trace });
           }
         }
         break;
       }
     }
-  }, [flatSpans, focusedSpanId, expandedSpans, toggleSpan]);
+  }, [flatTraces, focusedTraceId, expandedTraces, toggleTrace]);
 
-  const registerSpanRef = useCallback((spanId: string, element: HTMLDivElement | null) => {
+  const registerTraceRef = useCallback((traceId: string, element: HTMLDivElement | null) => {
     if (element) {
-      spanRefs.current.set(spanId, element);
+      traceRefs.current.set(traceId, element);
     } else {
-      spanRefs.current.delete(spanId);
+      traceRefs.current.delete(traceId);
     }
   }, []);
 
   const totalDuration = timeline.duration_ms || 1;
-  const timelineStartTime = timeline.start_time
-    ? new Date(timeline.start_time).getTime()
-    : undefined;
-
-  const spansWithOffset = useMemo(() => {
-    if (!timeline.start_time)
-      return timeline.spans.map((s) => ({ span: s, offset: 0 }));
-
-    const startTime = new Date(timeline.start_time).getTime();
-    return timeline.spans.map((span) => {
-      const spanStart = span.start_time
-        ? new Date(span.start_time).getTime()
-        : startTime;
-      return {
-        span,
-        offset: spanStart - startTime,
-      };
-    });
-  }, [timeline]);
 
   return (
     <div 
@@ -379,22 +319,20 @@ export function TimelineView({ timeline, selectedSymbol, uniqueSymbols, onSymbol
           ref={timelineContainerRef}
           className="flex-1 overflow-y-auto p-2 bg-[#141414]"
         >
-          {spansWithOffset.map(({ span, offset }) => (
-            <SpanItem
-              key={span.span_id}
-              span={span}
+          {timeline.traces.map((trace) => (
+            <TraceItem
+              key={trace.trace_id}
+              trace={trace}
               totalDuration={totalDuration}
-              startOffset={offset}
-              expandedSpans={expandedSpans}
-              toggleSpan={toggleSpan}
+              expandedTraces={expandedTraces}
+              toggleTrace={toggleTrace}
               selectedSymbol={selectedSymbol}
-              timelineStartTime={timelineStartTime}
               selectedNode={selectedNode}
               onSelectNode={setSelectedNode}
               allArtifacts={allArtifacts}
-              focusedSpanId={focusedSpanId}
-              onFocusSpan={setFocusedSpanId}
-              registerSpanRef={registerSpanRef}
+              focusedTraceId={focusedTraceId}
+              onFocusTrace={setFocusedTraceId}
+              registerTraceRef={registerTraceRef}
             />
           ))}
         </div>

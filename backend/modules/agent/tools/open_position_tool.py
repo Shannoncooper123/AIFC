@@ -2,7 +2,6 @@
 from langchain.tools import tool
 from typing import Optional, Dict, Any, List
 from modules.agent.engine import get_engine
-from modules.agent.utils.workflow_trace_storage import get_current_run_id
 from modules.constants import DEFAULT_LEVERAGE
 from modules.monitor.utils.logger import get_logger
 from modules.monitor.alerts.notifier import EmailNotifier
@@ -198,7 +197,6 @@ def open_position_tool(
     margin_usdt: Optional[float] = None,
     tp_price: Optional[float] = None,
     sl_price: Optional[float] = None,
-    runtime = None
 ) -> str | Dict[str, Any]:
     """开仓/加仓或标记开仓阶段完成。仅支持市价单（order_type 固定为 "market"）。
     
@@ -287,8 +285,7 @@ def open_position_tool(
             f"open_position_tool: 使用保证金输入 => margin={margin_usdt}U, leverage=10x, notional={notional}U"
         )
         
-        run_id = get_current_run_id()
-        res = eng.open_position(symbol, engine_side, float(notional), int(leverage), tp_price, sl_price, run_id=run_id)
+        res = eng.open_position(symbol, engine_side, float(notional), int(leverage), tp_price, sl_price)
         if isinstance(res, dict) and 'error' in res:
             logger.error(f"open_position_tool: 失败 -> {res['error']}")
             return res

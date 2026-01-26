@@ -230,7 +230,7 @@ export function SpanItem({
         </div>
 
         <div className="flex items-center gap-2">
-          {span.duration_ms && (
+          {span.duration_ms != null && span.duration_ms > 0 && (
             <span className="text-xs text-neutral-500">
               {formatDuration(span.duration_ms)}
             </span>

@@ -29,8 +29,8 @@ export function useWorkflowTimeline(runId: string | null) {
   return useQuery({
     queryKey: ['workflow-timeline', runId],
     queryFn: () => getWorkflowTimeline(runId as string),
-    enabled: Boolean(runId),
-    refetchInterval: Boolean(runId) ? REFRESH_INTERVALS.WORKFLOW : false,
+    enabled: !!runId,
+    refetchInterval: runId ? REFRESH_INTERVALS.WORKFLOW : false,
   });
 }
 
@@ -41,21 +41,17 @@ export function useWorkflowArtifacts(runId: string | null) {
   return useQuery({
     queryKey: ['workflow-artifacts', runId],
     queryFn: () => getWorkflowArtifacts(runId as string),
-    enabled: Boolean(runId),
-    refetchInterval: Boolean(runId) ? REFRESH_INTERVALS.WORKFLOW : false,
+    enabled: !!runId,
+    refetchInterval: runId ? REFRESH_INTERVALS.WORKFLOW : false,
   });
 }
 
 /**
  * 从时间线中提取唯一的 symbols
  */
-export function useUniqueSymbols(timeline: { spans: { symbol?: string }[] } | undefined) {
+export function useUniqueSymbols(timeline: { symbols?: string[] } | undefined) {
   return useMemo(() => {
-    if (!timeline) return [];
-    const symbols = new Set<string>();
-    timeline.spans.forEach((span) => {
-      if (span.symbol) symbols.add(span.symbol);
-    });
-    return Array.from(symbols);
+    if (!timeline?.symbols) return [];
+    return timeline.symbols;
   }, [timeline]);
 }

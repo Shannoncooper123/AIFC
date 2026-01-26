@@ -3,70 +3,128 @@ from typing import List, Optional, Tuple
 from ..data.models import Kline
 
 
-def is_engulfing_bar(current: Kline, previous: Kline) -> bool:
+def is_engulfing_bar(current: Kline, previous: Kline, require_body_engulf: bool = False) -> bool:
     """判断是否为外包线
     
-    外包线定义：
+    外包线定义（标准模式）：
     - 当前K线的最低价 < 上一根K线的最低价
     - 当前K线的最高价 > 上一根K线的最高价
+    
+    外包线定义（严格模式，require_body_engulf=True）：
+    - 满足标准模式条件
+    - 当前K线实体完全包裹前一根K线实体
     
     Args:
         current: 当前K线
         previous: 上一根K线
+        require_body_engulf: 是否要求实体吞没（更严格的判定）
         
     Returns:
         是否为外包线
     """
-    return (current.low < previous.low and 
-            current.high > previous.high)
+    range_engulf = (current.low < previous.low and current.high > previous.high)
+    
+    if not range_engulf:
+        return False
+    
+    if require_body_engulf:
+        current_body_high = max(current.open, current.close)
+        current_body_low = min(current.open, current.close)
+        previous_body_high = max(previous.open, previous.close)
+        previous_body_low = min(previous.open, previous.close)
+        
+        body_engulf = (current_body_high >= previous_body_high and 
+                       current_body_low <= previous_body_low)
+        return body_engulf
+    
+    return True
 
 
-def is_bullish_engulfing(current: Kline, previous: Kline) -> bool:
+def is_bullish_engulfing(current: Kline, previous: Kline, strict: bool = True) -> bool:
     """判断是否为看涨外包线
+    
+    看涨外包线条件：
+    1. 满足外包线条件
+    2. 当前K线为阳线（收盘 > 开盘）
+    3. 前一根K线为阴线（收盘 < 开盘）
+    4. 严格模式下：当前阳线实体 > 前一根阴线实体
     
     Args:
         current: 当前K线
         previous: 上一根K线
+        strict: 是否使用严格模式（要求实体吞没）
         
     Returns:
         是否为看涨外包线
     """
-    return (is_engulfing_bar(current, previous) and 
-            current.close > current.open and  # 当前为阳线
-            previous.close < previous.open)   # 前一根为阴线
+    if not is_engulfing_bar(current, previous, require_body_engulf=strict):
+        return False
+    
+    is_current_bullish = current.close > current.open
+    is_previous_bearish = previous.close < previous.open
+    
+    if not (is_current_bullish and is_previous_bearish):
+        return False
+    
+    if strict:
+        current_body = abs(current.close - current.open)
+        previous_body = abs(previous.close - previous.open)
+        return current_body > previous_body
+    
+    return True
 
 
-def is_bearish_engulfing(current: Kline, previous: Kline) -> bool:
+def is_bearish_engulfing(current: Kline, previous: Kline, strict: bool = True) -> bool:
     """判断是否为看跌外包线
+    
+    看跌外包线条件：
+    1. 满足外包线条件
+    2. 当前K线为阴线（收盘 < 开盘）
+    3. 前一根K线为阳线（收盘 > 开盘）
+    4. 严格模式下：当前阴线实体 > 前一根阳线实体
     
     Args:
         current: 当前K线
         previous: 上一根K线
+        strict: 是否使用严格模式（要求实体吞没）
         
     Returns:
         是否为看跌外包线
     """
-    return (is_engulfing_bar(current, previous) and 
-            current.close < current.open and  # 当前为阴线
-            previous.close > previous.open)   # 前一根为阳线
+    if not is_engulfing_bar(current, previous, require_body_engulf=strict):
+        return False
+    
+    is_current_bearish = current.close < current.open
+    is_previous_bullish = previous.close > previous.open
+    
+    if not (is_current_bearish and is_previous_bullish):
+        return False
+    
+    if strict:
+        current_body = abs(current.close - current.open)
+        previous_body = abs(previous.close - previous.open)
+        return current_body > previous_body
+    
+    return True
 
 
-def get_engulfing_type(current: Kline, previous: Kline) -> str:
+def get_engulfing_type(current: Kline, previous: Kline, strict: bool = True) -> str:
     """获取外包线类型
     
     Args:
         current: 当前K线
         previous: 上一根K线
+        strict: 是否使用严格模式（要求实体吞没）
         
     Returns:
         外包线类型：'看涨外包'/'看跌外包'/'普通外包'/'非外包'
     """
-    if not is_engulfing_bar(current, previous):
+    if not is_engulfing_bar(current, previous, require_body_engulf=False):
         return '非外包'
     
-    if is_bullish_engulfing(current, previous):
+    if is_bullish_engulfing(current, previous, strict=strict):
         return '看涨外包'
-    elif is_bearish_engulfing(current, previous):
+    elif is_bearish_engulfing(current, previous, strict=strict):
         return '看跌外包'
     else:
         return '普通外包'

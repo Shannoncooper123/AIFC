@@ -1,5 +1,21 @@
+"""
+Workflow Trace 存储模块
+
+提供 trace 事件的记录和存储功能。
+
+Trace 类型:
+- workflow: 顶层工作流
+- node: LangGraph 节点
+- agent: Agent (create_trace_agent)
+- model_call: 模型调用
+- tool_call: 工具调用
+- artifact: 图片等产物
+
+公共工具函数:
+- now_iso: 返回当前 UTC 时间的 ISO 格式字符串
+- calculate_duration_ms: 计算两个 ISO 时间字符串之间的毫秒差
+"""
 import base64
-import contextvars
 import json
 import os
 import time
@@ -14,60 +30,37 @@ from modules.monitor.utils.logger import get_logger
 
 logger = get_logger("agent.workflow_trace")
 
-_current_run_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("workflow_run_id", default=None)
-_current_span_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("workflow_span_id", default=None)
-_current_symbol: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("workflow_symbol", default=None)
-_sequence_counter: contextvars.ContextVar[int] = contextvars.ContextVar("workflow_sequence", default=0)
-_span_start_times: contextvars.ContextVar[Dict[str, float]] = contextvars.ContextVar("span_start_times", default={})
+
+def now_iso() -> str:
+    """返回当前 UTC 时间的 ISO 格式字符串"""
+    return datetime.now(timezone.utc).isoformat()
 
 
-def generate_run_id() -> str:
-    """生成唯一的 run_id"""
+def calculate_duration_ms(start_time: str, end_time: str) -> int:
+    """计算两个 ISO 时间字符串之间的毫秒差"""
+    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+    end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+    return int((end_dt - start_dt).total_seconds() * 1000)
+
+
+def generate_trace_id(prefix: str = "trace") -> str:
+    """
+    生成唯一的 trace ID
+    
+    Args:
+        prefix: ID 前缀，如 'wf'(workflow), 'node', 'agent', 'model', 'tool', 'art'
+        
+    Returns:
+        格式: {prefix}_{timestamp}_{random}
+    """
     now = datetime.now(timezone.utc)
     timestamp_part = now.strftime("%Y%m%d_%H%M%S")
     random_suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
-    return f"run_{timestamp_part}_{random_suffix}"
-
-
-def generate_span_id() -> str:
-    """生成唯一的 span_id"""
-    random_suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-    return f"span_{random_suffix}"
-
-
-def set_current_run_id(run_id: Optional[str]) -> None:
-    _current_run_id.set(run_id)
-    _sequence_counter.set(0)
-
-
-def get_current_run_id() -> Optional[str]:
-    return _current_run_id.get()
-
-
-def set_current_span_id(span_id: Optional[str]) -> None:
-    _current_span_id.set(span_id)
-
-
-def get_current_span_id() -> Optional[str]:
-    return _current_span_id.get()
-
-
-def set_current_symbol(symbol: Optional[str]) -> None:
-    _current_symbol.set(symbol)
-
-
-def get_current_symbol() -> Optional[str]:
-    return _current_symbol.get()
-
-
-def _next_sequence() -> int:
-    """获取下一个序列号"""
-    current = _sequence_counter.get()
-    _sequence_counter.set(current + 1)
-    return current
+    return f"{prefix}_{timestamp_part}_{random_suffix}"
 
 
 def _get_trace_path(cfg: Optional[Dict[str, Any]] = None) -> str:
+    """获取 trace 文件路径"""
     if cfg is None:
         cfg = get_config()
     agent_cfg = cfg.get("agent", {})
@@ -79,6 +72,7 @@ def _get_trace_path(cfg: Optional[Dict[str, Any]] = None) -> str:
 
 
 def _get_artifacts_dir(cfg: Optional[Dict[str, Any]] = None) -> str:
+    """获取 artifacts 目录路径"""
     if cfg is None:
         cfg = get_config()
     agent_cfg = cfg.get("agent", {})
@@ -90,282 +84,207 @@ def _get_artifacts_dir(cfg: Optional[Dict[str, Any]] = None) -> str:
 
 
 def get_trace_path(cfg: Optional[Dict[str, Any]] = None) -> str:
+    """公开的获取 trace 文件路径接口"""
     return _get_trace_path(cfg)
 
 
 def get_artifacts_dir(cfg: Optional[Dict[str, Any]] = None) -> str:
+    """公开的获取 artifacts 目录路径接口"""
     return _get_artifacts_dir(cfg)
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _now_timestamp_ms() -> int:
-    """返回当前时间戳（毫秒）"""
-    return int(time.time() * 1000)
-
-
-def _sanitize_payload(payload: Dict[str, Any], text_limit: int = 0) -> Dict[str, Any]:
-    """直接返回 payload，不做任何截断"""
-    return payload
-
-
 def append_event(event: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> None:
+    """追加 trace 事件到 JSONL 文件"""
     try:
-        event["seq"] = _next_sequence()
-        event["timestamp_ms"] = _now_timestamp_ms()
+        event["timestamp_ms"] = int(time.time() * 1000)
         trace_path = _get_trace_path(cfg)
         locked_append_jsonl(trace_path, event)
     except Exception as e:
         logger.error(f"workflow trace 写入失败: {e}")
 
 
-def start_run(run_id: str, alert_record: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> None:
-    """记录 workflow run 开始"""
-    set_current_run_id(run_id)
-    event = {
-        "type": "run_start",
-        "run_id": run_id,
-        "ts": _now_iso(),
-        "alert": {
-            "ts": alert_record.get("ts"),
-            "interval": alert_record.get("interval"),
-            "symbols": alert_record.get("symbols", []),
-            "pending_count": alert_record.get("pending_count", 0),
-        },
-    }
-    append_event(event, cfg)
-
-
-def end_run(run_id: str, status: str, cfg: Optional[Dict[str, Any]] = None, error: Optional[str] = None) -> None:
-    """记录 workflow run 结束"""
-    event = {
-        "type": "run_end",
-        "run_id": run_id,
-        "ts": _now_iso(),
-        "status": status,
-        "error": error,
-    }
-    append_event(event, cfg)
-
-
-def start_span(
-    run_id: str,
-    node: str,
-    span_id: Optional[str] = None,
-    parent_span_id: Optional[str] = None,
+def record_trace(
+    workflow_run_id: str,
+    trace_id: str,
+    parent_trace_id: Optional[str],
+    trace_type: str,
+    name: str,
+    status: str,
+    start_time: str,
+    end_time: str,
+    duration_ms: int,
     symbol: Optional[str] = None,
-    cfg: Optional[Dict[str, Any]] = None
-) -> str:
-    """开始一个 span（节点执行）"""
-    if span_id is None:
-        span_id = generate_span_id()
-    
-    set_current_span_id(span_id)
-    if symbol:
-        set_current_symbol(symbol)
-    
-    start_times = _span_start_times.get()
-    start_times[span_id] = _now_timestamp_ms()
-    _span_start_times.set(start_times)
-    
-    event = {
-        "type": "span_start",
-        "run_id": run_id,
-        "span_id": span_id,
-        "parent_span_id": parent_span_id,
-        "node": node,
-        "symbol": symbol or get_current_symbol(),
-        "ts": _now_iso(),
-    }
-    append_event(event, cfg)
-    return span_id
-
-
-def end_span(
-    run_id: str,
-    span_id: str,
-    status: str = "success",
-    output_summary: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
-    cfg: Optional[Dict[str, Any]] = None
+    cfg: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """结束一个 span"""
-    start_times = _span_start_times.get()
-    start_time = start_times.pop(span_id, None)
-    _span_start_times.set(start_times)
-    
-    duration_ms = None
-    if start_time:
-        duration_ms = _now_timestamp_ms() - start_time
-    
+    """记录完整的 trace 事件（单次写入）"""
     event = {
-        "type": "span_end",
-        "run_id": run_id,
-        "span_id": span_id,
+        "workflow_run_id": workflow_run_id,
+        "trace_id": trace_id,
+        "parent_trace_id": parent_trace_id,
+        "type": trace_type,
+        "name": name,
         "status": status,
+        "start_time": start_time,
+        "end_time": end_time,
         "duration_ms": duration_ms,
-        "ts": _now_iso(),
-        "output_summary": output_summary,
+        "symbol": symbol,
+        "payload": payload,
         "error": error,
     }
     append_event(event, cfg)
 
 
-def record_node_event(
-    run_id: str,
-    node: str,
-    phase: str,
-    payload: Dict[str, Any],
+def record_trace_start(
+    workflow_run_id: str,
+    trace_id: str,
+    parent_trace_id: Optional[str],
+    trace_type: str,
+    name: str,
+    start_time: str,
     symbol: Optional[str] = None,
-    cfg: Optional[Dict[str, Any]] = None
+    cfg: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """记录节点事件（兼容旧接口）"""
+    """记录 trace 开始事件（running 状态）"""
     event = {
-        "type": "node_event",
-        "run_id": run_id,
-        "span_id": get_current_span_id(),
-        "node": node,
-        "phase": phase,
-        "symbol": symbol or get_current_symbol(),
-        "ts": _now_iso(),
-        "payload": _sanitize_payload(payload, 2000),
+        "workflow_run_id": workflow_run_id,
+        "trace_id": trace_id,
+        "parent_trace_id": parent_trace_id,
+        "type": trace_type,
+        "name": name,
+        "status": "running",
+        "start_time": start_time,
+        "end_time": None,
+        "duration_ms": None,
+        "symbol": symbol,
+        "payload": None,
+        "error": None,
     }
     append_event(event, cfg)
 
 
-def record_context_snapshot(run_id: str, snapshot: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> None:
-    """记录上下文快照"""
+def record_workflow_start(
+    workflow_run_id: str,
+    alert_record: Dict[str, Any],
+    cfg: Optional[Dict[str, Any]] = None,
+) -> None:
+    """记录 workflow 开始"""
     event = {
-        "type": "context_snapshot",
-        "run_id": run_id,
-        "span_id": get_current_span_id(),
-        "ts": _now_iso(),
-        "payload": _sanitize_payload(snapshot, 2000),
+        "workflow_run_id": workflow_run_id,
+        "trace_id": workflow_run_id,
+        "parent_trace_id": None,
+        "type": "workflow",
+        "name": "workflow",
+        "status": "running",
+        "start_time": now_iso(),
+        "end_time": None,
+        "duration_ms": None,
+        "symbol": None,
+        "payload": {
+            "alert": {
+                "ts": alert_record.get("ts"),
+                "interval": alert_record.get("interval"),
+                "symbols": alert_record.get("symbols", []),
+                "pending_count": alert_record.get("pending_count", 0),
+            },
+        },
+        "error": None,
     }
     append_event(event, cfg)
 
 
-def record_tool_call(
-    run_id: str,
-    node: str,
-    tool_record: Dict[str, Any],
-    symbol: Optional[str] = None,
-    cfg: Optional[Dict[str, Any]] = None
+def record_workflow_end(
+    workflow_run_id: str,
+    start_time: str,
+    status: str,
+    error: Optional[str] = None,
+    cfg: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """记录工具调用"""
-    tool_name = tool_record.get("tool_name", "unknown")
-    tool_input = tool_record.get("input", {})
-    model_span_id = tool_record.get("model_span_id")
+    """记录 workflow 结束"""
+    end_time = now_iso()
+    duration_ms = calculate_duration_ms(start_time, end_time)
     
-    inferred_symbol = symbol or get_current_symbol()
-    if not inferred_symbol and isinstance(tool_input, dict):
-        inferred_symbol = tool_input.get("symbol")
-    
-    event = {
-        "type": "tool_call",
-        "run_id": run_id,
-        "span_id": get_current_span_id(),
-        "model_span_id": model_span_id,
-        "node": node,
-        "symbol": inferred_symbol,
-        "tool_name": tool_name,
-        "ts": _now_iso(),
-        "payload": _sanitize_payload(tool_record, 2000),
-    }
-    append_event(event, cfg)
-
-
-def record_model_call(
-    run_id: str,
-    node: str,
-    model_record: Dict[str, Any],
-    symbol: Optional[str] = None,
-    cfg: Optional[Dict[str, Any]] = None
-) -> None:
-    """记录模型调用"""
-    event = {
-        "type": "model_call",
-        "run_id": run_id,
-        "span_id": get_current_span_id(),
-        "node": node,
-        "symbol": symbol or get_current_symbol(),
-        "ts": _now_iso(),
-        "payload": _sanitize_payload(model_record, 2000),
-    }
-    append_event(event, cfg)
+    record_trace(
+        workflow_run_id=workflow_run_id,
+        trace_id=workflow_run_id,
+        parent_trace_id=None,
+        trace_type="workflow",
+        name="workflow",
+        status=status,
+        start_time=start_time,
+        end_time=end_time,
+        duration_ms=duration_ms,
+        error=error,
+        cfg=cfg,
+    )
 
 
 def save_image_artifact(
-    run_id: str,
+    workflow_run_id: str,
+    parent_trace_id: str,
     symbol: str,
     interval: str,
     image_base64: str,
-    cfg: Optional[Dict[str, Any]] = None
+    image_id: Optional[str] = None,
+    cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """保存图像 artifact"""
+    """保存图像 artifact
+    
+    Args:
+        workflow_run_id: 顶层 workflow 的 run_id
+        parent_trace_id: 父级 trace_id
+        symbol: 交易对
+        interval: K线周期
+        image_base64: base64 编码的图像数据
+        image_id: 图像唯一标识符，用于前端匹配（如 img_001）
+        cfg: 配置
+    """
     artifacts_dir = _get_artifacts_dir(cfg)
     os.makedirs(artifacts_dir, exist_ok=True)
-    run_dir = os.path.join(artifacts_dir, run_id)
+    run_dir = os.path.join(artifacts_dir, workflow_run_id)
     os.makedirs(run_dir, exist_ok=True)
+    
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"{symbol}_{interval}_{ts}.png"
     file_path = os.path.join(run_dir, filename)
+    
     with open(file_path, "wb") as f:
         f.write(base64.b64decode(image_base64))
-    artifact_id = f"{run_id}_{symbol}_{interval}_{ts}"
-    artifact = {
+    
+    artifact_id = generate_trace_id("art")
+    start_time = now_iso()
+    
+    artifact_payload = {
         "artifact_id": artifact_id,
-        "run_id": run_id,
-        "span_id": get_current_span_id(),
         "symbol": symbol,
         "interval": interval,
         "file_path": file_path,
-        "created_at": _now_iso(),
-        "type": "kline_image",
+        "artifact_type": "kline_image",
+        "image_id": image_id,
     }
-    append_event({"type": "artifact", "run_id": run_id, "ts": _now_iso(), "payload": artifact}, cfg)
-    return artifact
-
-
-def get_existing_artifacts(
-    run_id: str,
-    symbol: str,
-    intervals: List[str],
-    cfg: Optional[Dict[str, Any]] = None
-) -> Dict[str, str]:
-    """获取已存在的图像 artifact（base64 编码）
     
-    Args:
-        run_id: 运行 ID
-        symbol: 交易对
-        intervals: 需要获取的周期列表
-        cfg: 配置
-        
-    Returns:
-        {interval: base64_image} 字典，仅包含已存在的图像
-    """
-    artifacts_dir = _get_artifacts_dir(cfg)
-    run_dir = os.path.join(artifacts_dir, run_id)
+    record_trace(
+        workflow_run_id=workflow_run_id,
+        trace_id=artifact_id,
+        parent_trace_id=parent_trace_id,
+        trace_type="artifact",
+        name=f"{symbol}_{interval}",
+        status="success",
+        start_time=start_time,
+        end_time=start_time,
+        duration_ms=0,
+        symbol=symbol,
+        payload=artifact_payload,
+        cfg=cfg,
+    )
     
-    if not os.path.exists(run_dir):
-        return {}
-    
-    result = {}
-    for interval in intervals:
-        pattern = f"{symbol}_{interval}_"
-        matching_files = [f for f in os.listdir(run_dir) if f.startswith(pattern) and f.endswith('.png')]
-        
-        if matching_files:
-            matching_files.sort(reverse=True)
-            latest_file = matching_files[0]
-            file_path = os.path.join(run_dir, latest_file)
-            
-            try:
-                with open(file_path, "rb") as f:
-                    result[interval] = base64.b64encode(f.read()).decode('utf-8')
-            except Exception as e:
-                logger.warning(f"读取 artifact 失败 {file_path}: {e}")
-    
-    return result
+    return {
+        "artifact_id": artifact_id,
+        "workflow_run_id": workflow_run_id,
+        "parent_trace_id": parent_trace_id,
+        "symbol": symbol,
+        "interval": interval,
+        "file_path": file_path,
+        "image_id": image_id,
+    }

@@ -1,22 +1,18 @@
 """工作流节点：开仓决策"""
-import json
 import os
 from typing import Any, Dict, List
 
-from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
-from modules.agent.middleware.vision_middleware import VisionMiddleware
-from modules.agent.middleware.workflow_trace_middleware import WorkflowTraceMiddleware
 from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.open_position_tool import open_position_tool
 from modules.agent.tools.create_limit_order_tool import create_limit_order_tool
 from modules.agent.tools.tool_utils import get_binance_client
-from modules.agent.utils.trace_decorators import traced_node
-from modules.agent.utils.workflow_trace_storage import get_current_run_id, save_image_artifact, get_existing_artifacts
+from modules.agent.utils.trace_agent import create_trace_agent
+from modules.agent.utils.trace_utils import traced_node
 from modules.monitor.data.models import Kline
 from modules.monitor.utils.logger import get_logger
 
@@ -44,8 +40,12 @@ def _format_account_summary(account: Dict[str, Any]) -> str:
 def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
     """获取多周期K线图像用于复核
     
-    优先复用 single_symbol_analysis 节点中已生成的图像，避免重复生成。
-    仅当图像不存在时才重新生成。
+    始终重新生成所有周期的图像，确保决策节点使用最新的K线数据。
+    由于 single_symbol_analysis 节点现在并行执行两个 subagent（做多+做空），
+    可能产生时间差或重复图像，因此决策节点统一重新生成以保证一致性。
+    
+    注意：不再在此处保存 artifact，而是通过 HumanMessage.additional_kwargs 传递元数据，
+    由 workflow_trace_middleware 统一处理图像保存，实现 trace 层与业务层解耦。
     
     Returns:
         (images, image_metas): images 用于构建消息，image_metas 用于 trace 匹配
@@ -54,56 +54,34 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
     
     images = []
     image_metas = []
-    run_id = get_current_run_id()
     
-    existing_artifacts = {}
-    if run_id:
-        existing_artifacts = get_existing_artifacts(run_id, symbol, intervals)
-        if existing_artifacts:
-            logger.info(f"复用已存在的 artifact: {list(existing_artifacts.keys())}")
+    logger.info(f"为 {symbol} 生成 {len(intervals)} 个周期的复核图像: {intervals}")
+    client = get_binance_client()
     
-    missing_intervals = [iv for iv in intervals if iv not in existing_artifacts]
-    
-    for interval in existing_artifacts:
-        images.append({
-            "interval": interval,
-            "image_base64": existing_artifacts[interval],
-        })
-        image_metas.append({"symbol": symbol, "interval": interval})
-    
-    if missing_intervals:
-        logger.info(f"需要生成缺失的图像: {missing_intervals}")
-        client = get_binance_client()
-        
-        for interval in missing_intervals:
-            try:
-                fetch_limit = 300
-                display_limit = 200
-                raw = client.get_klines(symbol, interval, fetch_limit)
-                
-                if not raw:
-                    logger.warning(f"未获取到 {symbol} {interval} K线数据")
-                    continue
-                    
-                klines = [Kline.from_rest_api(item) for item in raw]
-                image_base64 = _plot_candlestick_chart(klines, symbol, interval, display_limit)
-                
-                images.append({
-                    "interval": interval,
-                    "image_base64": image_base64,
-                })
-                
-                if run_id:
-                    save_image_artifact(run_id, symbol, interval, image_base64)
-                image_metas.append({"symbol": symbol, "interval": interval})
-                
-                logger.info(f"生成 {symbol} {interval} 复核图像成功")
-                
-            except Exception as e:
-                logger.error(f"生成 {symbol} {interval} 图像失败: {e}")
+    for interval in intervals:
+        try:
+            fetch_limit = 300
+            display_limit = 200
+            raw = client.get_klines(symbol, interval, fetch_limit)
+            
+            if not raw:
+                logger.warning(f"未获取到 {symbol} {interval} K线数据")
                 continue
-    
-    images.sort(key=lambda x: intervals.index(x["interval"]) if x["interval"] in intervals else 999)
+                
+            klines = [Kline.from_rest_api(item) for item in raw]
+            image_base64 = _plot_candlestick_chart(klines, symbol, interval, display_limit)
+            
+            images.append({
+                "interval": interval,
+                "image_base64": image_base64,
+            })
+            image_metas.append({"symbol": symbol, "interval": interval})
+            
+            logger.info(f"生成 {symbol} {interval} 复核图像成功")
+            
+        except Exception as e:
+            logger.error(f"生成 {symbol} {interval} 图像失败: {e}")
+            continue
     
     return images, image_metas
 
@@ -183,15 +161,6 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
 
         logger.info(f"开始为 {symbol} 生成复核图像...")
         images, image_metas = _generate_kline_images(symbol, REVIEW_INTERVALS)
-        
-        trace_middleware = WorkflowTraceMiddleware("opening_decision")
-        if image_metas:
-            trace_middleware.set_image_metas(image_metas)
-        
-        middlewares = [
-            VisionMiddleware(),
-            trace_middleware,
-        ]
 
         model = ChatOpenAI(
             model=os.getenv('AGENT_MODEL'),
@@ -202,12 +171,11 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
             max_tokens=8000,
         )
 
-        subagent = create_agent(
+        subagent = create_trace_agent(
             model=model,
             tools=tools,
             system_prompt=prompt,
-            debug=False,
-            middleware=middlewares,
+            node_name="opening_decision",
         )
         
         if not images:
@@ -227,7 +195,10 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
             logger.info(f"{symbol} 生成 {len(images)} 个周期的复核图像")
             account_info = _format_account_summary(state.account_summary)
             multimodal_content = _build_multimodal_content(symbol, account_info, analysis_result, images)
-            subagent_messages = [HumanMessage(content=multimodal_content)]
+            subagent_messages = [HumanMessage(
+                content=multimodal_content,
+                additional_kwargs={"_image_metas": image_metas}
+            )]
 
         logger.info(f"开始为 {symbol} 执行开仓决策...")
         result = subagent.invoke(

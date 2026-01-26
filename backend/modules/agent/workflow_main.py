@@ -14,13 +14,12 @@ from modules.agent.builder import create_workflow
 from modules.agent.state import AgentState
 from langchain_core.runnables import RunnableConfig
 from modules.agent.utils.workflow_trace_storage import (
-    generate_run_id,
-    set_current_run_id,
-    start_run,
-    end_run,
+    generate_trace_id,
+    record_workflow_start,
+    record_workflow_end,
 )
+from modules.agent.utils.trace_context import workflow_trace_context
 
-# 全局标志：用于优雅退出
 _shutdown_requested = False
 
 def _request_shutdown(signum, frame):
@@ -57,15 +56,33 @@ def _init_trading_engine():
         logger.error(f"交易引擎启动失败: {e}", exc_info=True)
         return None
 
-def _wrap_config(latest_alert: dict | None, base_cfg: dict, run_id: str) -> RunnableConfig:
-    """统一将配置包装为 RunnableConfig，稳固类型一致性。"""
+def _wrap_config(latest_alert: dict | None, base_cfg: dict, workflow_run_id: str) -> RunnableConfig:
+    """
+    统一将配置包装为 RunnableConfig。
+    
+    trace context 字段：
+    - workflow_run_id: 顶层 workflow 的 run ID
+    - current_trace_id: 当前层级的 trace ID（初始等于 workflow_run_id）
+    """
+    configurable = {
+        "workflow_run_id": workflow_run_id,
+        "current_trace_id": workflow_run_id,
+    }
+    if latest_alert:
+        configurable["latest_alert"] = latest_alert
+    
     return RunnableConfig(
-        configurable={"latest_alert": latest_alert, "run_id": run_id} if latest_alert else {"run_id": run_id},
+        configurable=configurable,
         recursion_limit=100,
         tags=["workflow"],
         run_name="workflow_run",
-        metadata={"env": base_cfg.get('env', {}), "run_id": run_id}
+        metadata={"env": base_cfg.get('env', {}), "workflow_run_id": workflow_run_id}
     )
+
+
+def _now_iso() -> str:
+    """返回当前 UTC 时间的 ISO 格式字符串"""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def main():
@@ -94,44 +111,42 @@ def main():
         logger.error(f"LangGraph 工作流创建失败: {e}", exc_info=True)
         return
 
-    # 告警文件监控器
     watcher = None
     
     try:
-        # 定义告警触发回调
         def on_new_alert(alert_record: dict):
             """当检测到新告警时的回调函数"""
             if _shutdown_requested:
                 logger.info("系统正在关闭，跳过本次告警处理")
                 return
 
-            run_id = None
+            workflow_run_id = None
+            start_time = None
             try:
-                run_id = generate_run_id()
-                set_current_run_id(run_id)
-                start_run(run_id, alert_record, cfg)
+                workflow_run_id = generate_trace_id("wf")
+                start_time = _now_iso()
+                
+                record_workflow_start(workflow_run_id, alert_record, cfg)
+                
                 symbols = alert_record.get('symbols', [])
                 pending_count = alert_record.get('pending_count', 0)
                 
                 logger.info(f"=== 触发工作流分析 ({pending_count} 个币种) ===")
                 logger.info(f"  币种: {', '.join(symbols[:5])}{' ...' if len(symbols) > 5 else ''}")
                 
-                # 执行工作流，将告警记录作为上下文传入
-                app.invoke(
-                    AgentState(), 
-                    config=_wrap_config(alert_record, cfg, run_id)
-                )
+                with workflow_trace_context(workflow_run_id):
+                    app.invoke(
+                        AgentState(), 
+                        config=_wrap_config(alert_record, cfg, workflow_run_id)
+                    )
                 
                 logger.info("=== 工作流分析完成 ===")
-                end_run(run_id, "success", cfg)
+                record_workflow_end(workflow_run_id, start_time, "success", cfg=cfg)
             except Exception as e:
                 logger.error(f"执行工作流时出错: {e}", exc_info=True)
-                if run_id:
-                    end_run(run_id, "failed", cfg, str(e))
-            finally:
-                set_current_run_id(None)
+                if workflow_run_id and start_time:
+                    record_workflow_end(workflow_run_id, start_time, "error", error=str(e), cfg=cfg)
         
-        # 启动告警文件监控器
         alerts_file_path = cfg['agent']['alerts_jsonl_path']
         watcher = AlertFileWatcher(alerts_file_path, on_new_alert)
         watcher.start()
@@ -141,7 +156,6 @@ def main():
         logger.info(f"   交易引擎: {cfg.get('trading', {}).get('mode', 'simulator')}")
         logger.info("=" * 60)
         
-        # 主循环：等待中断信号
         while not _shutdown_requested:
             time.sleep(1)
         
@@ -154,11 +168,9 @@ def main():
     finally:
         logger.info("开始优雅退出...")
         
-        # 停止文件监控器
         if watcher:
             watcher.stop()
         
-        # 停止交易引擎
         engine.stop()
         
         logger.info("优雅退出完成")
@@ -191,30 +203,32 @@ def run_workflow_service(is_stop_requested, add_log):
                 add_log("系统正在关闭，跳过本次告警处理")
                 return
 
-            run_id = None
+            workflow_run_id = None
+            start_time = None
             try:
-                run_id = generate_run_id()
-                set_current_run_id(run_id)
-                start_run(run_id, alert_record, cfg)
+                workflow_run_id = generate_trace_id("wf")
+                start_time = _now_iso()
+                
+                record_workflow_start(workflow_run_id, alert_record, cfg)
+                
                 symbols = alert_record.get('symbols', [])
                 pending_count = alert_record.get('pending_count', 0)
                 
                 add_log(f"触发工作流分析 ({pending_count} 个币种): {', '.join(symbols[:5])}")
                 
-                app.invoke(
-                    AgentState(), 
-                    config=_wrap_config(alert_record, cfg, run_id)
-                )
+                with workflow_trace_context(workflow_run_id):
+                    app.invoke(
+                        AgentState(), 
+                        config=_wrap_config(alert_record, cfg, workflow_run_id)
+                    )
                 
                 add_log("工作流分析完成")
-                end_run(run_id, "success", cfg)
+                record_workflow_end(workflow_run_id, start_time, "success", cfg=cfg)
             except Exception as e:
                 logger.error(f"执行工作流时出错: {e}", exc_info=True)
                 add_log(f"工作流执行失败: {e}")
-                if run_id:
-                    end_run(run_id, "failed", cfg, str(e))
-            finally:
-                set_current_run_id(None)
+                if workflow_run_id and start_time:
+                    record_workflow_end(workflow_run_id, start_time, "error", error=str(e), cfg=cfg)
         
         alerts_file_path = cfg['agent']['alerts_jsonl_path']
         watcher = AlertFileWatcher(alerts_file_path, on_new_alert)
