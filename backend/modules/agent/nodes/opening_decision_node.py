@@ -4,13 +4,13 @@ from typing import Any, Dict, List
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_openai import ChatOpenAI
 
 from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.open_position_tool import open_position_tool
 from modules.agent.tools.create_limit_order_tool import create_limit_order_tool
 from modules.agent.tools.tool_utils import fetch_klines
+from modules.agent.utils.model_factory import get_model_factory, with_retry
 from modules.agent.utils.trace_agent import create_trace_agent
 from modules.agent.utils.trace_utils import traced_node
 from modules.monitor.utils.logger import get_logger
@@ -170,15 +170,7 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
         logger.info(f"开始为 {symbol} 生成复核图像...")
         images, image_metas = _generate_kline_images(symbol, REVIEW_INTERVALS)
 
-        model = ChatOpenAI(
-            model=os.getenv('AGENT_MODEL'),
-            api_key=os.getenv('AGENT_API_KEY'),
-            base_url=os.getenv('AGENT_BASE_URL') or None,
-            temperature=0.1,
-            timeout=300,
-            max_tokens=8000,
-            max_retries=3,
-        )
+        model = get_model_factory().get_decision_model()
 
         subagent = create_trace_agent(
             model=model,
@@ -209,11 +201,12 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
                 additional_kwargs={"_image_metas": image_metas}
             )]
 
+        @with_retry(max_retries=5, retryable_exceptions=(Exception,))
+        def _invoke_with_retry():
+            return subagent.invoke({"messages": subagent_messages}, config=config)
+
         logger.info(f"开始为 {symbol} 执行开仓决策...")
-        result = subagent.invoke(
-            {"messages": subagent_messages},
-            config=config,
-        )
+        result = _invoke_with_retry()
 
         decision_output = result["messages"][-1].content if isinstance(result, dict) else str(result)
 

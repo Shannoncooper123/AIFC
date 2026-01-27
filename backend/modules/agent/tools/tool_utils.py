@@ -1,4 +1,5 @@
 """工具通用函数库 - 消除工具间的重复代码"""
+import contextvars
 import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
@@ -40,30 +41,66 @@ class KlineProviderProtocol(Protocol):
 _kline_provider: Optional[KlineProviderProtocol] = None
 _kline_provider_lock = threading.Lock()
 
+_context_kline_provider: contextvars.ContextVar[Optional[KlineProviderProtocol]] = contextvars.ContextVar(
+    'context_kline_provider', default=None
+)
 
-def set_kline_provider(provider: Optional[KlineProviderProtocol]) -> None:
+
+def set_kline_provider(
+    provider: Optional[KlineProviderProtocol], 
+    context_local: bool = False
+) -> Optional[contextvars.Token]:
     """设置K线数据提供者（用于回测模式注入）
     
     Args:
         provider: K线提供者实例，传入None则恢复默认行为
+        context_local: 是否设置为上下文本地（回测并发模式使用）
+    
+    Returns:
+        如果 context_local=True，返回 Token 用于后续恢复；否则返回 None
     """
-    global _kline_provider
-    with _kline_provider_lock:
-        _kline_provider = provider
-        if provider is not None:
-            logger.info(f"KlineProvider 已设置: {type(provider).__name__}")
-        else:
-            logger.info("KlineProvider 已清除，恢复默认模式")
+    if context_local:
+        return _context_kline_provider.set(provider)
+    else:
+        global _kline_provider
+        with _kline_provider_lock:
+            _kline_provider = provider
+            if provider is not None:
+                logger.info(f"KlineProvider 已设置: {type(provider).__name__}")
+            else:
+                logger.info("KlineProvider 已清除，恢复默认模式")
+        return None
 
 
 def get_kline_provider() -> Optional[KlineProviderProtocol]:
     """获取当前K线数据提供者
     
+    优先返回上下文本地提供者（回测并发模式），否则返回全局提供者。
+    使用 contextvars 支持 asyncio 上下文传播。
+    
     Returns:
         当前设置的K线提供者，如果未设置则返回None
     """
+    context_provider = _context_kline_provider.get()
+    if context_provider is not None:
+        return context_provider
+    
     with _kline_provider_lock:
         return _kline_provider
+
+
+def clear_context_kline_provider() -> None:
+    """清除当前上下文的本地 KlineProvider"""
+    _context_kline_provider.set(None)
+
+
+def reset_context_kline_provider(token: contextvars.Token) -> None:
+    """重置上下文 KlineProvider 到之前的值
+    
+    Args:
+        token: set_kline_provider 返回的 token
+    """
+    _context_kline_provider.reset(token)
 
 
 def make_input_error(msg: str, feedback: str = "") -> Dict[str, Any]:

@@ -1,7 +1,8 @@
 from __future__ import annotations
 """统一的交易引擎接口（支持模拟和实盘模式）"""
-from typing import Optional, TYPE_CHECKING, Any, Dict, Protocol, List
+import contextvars
 import threading
+from typing import Optional, TYPE_CHECKING, Any, Dict, Protocol, List
 
 if TYPE_CHECKING:
     from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine
@@ -41,47 +42,62 @@ class EngineProtocol(Protocol):
 _engine: Optional[EngineProtocol] = None
 _engine_lock = threading.RLock()
 
-_thread_local_engine = threading.local()
+_context_engine: contextvars.ContextVar[Optional[EngineProtocol]] = contextvars.ContextVar(
+    'context_engine', default=None
+)
 
 
-def set_engine(engine: EngineProtocol, thread_local: bool = False) -> None:
+def set_engine(engine: EngineProtocol, thread_local: bool = False) -> Optional[contextvars.Token]:
     """设置交易引擎实例（模拟或实盘）
     
     Args:
         engine: 引擎实例
-        thread_local: 是否设置为线程本地（回测并发模式使用）
+        thread_local: 是否设置为上下文本地（回测并发模式使用）
+    
+    Returns:
+        如果 thread_local=True，返回 Token 用于后续恢复；否则返回 None
     """
     if thread_local:
-        _thread_local_engine.engine = engine
+        return _context_engine.set(engine)
     else:
         global _engine
         with _engine_lock:
             _engine = engine
+        return None
 
 
 def get_engine() -> Optional[EngineProtocol]:
     """获取交易引擎实例（模拟或实盘）。
     
-    优先返回线程本地引擎（回测模式），否则返回全局引擎。
+    优先返回上下文本地引擎（回测模式），否则返回全局引擎。
+    使用 contextvars 支持 asyncio 上下文传播。
     """
-    thread_engine = getattr(_thread_local_engine, 'engine', None)
-    if thread_engine is not None:
-        return thread_engine
+    context_engine = _context_engine.get()
+    if context_engine is not None:
+        return context_engine
     
     with _engine_lock:
         return _engine
 
 
 def clear_thread_local_engine() -> None:
-    """清除当前线程的本地引擎"""
-    if hasattr(_thread_local_engine, 'engine'):
-        delattr(_thread_local_engine, 'engine')
+    """清除当前上下文的本地引擎"""
+    _context_engine.set(None)
+
+
+def reset_context_engine(token: contextvars.Token) -> None:
+    """重置上下文引擎到之前的值
+    
+    Args:
+        token: set_engine 返回的 token
+    """
+    _context_engine.reset(token)
 
 
 def is_engine_initialized() -> bool:
     """引擎是否已初始化（单例是否存在）。"""
-    thread_engine = getattr(_thread_local_engine, 'engine', None)
-    if thread_engine is not None:
+    context_engine = _context_engine.get()
+    if context_engine is not None:
         return True
     with _engine_lock:
         return _engine is not None

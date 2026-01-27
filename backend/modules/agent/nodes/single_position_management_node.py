@@ -4,9 +4,9 @@ from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_openai import ChatOpenAI
 
 from modules.agent.state import PositionManagementState
+from modules.agent.utils.model_factory import get_model_factory, with_retry
 from modules.agent.utils.profit_protection import fmt6, fmt2, calculate_protection
 from modules.agent.utils.trace_agent import create_trace_agent
 from modules.agent.utils.trace_utils import traced_node
@@ -90,17 +90,7 @@ def single_position_management_node(
         with open(prompt_path, 'r', encoding='utf-8') as f:
             prompt = f.read().strip()
         
-        model = ChatOpenAI(
-            model=os.getenv('AGENT_MODEL'),
-            api_key=os.getenv('AGENT_API_KEY'),
-            base_url=os.getenv('AGENT_BASE_URL') or None,
-            temperature=0.8,
-            timeout=600,
-            max_tokens=16000,
-            max_retries=3,
-            logprobs=False,
-            extra_body={"thinking": {"type": "enabled"}},
-        )
+        model = get_model_factory().get_position_management_model()
         
         subagent = create_trace_agent(
             model=model,
@@ -116,10 +106,12 @@ def single_position_management_node(
         combined_context = f"{positions_context}\n\n---\n请基于以上 {symbol} 持仓信息，执行持仓管理与浮盈保护。"
         
         subagent_messages = [HumanMessage(content=combined_context)]
-        result = subagent.invoke(
-            {"messages": subagent_messages},
-            config=config,
-        )
+        
+        @with_retry(max_retries=5, retryable_exceptions=(Exception,))
+        def _invoke_with_retry():
+            return subagent.invoke({"messages": subagent_messages}, config=config)
+        
+        result = _invoke_with_retry()
         
         summary = result["messages"][-1].content if isinstance(result, dict) else str(result)
         

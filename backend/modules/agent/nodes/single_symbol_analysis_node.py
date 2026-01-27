@@ -5,12 +5,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_openai import ChatOpenAI
 
 from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
 from modules.agent.tools.trend_comparison_tool import trend_comparison_tool
+from modules.agent.utils.model_factory import get_model_factory, with_async_retry
 from modules.agent.utils.trace_agent import create_trace_agent
 from modules.agent.utils.trace_utils import traced_node
 from modules.monitor.utils.logger import get_logger
@@ -134,17 +134,7 @@ def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
     
     node_name = f"single_symbol_analysis_{direction}"
     
-    model = ChatOpenAI(
-        model=os.getenv('AGENT_MODEL'),
-        api_key=os.getenv('AGENT_API_KEY'),
-        base_url=os.getenv('AGENT_BASE_URL') or None,
-        temperature=0.1,
-        timeout=600,
-        max_tokens=16000,
-        max_retries=3,
-        logprobs=False,
-        extra_body={"thinking": {"type": "enabled"}},
-    )
+    model = get_model_factory().get_analysis_model()
     
     subagent = create_trace_agent(
         model=model,
@@ -163,7 +153,7 @@ async def _run_directional_analysis_async(
     config: RunnableConfig,
 ) -> Tuple[str, str, Optional[str]]:
     """
-    异步执行单方向分析（contextvars 会自动传播到 async task）
+    异步执行单方向分析（带指数退避重试）
     
     Args:
         direction: "long" 或 "short"
@@ -176,19 +166,16 @@ async def _run_directional_analysis_async(
     """
     direction_cn = "做多" if direction == "long" else "做空"
     
+    @with_async_retry(max_retries=5, retryable_exceptions=(Exception,))
+    async def _invoke_with_retry():
+        subagent, _ = _create_directional_subagent(direction)
+        subagent_messages = [HumanMessage(content=combined_message)]
+        return await subagent.ainvoke({"messages": subagent_messages}, config=config)
+    
     try:
         logger.info(f"开始 {symbol} {direction_cn}分析...")
         
-        subagent, _ = _create_directional_subagent(direction)
-        
-        subagent_messages = [
-            HumanMessage(content=combined_message),
-        ]
-        
-        result = await subagent.ainvoke(
-            {"messages": subagent_messages},
-            config=config,
-        )
+        result = await _invoke_with_retry()
         
         analysis_output = result["messages"][-1].content if isinstance(result, dict) else str(result)
         
@@ -197,7 +184,7 @@ async def _run_directional_analysis_async(
         return direction, analysis_output, None
         
     except Exception as e:
-        logger.error(f"{symbol} {direction_cn}分析执行失败: {e}", exc_info=True)
+        logger.error(f"{symbol} {direction_cn}分析执行失败 (重试耗尽): {e}", exc_info=True)
         return direction, "", str(e)
 
 

@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from modules.agent.builder import create_workflow
 from modules.agent.engine import set_engine, get_engine, clear_thread_local_engine
 from modules.agent.state import AgentState
-from modules.agent.tools.tool_utils import set_kline_provider, get_kline_provider
+from modules.agent.tools.tool_utils import set_kline_provider, get_kline_provider, clear_context_kline_provider
 from modules.agent.utils.trace_context import workflow_trace_context
 from modules.agent.utils.workflow_trace_storage import (
     generate_trace_id,
@@ -395,6 +395,8 @@ class BacktestEngine:
         
         time_token = set_backtest_time(current_time)
         
+        kline_provider_token = set_kline_provider(self.kline_provider, context_local=True)
+        
         trade_engine = self._create_isolated_trade_engine(step_id)
         
         try:
@@ -470,6 +472,7 @@ class BacktestEngine:
             
         finally:
             clear_thread_local_engine()
+            clear_context_kline_provider()
             trade_engine.stop()
     
     def _run_step_with_context(self, current_time: datetime, step_index: int) -> Tuple[str, List[BacktestTradeResult]]:

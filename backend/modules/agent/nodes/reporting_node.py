@@ -3,10 +3,10 @@ import os
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_openai import ChatOpenAI
 
 from modules.agent.state import AgentState
 from modules.agent.tools.write_report_tool import write_report_tool
+from modules.agent.utils.model_factory import get_model_factory, with_retry
 from modules.agent.utils.trace_agent import create_trace_agent
 from modules.agent.utils.trace_utils import traced_node
 from modules.monitor.utils.logger import get_logger
@@ -64,15 +64,7 @@ def reporting_node(state: AgentState, *, config: RunnableConfig):
         with open(prompt_path, 'r', encoding='utf-8') as f:
             prompt_template = f.read().strip()
 
-        model = ChatOpenAI(
-            model=os.getenv('AGENT_MODEL'),
-            api_key=os.getenv('AGENT_API_KEY'),
-            base_url=os.getenv('AGENT_BASE_URL') or None,
-            temperature=0.8,
-            timeout=600,
-            max_tokens=4096,
-            max_retries=3,
-        )
+        model = get_model_factory().get_reporting_model()
 
         reporting_agent = create_trace_agent(
             model=model,
@@ -83,7 +75,12 @@ def reporting_node(state: AgentState, *, config: RunnableConfig):
 
         logger.info("开始调用 Reporting Agent...")
         subagent_messages = [HumanMessage(content=reporting_input)]
-        reporting_agent.invoke({"messages": subagent_messages}, config=config)
+        
+        @with_retry(max_retries=5, retryable_exceptions=(Exception,))
+        def _invoke_with_retry():
+            return reporting_agent.invoke({"messages": subagent_messages}, config=config)
+        
+        _invoke_with_retry()
         logger.info("Reporting Agent 调用完成，报告已在内部处理。")
 
     except Exception as e:
