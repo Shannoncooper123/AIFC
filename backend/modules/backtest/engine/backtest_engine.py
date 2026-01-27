@@ -428,14 +428,27 @@ class BacktestEngine:
             graph = create_workflow(cfg)
             workflow_app = graph.compile()
             
-            try:
+            def _execute_workflow():
                 with workflow_trace_context(workflow_run_id):
                     workflow_app.invoke(
                         AgentState(),
                         config=self._wrap_config(mock_alert, workflow_run_id, current_time)
                     )
+            
+            try:
+                from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+                
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_execute_workflow)
+                    future.result(timeout=self.config.workflow_timeout)
+                
                 record_workflow_end(workflow_run_id, start_iso, "success", cfg=cfg)
                 logger.debug(f"步骤 {step_index} workflow完成: time={current_time}, run_id={workflow_run_id}")
+            except FuturesTimeoutError:
+                error_msg = f"workflow执行超时（{self.config.workflow_timeout}秒）"
+                logger.error(f"步骤 {step_index} {error_msg}")
+                record_workflow_end(workflow_run_id, start_iso, "timeout", error=error_msg, cfg=cfg)
+                return workflow_run_id, []
             except Exception as e:
                 logger.error(f"步骤 {step_index} workflow失败: {e}", exc_info=True)
                 record_workflow_end(workflow_run_id, start_iso, "error", error=str(e), cfg=cfg)

@@ -23,6 +23,7 @@ class BacktestConfig:
     interval: str = "15m"
     initial_balance: float = 10000.0
     concurrency: int = 5
+    workflow_timeout: int = 600
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -32,6 +33,7 @@ class BacktestConfig:
             "interval": self.interval,
             "initial_balance": self.initial_balance,
             "concurrency": self.concurrency,
+            "workflow_timeout": self.workflow_timeout,
         }
     
     @classmethod
@@ -43,6 +45,7 @@ class BacktestConfig:
             interval=data.get("interval", "15m"),
             initial_balance=data.get("initial_balance", 10000.0),
             concurrency=data.get("concurrency", 5),
+            workflow_timeout=data.get("workflow_timeout", 600),
         )
 
 
