@@ -27,6 +27,21 @@ class SymbolAnalysisState(BaseModel):
     error: Annotated[Optional[str], pick_right] = Field(default=None, description="错误信息")
 
 
+class PositionManagementState(BaseModel):
+    """
+    单币种持仓管理的状态定义。
+    用于 Send 分发时传递单个持仓的上下文。
+    """
+    current_symbol: Annotated[str, pick_right] = Field(description="当前管理的币种")
+    position_info: Annotated[Dict[str, Any], pick_right] = Field(default_factory=dict, description="该币种的持仓信息")
+    market_context: Annotated[str, pick_right] = Field(default="", description="市场上下文")
+    position_history: Annotated[List[Dict[str, Any]], pick_right] = Field(default_factory=list, description="历史平仓记录（用于参考）")
+    position_next_focus: Annotated[str, pick_right] = Field(default="", description="上一轮该币种的关注重点")
+    
+    position_management_results: Annotated[Dict[str, Any], merge_analysis_results] = Field(default_factory=dict, description="持仓管理结果")
+    error: Annotated[Optional[str], pick_right] = Field(default=None, description="错误信息")
+
+
 class AgentState(BaseModel):
     """
     LangGraph 工作流的状态定义，用于在不同节点之间传递数据。
@@ -61,8 +76,8 @@ class AgentState(BaseModel):
     # 当前正在分析的币种（由 Send 任务注入）
     current_symbol: Annotated[Optional[str], pick_right] = Field(default=None, description="当前分析任务对应的symbol")
     
-    # 持仓管理结果
-    position_management_summary: Annotated[str, pick_right] = Field(default="", description="持仓管理节点的执行摘要")
+    # 持仓管理结果（每个币种一个条目，通过 Send 并行执行后合并）
+    position_management_results: Annotated[Dict[str, Any], merge_analysis_results] = Field(default_factory=dict, description="持仓管理结果，键为symbol")
     
     # 最终报告
     final_report: Annotated[str, pick_right] = Field(default="", description="所有节点执行完毕后的最终总结报告")

@@ -86,9 +86,10 @@ def initialize_system(config: Dict):
     # 6. 异常检测器
     logger.info("6. 初始化异常检测器...")
     detector = AnomalyDetector(config)
-    logger.info(f"   ✓ 阈值 ATR={config['thresholds']['atr_zscore']}, "
-                f"Price={config['thresholds']['price_change_zscore']}, "
-                f"Volume={config['thresholds']['volume_zscore']}")
+    from .detection.constants import DEFAULT_THRESHOLDS
+    thresholds = {**DEFAULT_THRESHOLDS, **config.get('detection', {}).get('thresholds', {})}
+    logger.info(f"   ✓ 双门槛机制: 核心A(ATR/PRICE/VOL/BB_WIDTH)>={thresholds['min_group_a']}, "
+                f"核心B(BB_BREAKOUT/OI/MA_DEV)>={thresholds['min_group_b']}")
     
     # 7. 邮件通知器
     logger.info("7. 初始化QQ邮箱...")

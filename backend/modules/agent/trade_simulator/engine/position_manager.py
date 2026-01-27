@@ -159,9 +159,10 @@ class PositionManager:
                     notional_usdt=quote_notional_usdt,
                     margin_used=margin_add,
                     fees_open=fee_open,
-                    operation_history=[{  # 初始化操作历史
+                    operation_history=[{
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "operation": "open",
+                        "run_id": run_id,
                         "details": {
                             "entry_price": entry,
                             "tp_price": tp_price,
@@ -203,10 +204,10 @@ class PositionManager:
                     pos.sl_price = sl_price
                 pos.latest_mark_price = entry
 
-                # 添加加仓操作到历史
                 pos.operation_history.append({
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "operation": "add_position",
+                    "run_id": run_id,
                     "details": {
                         "add_qty": qty_add,
                         "add_margin": margin_add,
@@ -296,10 +297,10 @@ class PositionManager:
             pos.notional_usdt = 0.0
             pos.margin_used = 0.0
 
-            # 添加平仓操作到历史
             pos.operation_history.append({
                 "timestamp": pos.close_time,
                 "operation": "close",
+                "run_id": run_id,
                 "details": {
                     "close_price": mark,
                     "realized_pnl": pos.realized_pnl,

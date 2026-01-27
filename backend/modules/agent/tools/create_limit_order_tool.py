@@ -179,14 +179,16 @@ def create_limit_order_tool(
             account_balance = float(account_summary.get('balance', 0))
             reserved_margin = float(account_summary.get('reserved_margin_sum', 0))
             available_balance = account_balance - reserved_margin
-            
-            # 简单的5%单仓限制检查
-            max_margin = available_balance * 0.05
-            if margin_usdt > max_margin:
-                logger.warning(f"Limit Order margin {margin_usdt} exceeds 5% of available {available_balance}")
-                # 这里我们只是警告，或者也可以选择报错。为了灵活性暂不强制报错，但建议用户控制仓位。
-        except Exception:
-            pass
+            max_margin_for_new_position = available_balance * 0.05
+            if margin_usdt > max_margin_for_new_position:
+                logger.error(
+                    f"create_limit_order_tool: 保证金超限！请求={margin_usdt:.2f}U，上限={max_margin_for_new_position:.2f}U (可用={available_balance:.2f}U × 5%)"
+                )
+                return make_input_error(
+                    f"保证金超限：当前可用保证金={available_balance:.2f}U，单仓上限={max_margin_for_new_position:.2f}U（5%）"
+                )
+        except Exception as e:
+            logger.warning(f"保证金上限校验时出错（继续执行）: {e}")
 
         # 调用引擎创建限价单
         logger.info(f"create_limit_order: {symbol} {side_lower} @ {limit_price}, margin={margin_usdt}")

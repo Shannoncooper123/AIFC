@@ -28,8 +28,9 @@ def reporting_node(state: AgentState, *, config: RunnableConfig):
         market_context_str = f"市场宏观背景分析:\n{state.market_context}\n\n"
         
         pos_summary_str = "当前持仓管理总结:\n"
-        if state.position_management_summary:
-            pos_summary_str += str(state.position_management_summary)
+        if state.position_management_results:
+            for symbol, result in state.position_management_results.items():
+                pos_summary_str += f"- {symbol}: {result}\n"
         else:
             pos_summary_str += "无持仓或无操作。"
         pos_summary_str += "\n\n"

@@ -86,6 +86,14 @@ class PositionSide(str, Enum):
     SHORT = "short"
 
 
+class PositionOperation(BaseModel):
+    """持仓操作历史条目"""
+    timestamp: str
+    operation: str
+    run_id: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
 class Position(BaseModel):
     """持仓信息 - 字段名与前端 types/positions.ts 对齐"""
     symbol: str
@@ -101,13 +109,34 @@ class Position(BaseModel):
     stop_loss: Optional[float] = Field(default=None, description="止损价格")
     opened_at: Optional[str] = Field(default=None, description="开仓时间")
     open_run_id: Optional[str] = None
+    operation_history: List[PositionOperation] = Field(default_factory=list, description="操作历史")
+
+
+class PendingOrder(BaseModel):
+    """限价单信息"""
+    id: str
+    symbol: str
+    side: str
+    order_type: str = "limit"
+    limit_price: float
+    margin_usdt: float
+    leverage: int
+    tp_price: Optional[float] = None
+    sl_price: Optional[float] = None
+    create_time: str
+    status: str
+    filled_time: Optional[str] = None
+    filled_price: Optional[float] = None
+    position_id: Optional[str] = None
+    create_run_id: Optional[str] = None
+    fill_run_id: Optional[str] = None
 
 
 class PositionsResponse(BaseModel):
     """持仓列表响应"""
     positions: List[Position]
     total: int
-    pending_orders: List[Dict[str, Any]] = Field(default_factory=list)
+    pending_orders: List[PendingOrder] = Field(default_factory=list)
 
 
 class PositionHistoryEntry(BaseModel):
@@ -146,7 +175,7 @@ class TradeStateResponse(BaseModel):
     """交易状态响应"""
     account: AccountSummary
     positions: List[Position]
-    pending_orders: List[Dict[str, Any]]
+    pending_orders: List[PendingOrder]
 
 
 class ConfigSection(BaseModel):

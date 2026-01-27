@@ -49,23 +49,26 @@ def _inject_trace_to_config(config: RunnableConfig, workflow_run_id: str, curren
 
 
 class TracedAgentWrapper:
-    """Agent 包装器，自动在 invoke 时创建 agent 级别的 trace"""
+    """Agent 包装器，自动在 invoke/ainvoke 时创建 agent 级别的 trace"""
     
     def __init__(self, agent: Any, node_name: str):
         self._agent = agent
         self._node_name = node_name
     
-    def invoke(self, input_data: Dict[str, Any], config: RunnableConfig = None, **kwargs) -> Dict[str, Any]:
-        workflow_run_id, parent_trace_id = _get_trace_context(config)
-        
-        symbol = None
+    def _extract_symbol(self, input_data: Dict[str, Any]) -> Optional[str]:
+        """从输入数据中提取 symbol"""
         if isinstance(input_data, dict):
             messages = input_data.get("messages", [])
             if messages and hasattr(messages[0], "additional_kwargs"):
-                symbol = messages[0].additional_kwargs.get("symbol")
+                return messages[0].additional_kwargs.get("symbol")
+        return None
+    
+    def _start_trace(self, config: RunnableConfig, symbol: Optional[str]) -> tuple:
+        """开始 trace 记录，返回 (workflow_run_id, agent_trace_id, parent_trace_id, start_time, child_config)"""
+        workflow_run_id, parent_trace_id = _get_trace_context(config)
         
         if not workflow_run_id:
-            return self._agent.invoke(input_data, config=config, **kwargs)
+            return None, None, None, None, config
         
         agent_trace_id = generate_trace_id("agent")
         start_time = now_iso()
@@ -81,6 +84,45 @@ class TracedAgentWrapper:
             symbol=symbol,
         )
         
+        return workflow_run_id, agent_trace_id, parent_trace_id, start_time, child_config
+    
+    def _end_trace(
+        self,
+        workflow_run_id: str,
+        agent_trace_id: str,
+        parent_trace_id: Optional[str],
+        start_time: str,
+        symbol: Optional[str],
+        status: str,
+        error_msg: Optional[str],
+    ) -> None:
+        """结束 trace 记录"""
+        if not workflow_run_id:
+            return
+        
+        end_time = now_iso()
+        record_trace(
+            workflow_run_id=workflow_run_id,
+            trace_id=agent_trace_id,
+            parent_trace_id=parent_trace_id,
+            trace_type="agent",
+            name=self._node_name,
+            status=status,
+            start_time=start_time,
+            end_time=end_time,
+            duration_ms=calculate_duration_ms(start_time, end_time),
+            symbol=symbol,
+            error=error_msg,
+        )
+    
+    def invoke(self, input_data: Dict[str, Any], config: RunnableConfig = None, **kwargs) -> Dict[str, Any]:
+        """同步调用 agent"""
+        symbol = self._extract_symbol(input_data)
+        workflow_run_id, agent_trace_id, parent_trace_id, start_time, child_config = self._start_trace(config, symbol)
+        
+        if not workflow_run_id:
+            return self._agent.invoke(input_data, config=config, **kwargs)
+        
         status = "success"
         error_msg = None
         
@@ -91,20 +133,27 @@ class TracedAgentWrapper:
             error_msg = str(e)
             raise
         finally:
-            end_time = now_iso()
-            record_trace(
-                workflow_run_id=workflow_run_id,
-                trace_id=agent_trace_id,
-                parent_trace_id=parent_trace_id,
-                trace_type="agent",
-                name=self._node_name,
-                status=status,
-                start_time=start_time,
-                end_time=end_time,
-                duration_ms=calculate_duration_ms(start_time, end_time),
-                symbol=symbol,
-                error=error_msg,
-            )
+            self._end_trace(workflow_run_id, agent_trace_id, parent_trace_id, start_time, symbol, status, error_msg)
+    
+    async def ainvoke(self, input_data: Dict[str, Any], config: RunnableConfig = None, **kwargs) -> Dict[str, Any]:
+        """异步调用 agent（contextvars 会自动传播到 async task）"""
+        symbol = self._extract_symbol(input_data)
+        workflow_run_id, agent_trace_id, parent_trace_id, start_time, child_config = self._start_trace(config, symbol)
+        
+        if not workflow_run_id:
+            return await self._agent.ainvoke(input_data, config=config, **kwargs)
+        
+        status = "success"
+        error_msg = None
+        
+        try:
+            return await self._agent.ainvoke(input_data, config=child_config, **kwargs)
+        except Exception as e:
+            status = "error"
+            error_msg = str(e)
+            raise
+        finally:
+            self._end_trace(workflow_run_id, agent_trace_id, parent_trace_id, start_time, symbol, status, error_msg)
     
     def __getattr__(self, name: str) -> Any:
         return getattr(self._agent, name)

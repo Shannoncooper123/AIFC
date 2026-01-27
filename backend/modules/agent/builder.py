@@ -4,13 +4,13 @@ from typing import Dict, Any, Union
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import RunnableConfig
 
-from modules.agent.state import AgentState, SymbolAnalysisState
+from modules.agent.state import AgentState, SymbolAnalysisState, PositionManagementState
 from modules.agent.nodes.context_injection_node import context_injection_node
 from modules.agent.nodes.reporting_node import reporting_node
 from modules.agent.nodes.single_symbol_analysis_node import single_symbol_analysis_node
 from modules.agent.nodes.opening_decision_node import opening_decision_node
-from modules.agent.nodes.position_management_node import position_management_node
-from modules.agent.conditional_edges import after_opportunity_screening
+from modules.agent.nodes.single_position_management_node import single_position_management_node
+from modules.agent.conditional_edges import after_opportunity_screening, after_context_injection_for_positions
 from modules.agent.utils.trace_utils import traced_node
 
 
@@ -53,39 +53,53 @@ def create_workflow(config: Dict[str, Any]) -> StateGraph:
     """
     创建并配置 LangGraph 工作流。
     
-    架构（整体一层 super step）：
+    架构（整体一层 super step，四条并行分支）：
     - context_injection: 注入上下文，筛选机会
-    - position_management: 持仓管理（与分析并行）
+    - manage_position: 单币种持仓管理，通过 Send 分发（每个持仓一个）
+    - position_barrier: 无持仓时的占位节点
     - analyze_symbol: 子图（analysis + decision），通过 Send 分发
-    - barrier: 无机会时的占位节点
+    - analysis_barrier: 无机会时的占位节点
     - join_node: 汇聚节点
     - reporting: 生成最终报告
+    
+    并行分支：
+    1. manage_position (per symbol) 或 position_barrier
+    2. analyze_symbol (per symbol) 或 analysis_barrier
     """
     workflow = StateGraph(AgentState)
 
     workflow.add_node("context_injection", context_injection_node)
-    workflow.add_node("position_management", position_management_node)
+    workflow.add_node("manage_position", single_position_management_node)
+    workflow.add_node("position_barrier", _barrier_node)
     workflow.add_node("analyze_symbol", _symbol_analysis_node)
-    workflow.add_node("barrier", _barrier_node)
+    workflow.add_node("analysis_barrier", _barrier_node)
     workflow.add_node("join_node", _barrier_node)
     workflow.add_node("reporting", reporting_node)
 
     workflow.set_entry_point("context_injection")
     
-    workflow.add_edge("context_injection", "position_management")
+    workflow.add_conditional_edges(
+        "context_injection",
+        after_context_injection_for_positions,
+        {
+            "manage_position": "manage_position",
+            "position_barrier": "position_barrier",
+        }
+    )
 
     workflow.add_conditional_edges(
         "context_injection",
         after_opportunity_screening,
         {
             "analyze_symbol": "analyze_symbol",
-            "analysis_barrier": "barrier",
+            "analysis_barrier": "analysis_barrier",
         }
     )
 
+    workflow.add_edge("manage_position", "join_node")
+    workflow.add_edge("position_barrier", "join_node")
     workflow.add_edge("analyze_symbol", "join_node")
-    workflow.add_edge("barrier", "join_node")
-    workflow.add_edge("position_management", "join_node")
+    workflow.add_edge("analysis_barrier", "join_node")
 
     workflow.add_edge("join_node", "reporting")
     workflow.add_edge("reporting", END)

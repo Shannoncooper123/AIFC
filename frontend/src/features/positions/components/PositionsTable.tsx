@@ -1,10 +1,81 @@
-import { ArrowUpRight, ArrowDownRight, Target, ShieldAlert, ExternalLink, Clock } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowUpRight, ArrowDownRight, Target, ShieldAlert, ExternalLink, Clock, ChevronDown, History } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import type { Position } from '../../../types';
+import type { Position, PositionOperation } from '../../../types';
 
 interface PositionsTableProps {
   positions: Position[];
   isLoading?: boolean;
+}
+
+const OPERATION_LABELS: Record<string, string> = {
+  open: 'Open',
+  add_position: 'Add',
+  update_tp_sl: 'TP/SL',
+  close: 'Close',
+};
+
+function OperationTraceDropdown({
+  operations,
+  onViewTrace,
+}: {
+  operations: PositionOperation[];
+  onViewTrace: (runId: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const operationsWithTrace = operations.filter((op) => op.run_id);
+
+  if (operationsWithTrace.length === 0) {
+    return <span className="text-neutral-500">-</span>;
+  }
+
+  if (operationsWithTrace.length === 1) {
+    const op = operationsWithTrace[0];
+    return (
+      <button
+        onClick={() => onViewTrace(op.run_id!)}
+        className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/20"
+        title={`View ${OPERATION_LABELS[op.operation] || op.operation} trace`}
+      >
+        <ExternalLink className="h-3 w-3" />
+        {OPERATION_LABELS[op.operation] || op.operation}
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/20"
+      >
+        <History className="h-3 w-3" />
+        {operationsWithTrace.length} Traces
+        <ChevronDown className={`h-3 w-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      {isOpen && (
+        <div className="absolute right-0 top-full z-10 mt-1 min-w-[160px] rounded-md border border-neutral-700 bg-neutral-800 py-1 shadow-lg">
+          {operationsWithTrace.map((op, idx) => (
+            <button
+              key={`${op.timestamp}-${idx}`}
+              onClick={() => {
+                onViewTrace(op.run_id!);
+                setIsOpen(false);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-neutral-300 hover:bg-neutral-700"
+            >
+              <ExternalLink className="h-3 w-3 text-blue-400" />
+              <span className="font-medium">{OPERATION_LABELS[op.operation] || op.operation}</span>
+              <span className="ml-auto text-neutral-500">
+                {new Date(op.timestamp).toLocaleDateString()}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function PositionsTable({ positions, isLoading }: PositionsTableProps) {
@@ -189,14 +260,19 @@ export function PositionsTable({ positions, isLoading }: PositionsTableProps) {
                     </div>
                   </td>
                   <td className="whitespace-nowrap px-4 py-4 text-center">
-                    {position.open_run_id ? (
+                    {position.operation_history && position.operation_history.length > 0 ? (
+                      <OperationTraceDropdown
+                        operations={position.operation_history}
+                        onViewTrace={handleViewTrace}
+                      />
+                    ) : position.open_run_id ? (
                       <button
                         onClick={() => handleViewTrace(position.open_run_id!)}
                         className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/20"
                         title="View opening workflow trace"
                       >
                         <ExternalLink className="h-3 w-3" />
-                        Trace
+                        Open
                       </button>
                     ) : (
                       <span className="text-neutral-500">-</span>

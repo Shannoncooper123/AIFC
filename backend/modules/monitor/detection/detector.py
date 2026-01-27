@@ -1,22 +1,27 @@
-"""异常检测器"""
-from typing import Dict, Optional
+"""异常检测器
+
+基于双门槛机制进行异常检测：
+- 核心组A（波动性）+ 核心组B（突破/动量）双重确认
+- 辅助指标用于计算异常等级
+"""
+from typing import Dict, List, Optional
 import time
 from ..data.models import IndicatorValues, AnomalyResult
-from .strategies import MultiIndicatorStrategy, DetectionStrategy
+from .strategy import DetectionStrategy
+from .constants import CORE_GROUP_A, CORE_GROUP_B, STRONG_THRESHOLDS
 
 
 class AnomalyDetector:
     """异常检测器"""
     
-    def __init__(self, config: Dict, strategy: Optional[DetectionStrategy] = None):
+    def __init__(self, config: Dict):
         """初始化
         
         Args:
             config: 配置字典
-            strategy: 检测策略（默认使用多指标组合策略）
         """
         self.config = config
-        self.strategy = strategy or MultiIndicatorStrategy()
+        self.strategy = DetectionStrategy(config)
     
     def detect(self, indicators: IndicatorValues) -> Optional[AnomalyResult]:
         """检测异常
@@ -30,24 +35,17 @@ class AnomalyDetector:
         if indicators is None:
             return None
         
-        # 使用策略检测异常
-        is_anomaly, triggered_indicators = self.strategy.detect(indicators, self.config)
+        is_anomaly, triggered_indicators = self.strategy.detect(indicators)
         
         if not is_anomaly:
             return None
         
-        # 计算异常等级（1-5星）
-        anomaly_level = self.calculate_anomaly_level(indicators)
-        
-        # 获取当前价格
-        from ..data.kline_manager import KlineManager
-        # 这里我们从indicators中获取价格信息
-        # 实际使用时需要从kline_manager获取最新价格
+        anomaly_level = self._calculate_level(indicators, triggered_indicators)
         
         return AnomalyResult(
             symbol=indicators.symbol,
             timestamp=int(time.time() * 1000),
-            price=0.0,  # 需要从外部传入
+            price=0.0,
             price_change_rate=indicators.price_change_rate,
             atr_zscore=indicators.atr_zscore,
             price_change_zscore=indicators.price_change_zscore,
@@ -57,34 +55,58 @@ class AnomalyDetector:
             engulfing_type=indicators.engulfing_type
         )
     
-    def calculate_anomaly_level(self, indicators: IndicatorValues) -> int:
+    def _calculate_level(self, ind: IndicatorValues, triggered: List[str]) -> int:
         """计算异常等级（1-5星）
         
+        基于核心指标强度 + 核心组B数量 + 辅助指标数量综合计算
+        
         Args:
-            indicators: 技术指标值
+            ind: 技术指标值
+            triggered: 触发的指标列表
             
         Returns:
             异常等级（1-5）
         """
-        # 计算综合Z-Score
-        zscores = [
-            abs(indicators.atr_zscore),
-            abs(indicators.price_change_zscore),
-            abs(indicators.volume_zscore)
-        ]
+        score = 0
         
-        max_zscore = max(zscores)
-        avg_zscore = sum(zscores) / len(zscores)
+        # 核心组A强度评分（每个指标最多2分）
+        if abs(ind.atr_zscore) > STRONG_THRESHOLDS['atr_zscore']:
+            score += 2
+        elif abs(ind.atr_zscore) > self.strategy.thresholds['atr_zscore']:
+            score += 1
         
-        # 根据Z-Score计算等级
-        if max_zscore > 5.0 or avg_zscore > 4.0:
+        if abs(ind.price_change_zscore) > STRONG_THRESHOLDS['price_zscore']:
+            score += 2
+        elif abs(ind.price_change_zscore) > self.strategy.thresholds['price_zscore']:
+            score += 1
+        
+        if ind.volume_zscore > STRONG_THRESHOLDS['volume_zscore']:
+            score += 2
+        elif ind.volume_zscore > self.strategy.thresholds['volume_zscore']:
+            score += 1
+        
+        if abs(ind.bb_width_zscore) > STRONG_THRESHOLDS['bb_width_zscore']:
+            score += 2
+        elif abs(ind.bb_width_zscore) > self.strategy.thresholds['bb_width_zscore']:
+            score += 1
+        
+        # 核心组B数量评分（每个指标2分）
+        group_b_count = len([t for t in triggered if t in CORE_GROUP_B])
+        score += group_b_count * 2
+        
+        # 辅助指标数量评分（每个指标1分）
+        aux_count = len([t for t in triggered 
+                        if t not in CORE_GROUP_A and t not in CORE_GROUP_B])
+        score += aux_count
+        
+        # 根据总分计算等级
+        if score >= 12:
             return 5
-        elif max_zscore > 4.0 or avg_zscore > 3.5:
+        elif score >= 9:
             return 4
-        elif max_zscore > 3.5 or avg_zscore > 3.0:
+        elif score >= 6:
             return 3
-        elif max_zscore > 3.0 or avg_zscore > 2.5:
+        elif score >= 3:
             return 2
         else:
             return 1
-

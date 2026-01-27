@@ -1,4 +1,5 @@
-import { ArrowUpRight, ArrowDownRight, Target, ShieldAlert, Clock } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Target, ShieldAlert, Clock, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { LimitOrder } from '../../../types';
 
 interface LimitOrdersTableProps {
@@ -7,6 +8,12 @@ interface LimitOrdersTableProps {
 }
 
 export function LimitOrdersTable({ orders, isLoading }: LimitOrdersTableProps) {
+  const navigate = useNavigate();
+
+  const handleViewTrace = (runId: string) => {
+    navigate(`/workflow?run_id=${runId}`);
+  };
+
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -82,6 +89,9 @@ export function LimitOrdersTable({ orders, isLoading }: LimitOrdersTableProps) {
               <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-neutral-400">
                 Status
               </th>
+              <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-neutral-400">
+                Trace
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-800">
@@ -156,6 +166,20 @@ export function LimitOrdersTable({ orders, isLoading }: LimitOrdersTableProps) {
                     <span className="rounded bg-yellow-500/10 px-2 py-1 text-xs font-medium text-yellow-500">
                       {order.status.toUpperCase()}
                     </span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-4 text-center">
+                    {order.create_run_id ? (
+                      <button
+                        onClick={() => handleViewTrace(order.create_run_id!)}
+                        className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/20"
+                        title="View creation workflow trace"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Created
+                      </button>
+                    ) : (
+                      <span className="text-neutral-500">-</span>
+                    )}
                   </td>
                 </tr>
               );

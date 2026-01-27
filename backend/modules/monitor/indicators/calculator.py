@@ -122,7 +122,7 @@ class IndicatorCalculator:
         # 形态：外包线（使用严格模式，要求实体吞没）
         is_engulfing = False
         engulfing_type = '非外包'
-        engulfing_strict = self.config['thresholds'].get('engulfing_strict_mode', True)
+        engulfing_strict = self.config.get('indicators', {}).get('engulfing_strict_mode', True)
         if len(klines) >= 2:
             is_engulfing = is_engulfing_bar(klines[-1], klines[-2], require_body_engulf=engulfing_strict)
             engulfing_type = get_engulfing_type(klines[-1], klines[-2], strict=engulfing_strict)
@@ -163,8 +163,8 @@ class IndicatorCalculator:
         rsi = calculate_rsi(closes, self.rsi_period) or 0.0
         rsi_history = calculate_rsi_list(closes, self.rsi_period)
         rsi_zscore = calculate_zscore(rsi, rsi_history[:-1]) if len(rsi_history) > 1 else 0.0
-        is_rsi_overbought = rsi >= self.config['thresholds'].get('rsi_overbought', 70)
-        is_rsi_oversold = rsi <= self.config['thresholds'].get('rsi_oversold', 30)
+        is_rsi_overbought = rsi >= 70
+        is_rsi_oversold = rsi <= 30
         
         # EMA 金叉/死叉与乖离
         ema_fast_list = calculate_ema_list(closes, self.ema_fast_period)
@@ -257,18 +257,15 @@ class IndicatorCalculator:
                         # 检测激增
                         if len(oi_changes) > 0:
                             is_oi_surge = detect_oi_surge(
-                                oi_change_rate, oi_changes, 
-                                self.config['thresholds'].get('oi_zscore', 2.5)
+                                oi_change_rate, oi_changes, 2.5
                             )
                         
-                        # 分析背离（使用可配置阈值）
+                        # 分析背离
                         if len(price_changes) >= self.oi_divergence_window and len(oi_changes) >= self.oi_divergence_window:
-                            price_threshold = self.config['thresholds'].get('oi_divergence_price_threshold', 0.5)
-                            oi_threshold = self.config['thresholds'].get('oi_divergence_oi_threshold', 1.0)
                             is_oi_divergence, oi_divergence_type = analyze_oi_divergence(
                                 price_changes, oi_changes, self.oi_divergence_window,
-                                price_threshold=price_threshold,
-                                oi_threshold=oi_threshold
+                                price_threshold=0.5,
+                                oi_threshold=1.0
                             )
                         
             except Exception as e:

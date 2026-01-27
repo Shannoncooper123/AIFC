@@ -57,9 +57,14 @@ def validate_config_values(config: Dict[str, Any]) -> List[str]:
     if config['kline']['history_size'] < max_period:
         errors.append(f"history_size ({config['kline']['history_size']}) 应该 >= 最大指标周期 ({max_period})")
     
-    # 验证阈值
-    if config['thresholds']['min_indicators_triggered'] > 3:
-        errors.append("min_indicators_triggered 最多为 3（ATR、价格变化、成交量）")
+    # 验证检测配置
+    detection_config = config.get('detection', {}).get('thresholds', {})
+    min_group_a = detection_config.get('min_group_a', 2)
+    min_group_b = detection_config.get('min_group_b', 1)
+    if min_group_a > 4:
+        errors.append("min_group_a 最多为 4（ATR、PRICE、VOLUME、BB_WIDTH）")
+    if min_group_b > 4:
+        errors.append("min_group_b 最多为 4（BB_BREAKOUT、OI_SURGE、OI_ZSCORE、MA_DEVIATION）")
     
     return errors
 

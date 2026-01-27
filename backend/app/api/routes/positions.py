@@ -14,6 +14,7 @@ from app.models.schemas import (
     Position,
     PositionHistoryEntry,
     PositionHistoryResponse,
+    PositionOperation,
     PositionsResponse,
     TradeStateResponse,
 )
@@ -62,6 +63,17 @@ def parse_position(data: Dict[str, Any]) -> Position:
     else:
         unrealized_pnl = data.get("unrealized_pnl")
     
+    operation_history_raw = data.get("operation_history", [])
+    operation_history = [
+        PositionOperation(
+            timestamp=op.get("timestamp", ""),
+            operation=op.get("operation", ""),
+            run_id=op.get("run_id"),
+            details=op.get("details", {}),
+        )
+        for op in operation_history_raw
+    ]
+    
     return Position(
         symbol=data.get("symbol", ""),
         side=side,
@@ -76,6 +88,7 @@ def parse_position(data: Dict[str, Any]) -> Position:
         stop_loss=float(stop_loss) if stop_loss else None,
         opened_at=opened_at,
         open_run_id=data.get("open_run_id"),
+        operation_history=operation_history,
     )
 
 

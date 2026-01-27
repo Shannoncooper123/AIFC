@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from modules.agent.trade_simulator.models import PendingOrder
 from modules.agent.trade_simulator.storage import ConfigFacade
 from modules.agent.trade_simulator.utils.file_utils import WriteQueue
+from modules.agent.utils.trace_context import get_current_workflow_run_id
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.trade_engine.limit_order_manager')
@@ -70,7 +71,11 @@ class LimitOrderManager:
             
         Returns:
             订单信息字典或错误字典
+            
+        Note:
+            run_id 通过 trace_context 自动获取
         """
+        run_id = get_current_workflow_run_id()
         with self.lock:
             logger.info(
                 f"create_limit_order: symbol={symbol}, side={side}, "
@@ -107,7 +112,6 @@ class LimitOrderManager:
             # 预占保证金
             self.account.reserved_margin_sum += margin_usdt
 
-            # 创建限价单
             order_id = f"order_{uuid.uuid4().hex[:12]}"
             order = PendingOrder(
                 id=order_id,
@@ -121,6 +125,7 @@ class LimitOrderManager:
                 sl_price=sl_price,
                 create_time=datetime.now(timezone.utc).isoformat(),
                 status="pending",
+                create_run_id=run_id,
             )
 
             self.orders[order_id] = order
@@ -346,6 +351,8 @@ class LimitOrderManager:
             'filled_time': order.filled_time,
             'filled_price': round(order.filled_price, 8) if order.filled_price else None,
             'position_id': order.position_id,
+            'create_run_id': order.create_run_id,
+            'fill_run_id': order.fill_run_id,
         }
 
     def persist(self) -> None:

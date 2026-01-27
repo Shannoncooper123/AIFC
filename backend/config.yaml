@@ -20,39 +20,35 @@ indicators:
   rsi_period: 14          # RSI周期
   ema_fast_period: 12     # EMA快线周期
   ema_slow_period: 26     # EMA慢线周期
-  macd_fast_period: 12    # MACD快线周期
-  macd_slow_period: 26    # MACD慢线周期
-  macd_signal_period: 9   # MACD信号线周期
   long_wick_ratio_threshold: 0.6  # 长影线比例阈值（占整根振幅）
   oi_ma_period: 20        # 持仓量移动平均周期
   oi_momentum_period: 10  # 持仓量动量周期
   oi_divergence_window: 5 # 持仓量背离分析窗口
 
-# 异常检测阈值
-thresholds:
-  atr_zscore: 2.5             # ATR Z-Score阈值（双向检测：异常高/低波动）
-  price_change_zscore: 2.5    # 价格变化Z-Score阈值
-  volume_zscore: 3.0          # 成交量Z-Score阈值
-  min_indicators_triggered: 3 # 最少触发指标数
-  rsi_overbought: 70          # RSI超买阈值
-  rsi_oversold: 30            # RSI超卖阈值
-  rsi_zscore: 2.0             # RSI Z-Score阈值
-  bb_width_zscore: 3.0        # 布林带带宽Z-Score阈值
-  bb_squeeze_price_zscore: 1.0  # 布林带挤压后的价格变化确认阈值
-  ma_deviation_zscore: 2.5    # 均线乖离度Z-Score阈值
-  long_wick_ratio_threshold: 0.7 # 长影线比例触发阈值
-  oi_zscore: 2.5              # 持仓量变化Z-Score阈值
-  oi_momentum_threshold: 10.0  # 持仓量动量阈值
-  # 持仓量背离检测阈值
-  oi_divergence_price_threshold: 0.5  # 价格变化阈值（百分比）
-  oi_divergence_oi_threshold: 1.0     # 持仓量变化阈值（百分比）
-  # 外包线检测配置
-  engulfing_strict_mode: true  # 是否使用严格模式（要求实体吞没）
+# 异常检测配置（双门槛机制）
+# 核心组A（波动性）：ATR, PRICE, VOLUME, BB_WIDTH - 至少2个触发
+# 核心组B（突破/动量）：BB_BREAKOUT, OI_SURGE, OI_ZSCORE, MA_DEVIATION - 至少1个触发
+# 默认阈值已内置于代码中，仅需覆盖时配置
+detection:
+  thresholds:
+    # 核心组A阈值（可选覆盖，默认值见 detection/constants.py）
+    # atr_zscore: 3.0
+    # price_zscore: 3.0
+    # volume_zscore: 3.5
+    # bb_width_zscore: 3.0
+    
+    # 核心组B阈值
+    # oi_zscore: 2.5
+    # ma_deviation_zscore: 2.5
+    
+    # 门槛规则
+    # min_group_a: 2
+    # min_group_b: 1
 
 # 告警配置
 alert:
   cooldown_minutes: 0   # 同币种告警间隔（分钟）
-  max_batch_size: 10     # 单次告警最多包含的币种数（已优化追涨风险评估，可安全增加）
+  max_batch_size: 10     # 单次告警最多包含的币种数
   send_email: false      # 是否发送告警邮件（false=禁用告警邮件，仅写入JSONL）
   debounce_seconds: 10   # 防抖延迟（秒），收集同一周期内的告警后批量发送
   
@@ -81,8 +77,6 @@ trading:
   mode: "simulator"            # 交易模式：simulator（模拟）/ live（实盘）
   max_leverage: 10        # 最大杠杆倍数
   history_sync_days: 0    # 启动时同步历史持仓天数（0=禁用，最大7天）
-                          # 注意：启动时同步需要遍历所有交易对，可能触发API限流（需要~2分钟）
-                          # 建议：保持0（禁用），历史记录已通过WebSocket实时维护
 
 # 交易对过滤
 symbols:

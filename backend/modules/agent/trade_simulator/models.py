@@ -23,6 +23,8 @@ class PendingOrder:
     filled_time: Optional[str] = None
     filled_price: Optional[float] = None
     position_id: Optional[str] = None  # 成交后关联的持仓ID
+    create_run_id: Optional[str] = None  # 创建限价单时的workflow run_id
+    fill_run_id: Optional[str] = None  # 成交时的workflow run_id（异步触发时为None）
 
 
 @dataclass

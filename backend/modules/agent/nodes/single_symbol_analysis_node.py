@@ -1,6 +1,6 @@
 """工作流节点：单币种深度分析（双向分析：做多+做空）"""
+import asyncio
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
@@ -155,14 +155,14 @@ def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
     return subagent, node_name
 
 
-def _run_directional_analysis(
+async def _run_directional_analysis_async(
     direction: str,
     symbol: str,
     combined_message: str,
     config: RunnableConfig,
 ) -> Tuple[str, str, Optional[str]]:
     """
-    执行单方向分析
+    异步执行单方向分析（contextvars 会自动传播到 async task）
     
     Args:
         direction: "long" 或 "short"
@@ -174,7 +174,6 @@ def _run_directional_analysis(
         (direction, result, error) 元组
     """
     direction_cn = "做多" if direction == "long" else "做空"
-    node_name = f"single_symbol_analysis_{direction}"
     
     try:
         logger.info(f"开始 {symbol} {direction_cn}分析...")
@@ -185,7 +184,7 @@ def _run_directional_analysis(
             HumanMessage(content=combined_message),
         ]
         
-        result = subagent.invoke(
+        result = await subagent.ainvoke(
             {"messages": subagent_messages},
             config=config,
         )
@@ -201,12 +200,58 @@ def _run_directional_analysis(
         return direction, "", str(e)
 
 
+async def _run_parallel_analysis(
+    symbol: str,
+    combined_message: str,
+    config: RunnableConfig,
+) -> Tuple[Optional[str], Optional[str], List[str]]:
+    """
+    并行执行做多和做空分析（使用 asyncio.gather）
+    
+    contextvars 会自动传播到每个 async task，无需手动 copy context
+    
+    Args:
+        symbol: 交易对
+        combined_message: 输入消息
+        config: RunnableConfig
+        
+    Returns:
+        (long_result, short_result, errors) 元组
+    """
+    tasks = [
+        _run_directional_analysis_async("long", symbol, combined_message, config),
+        _run_directional_analysis_async("short", symbol, combined_message, config),
+    ]
+    
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    long_result = None
+    short_result = None
+    errors = []
+    
+    for result in results:
+        if isinstance(result, Exception):
+            errors.append(str(result))
+            continue
+        
+        direction, output, error = result
+        if error:
+            errors.append(f"{direction}: {error}")
+        else:
+            if direction == "long":
+                long_result = output
+            else:
+                short_result = output
+    
+    return long_result, short_result, errors
+
+
 @traced_node("single_symbol_analysis")
 def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableConfig) -> Dict[str, Any]:
     """
     对当前状态中的单个币种进行双向深度技术分析（做多+做空）。
     
-    本节点并行执行两个 subagent：
+    本节点并行执行两个 subagent（使用 asyncio 实现并行，contextvars 自动传播）：
     - Long Subagent: 专注于识别做多机会
     - Short Subagent: 专注于识别做空机会
     
@@ -249,33 +294,11 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
             task_prompt,
         ])
 
-        logger.info(f"开始为 {symbol} 执行双向技术分析（做多+做空并行）...")
+        logger.info(f"开始为 {symbol} 执行双向技术分析（做多+做空并行，asyncio）...")
         
-        long_result = None
-        short_result = None
-        errors = []
-        
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                executor.submit(
-                    _run_directional_analysis,
-                    direction,
-                    symbol,
-                    combined_message,
-                    config,
-                ): direction
-                for direction in ["long", "short"]
-            }
-            
-            for future in as_completed(futures):
-                direction, result, error = future.result()
-                if error:
-                    errors.append(f"{direction}: {error}")
-                else:
-                    if direction == "long":
-                        long_result = result
-                    else:
-                        short_result = result
+        long_result, short_result, errors = asyncio.run(
+            _run_parallel_analysis(symbol, combined_message, config)
+        )
         
         combined_analysis_parts = []
         

@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from modules.agent.trade_simulator.models import Account, Position
 from modules.agent.trade_simulator.storage import ConfigFacade
+from modules.agent.utils.trace_context import get_current_workflow_run_id
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.trade_engine.tpsl_manager')
@@ -38,7 +39,10 @@ class TPSLManager:
             - 推荐同时更新 tp_price 和 sl_price
             - 工具层（update_tp_sl_tool.py）强制要求两个都必填
             - 避免出现只有止盈无止损、或只有止损无止盈的情况
+            
+            run_id 通过 trace_context 自动获取
         """
+        run_id = get_current_workflow_run_id()
         with self.lock:
             logger.info(f"update_tp_sl: symbol={symbol}, tp_price={tp_price}, sl_price={sl_price}")
 
@@ -59,10 +63,10 @@ class TPSLManager:
             if sl_price is not None:
                 pos.sl_price = sl_price
 
-            # 添加操作历史
             pos.operation_history.append({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "operation": "update_tp_sl",
+                "run_id": run_id,
                 "details": {
                     "old_tp": old_tp,
                     "new_tp": pos.tp_price,

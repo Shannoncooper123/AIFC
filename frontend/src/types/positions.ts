@@ -4,6 +4,13 @@
 
 export type PositionSide = 'LONG' | 'SHORT';
 
+export interface PositionOperation {
+  timestamp: string;
+  operation: string;
+  run_id?: string;
+  details: Record<string, unknown>;
+}
+
 export interface Position {
   symbol: string;
   side: PositionSide;
@@ -18,6 +25,7 @@ export interface Position {
   stop_loss?: number;
   opened_at?: string;
   open_run_id?: string;
+  operation_history?: PositionOperation[];
 }
 
 export interface PositionHistory {
@@ -50,4 +58,6 @@ export interface LimitOrder {
   filled_time?: string;
   filled_price?: number;
   position_id?: string;
+  create_run_id?: string;
+  fill_run_id?: string;
 }
