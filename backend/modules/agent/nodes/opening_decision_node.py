@@ -51,7 +51,7 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
     Returns:
         (images, image_metas): images 用于构建消息，image_metas 用于 trace 匹配
     """
-    from modules.agent.tools.get_kline_image_tool import _plot_candlestick_chart
+    from modules.agent.tools.chart_renderer import render_kline_chart
     
     images = []
     image_metas = []
@@ -77,7 +77,7 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
                 logger.warning(f"未获取到 {symbol} {interval} K线数据: {error}")
                 continue
             
-            image_base64 = _plot_candlestick_chart(klines, symbol, interval, display_limit)
+            image_base64 = render_kline_chart(klines, symbol, interval, display_limit)
             
             images.append({
                 "interval": interval,
