@@ -83,25 +83,31 @@ def create_send_alerts_callback(notifier: EmailNotifier, config: Dict):
                 entries = []
                 for a in alerts:
                     reasons = []
+                    reason_map = {
+                        'ATR': 'ATR波动超阈值',
+                        'PRICE': '价格变化超阈值',
+                        'VOLUME': '成交量异常',
+                        'BB_WIDTH': '布林带宽度异常',
+                        'BB_BREAKOUT': '布林带突破',
+                        'OI_SURGE': '持仓量激增',
+                        'OI_ZSCORE': '持仓量Z-Score异常',
+                        'MA_DEVIATION': '均线乖离异常',
+                        'RSI_OVERBOUGHT': 'RSI超买',
+                        'RSI_OVERSOLD': 'RSI超卖',
+                        'MA_BULLISH_CROSS': '均线金叉',
+                        'MA_BEARISH_CROSS': '均线死叉',
+                        'LONG_UPPER_WICK': '长上影线',
+                        'LONG_LOWER_WICK': '长下影线',
+                        'OI_DIVERGENCE': '持仓量背离',
+                        'BB_SQUEEZE': '布林带收窄',
+                    }
                     for t in a.triggered_indicators:
-                        if t == 'ATR':
-                            reasons.append('ATR波动超阈值')
-                        elif t == 'PRICE':
-                            reasons.append('价格变化超阈值')
-                        elif t == 'VOLUME':
-                            reasons.append('成交量异常')
-                        elif t == 'ENGULFING':
+                        if t == 'ENGULFING':
                             reasons.append(f'{a.engulfing_type}')
-                        elif t == 'OI_SURGE':
-                            reasons.append('持仓量激增')
-                        elif t == 'OI_ZSCORE':
-                            reasons.append('持仓量Z-Score异常')
-                        elif t == 'OI_BULLISH_DIVERGENCE':
-                            reasons.append('持仓量看涨背离')
-                        elif t == 'OI_BEARISH_DIVERGENCE':
-                            reasons.append('持仓量看跌背离')
-                        elif t == 'OI_MOMENTUM':
-                            reasons.append('持仓量动量异常')
+                        elif t in reason_map:
+                            reasons.append(reason_map[t])
+                        else:
+                            reasons.append(t)
                     entries.append({
                         'symbol': a.symbol,
                         'price': a.price,

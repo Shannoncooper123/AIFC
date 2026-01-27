@@ -4,6 +4,8 @@ INDICATOR_NAMES = {
     'ATR': 'ATR波动异常',
     'PRICE': '价格变化异常',
     'VOLUME': '成交量异常',
+    'BB_WIDTH': '布林带宽度异常',
+    'BB_BREAKOUT': '布林带突破',
     'ENGULFING': '外包线',
     'RSI_OVERBOUGHT': 'RSI超买',
     'RSI_OVERSOLD': 'RSI超卖',
