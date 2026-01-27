@@ -141,6 +141,7 @@ def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
         temperature=0.1,
         timeout=600,
         max_tokens=16000,
+        max_retries=3,
         logprobs=False,
         extra_body={"thinking": {"type": "enabled"}},
     )

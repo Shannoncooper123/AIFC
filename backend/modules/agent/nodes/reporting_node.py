@@ -71,6 +71,7 @@ def reporting_node(state: AgentState, *, config: RunnableConfig):
             temperature=0.8,
             timeout=600,
             max_tokens=4096,
+            max_retries=3,
         )
 
         reporting_agent = create_trace_agent(

@@ -177,6 +177,7 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
             temperature=0.1,
             timeout=300,
             max_tokens=8000,
+            max_retries=3,
         )
 
         subagent = create_trace_agent(

@@ -97,6 +97,7 @@ def single_position_management_node(
             temperature=0.8,
             timeout=600,
             max_tokens=16000,
+            max_retries=3,
             logprobs=False,
             extra_body={"thinking": {"type": "enabled"}},
         )
