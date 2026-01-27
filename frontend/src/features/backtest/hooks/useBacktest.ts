@@ -9,7 +9,7 @@ import {
   getBacktestTrades,
   deleteBacktest,
 } from '../../../services/api/backtest';
-import type { BacktestStartRequest, BacktestResult, BacktestTradeResult } from '../../../services/api/backtest';
+import type { BacktestStartRequest, BacktestResult } from '../../../services/api/backtest';
 
 export function useBacktestList(limit = 20) {
   return useQuery({
