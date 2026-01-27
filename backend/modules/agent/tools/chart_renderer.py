@@ -6,9 +6,11 @@ Matplotlib 不是线程安全的，多线程并发调用会产生严重的锁竞
 """
 from __future__ import annotations
 
+import atexit
 import base64
 import io
 import os
+import signal
 import warnings
 from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
@@ -19,6 +21,7 @@ from modules.monitor.utils.logger import get_logger
 logger = get_logger('agent.tool.chart_renderer')
 
 _process_pool: Optional[ProcessPoolExecutor] = None
+_atexit_registered = False
 
 
 def _get_process_pool() -> ProcessPoolExecutor:
@@ -27,18 +30,30 @@ def _get_process_pool() -> ProcessPoolExecutor:
     不限制 max_workers，让系统根据 CPU 核心数自动决定。
     默认为 min(32, os.cpu_count() + 4)
     """
-    global _process_pool
+    global _process_pool, _atexit_registered
     if _process_pool is None:
         _process_pool = ProcessPoolExecutor()
         logger.info(f"图表渲染进程池已创建")
+        
+        if not _atexit_registered:
+            atexit.register(shutdown_chart_renderer)
+            _atexit_registered = True
+            logger.debug("已注册 atexit 清理钩子")
+    
     return _process_pool
 
 
 def shutdown_chart_renderer():
-    """关闭进程池（用于程序退出时清理）"""
+    """关闭进程池（用于程序退出时清理）
+    
+    会强制终止所有子进程，确保不会有残留进程。
+    """
     global _process_pool
     if _process_pool is not None:
-        _process_pool.shutdown(wait=False)
+        try:
+            _process_pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            _process_pool.shutdown(wait=False)
         _process_pool = None
         logger.info("图表渲染进程池已关闭")
 

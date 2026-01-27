@@ -57,6 +57,13 @@ async def lifespan(app: FastAPI):
     logger.info("停止所有服务线程...")
     thread_manager.stop_all()
     
+    logger.info("关闭图表渲染进程池...")
+    try:
+        from modules.agent.tools.chart_renderer import shutdown_chart_renderer
+        shutdown_chart_renderer()
+    except Exception as e:
+        logger.warning(f"关闭图表渲染进程池失败: {e}")
+    
     logger.info("Backend 已关闭")
 
 
