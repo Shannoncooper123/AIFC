@@ -186,10 +186,6 @@ class ConfigLoader:
         if config['indicators']['stddev_period'] < 2:
             raise ValueError("标准差周期必须 >= 2")
         
-        # 验证阈值
-        if config['thresholds']['min_indicators_triggered'] < 1:
-            raise ValueError("最少触发指标数必须 >= 1")
-        
         # 验证 Agent 配置
         agent = config.get('agent')
         if not agent:
