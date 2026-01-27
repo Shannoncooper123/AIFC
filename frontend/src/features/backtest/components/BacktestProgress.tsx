@@ -92,7 +92,7 @@ export function BacktestProgress({ backtestId, status, progress, onStop }: Backt
               <div className="flex justify-between text-sm">
                 <span className="text-neutral-400">Progress</span>
                 <span className="text-white">
-                  {progress.completed_batches ?? 0} / {progress.total_batches ?? 0} batches
+                  {progress.completed_batches ?? 0} / {progress.total_batches ?? 0} steps
                 </span>
               </div>
               <div className="h-2 bg-neutral-800 rounded-full overflow-hidden">

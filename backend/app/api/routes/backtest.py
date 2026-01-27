@@ -150,7 +150,7 @@ async def get_backtest_status(backtest_id: str):
         
         if result.status == BacktestStatus.RUNNING:
             total_steps = result.total_klines_analyzed or 1
-            completed_steps = result.completed_batches * engine.config.concurrency if result.completed_batches else 0
+            completed_steps = len(result.workflow_runs)
             progress_percent = min((completed_steps / total_steps) * 100, 100) if total_steps > 0 else 0
             
             progress_data = {
@@ -158,9 +158,9 @@ async def get_backtest_status(backtest_id: str):
                 "total_steps": total_steps,
                 "completed_steps": completed_steps,
                 "progress_percent": round(progress_percent, 2),
-                "current_step_info": f"批次 {result.completed_batches or 0}/{result.total_batches or 0}, 已完成交易 {len(result.trades)} 笔",
-                "completed_batches": result.completed_batches or 0,
-                "total_batches": result.total_batches or 0,
+                "current_step_info": f"已完成 {completed_steps}/{total_steps} 步, 交易 {len(result.trades)} 笔",
+                "completed_batches": completed_steps,
+                "total_batches": total_steps,
                 "total_trades": len(result.trades),
                 "winning_trades": sum(1 for t in result.trades if t.realized_pnl > 0),
                 "losing_trades": sum(1 for t in result.trades if t.realized_pnl < 0),
