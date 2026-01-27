@@ -6,7 +6,6 @@ from langchain_core.runnables import RunnableConfig
 
 from modules.agent.state import AgentState, SymbolAnalysisState, PositionManagementState
 from modules.agent.nodes.context_injection_node import context_injection_node
-from modules.agent.nodes.reporting_node import reporting_node
 from modules.agent.nodes.single_symbol_analysis_node import single_symbol_analysis_node
 from modules.agent.nodes.opening_decision_node import opening_decision_node
 from modules.agent.nodes.single_position_management_node import single_position_management_node
@@ -60,7 +59,6 @@ def create_workflow(config: Dict[str, Any]) -> StateGraph:
     - analyze_symbol: 子图（analysis + decision），通过 Send 分发
     - analysis_barrier: 无机会时的占位节点
     - join_node: 汇聚节点
-    - reporting: 生成最终报告
     
     并行分支：
     1. manage_position (per symbol) 或 position_barrier
@@ -74,7 +72,6 @@ def create_workflow(config: Dict[str, Any]) -> StateGraph:
     workflow.add_node("analyze_symbol", _symbol_analysis_node)
     workflow.add_node("analysis_barrier", _barrier_node)
     workflow.add_node("join_node", _barrier_node)
-    workflow.add_node("reporting", reporting_node)
 
     workflow.set_entry_point("context_injection")
     
@@ -101,7 +98,6 @@ def create_workflow(config: Dict[str, Any]) -> StateGraph:
     workflow.add_edge("analyze_symbol", "join_node")
     workflow.add_edge("analysis_barrier", "join_node")
 
-    workflow.add_edge("join_node", "reporting")
-    workflow.add_edge("reporting", END)
+    workflow.add_edge("join_node", END)
 
     return workflow

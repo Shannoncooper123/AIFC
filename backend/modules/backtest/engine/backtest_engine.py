@@ -567,6 +567,7 @@ class BacktestEngine:
                     completed_steps += 1
                 
                 self.result.completed_batches = batch_idx + 1
+                self.result.trades = all_trades.copy()
                 
                 if self.on_progress:
                     progress = BacktestProgress(
