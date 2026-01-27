@@ -10,10 +10,9 @@ from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.open_position_tool import open_position_tool
 from modules.agent.tools.create_limit_order_tool import create_limit_order_tool
-from modules.agent.tools.tool_utils import get_binance_client
+from modules.agent.tools.tool_utils import fetch_klines
 from modules.agent.utils.trace_agent import create_trace_agent
 from modules.agent.utils.trace_utils import traced_node
-from modules.monitor.data.models import Kline
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.opening_decision')
@@ -44,6 +43,8 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
     由于 single_symbol_analysis 节点现在并行执行两个 subagent（做多+做空），
     可能产生时间差或重复图像，因此决策节点统一重新生成以保证一致性。
     
+    支持回测模式：通过 fetch_klines 自动使用 KlineProvider 获取历史数据。
+    
     注意：不再在此处保存 artifact，而是通过 HumanMessage.additional_kwargs 传递元数据，
     由 workflow_trace_middleware 统一处理图像保存，实现 trace 层与业务层解耦。
     
@@ -56,19 +57,26 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
     image_metas = []
     
     logger.info(f"为 {symbol} 生成 {len(intervals)} 个周期的复核图像: {intervals}")
-    client = get_binance_client()
     
     for interval in intervals:
         try:
             fetch_limit = 300
             display_limit = 200
-            raw = client.get_klines(symbol, interval, fetch_limit)
             
-            if not raw:
-                logger.warning(f"未获取到 {symbol} {interval} K线数据")
+            from modules.agent.tools.tool_utils import get_kline_provider
+            import threading
+            provider = get_kline_provider()
+            if provider:
+                current_time = provider.get_current_time()
+                thread_name = threading.current_thread().name
+                logger.info(f"[{thread_name}] {symbol} {interval} 获取K线: provider_time={current_time}")
+            
+            klines, error = fetch_klines(symbol, interval, fetch_limit)
+            
+            if error or not klines:
+                logger.warning(f"未获取到 {symbol} {interval} K线数据: {error}")
                 continue
-                
-            klines = [Kline.from_rest_api(item) for item in raw]
+            
             image_base64 = _plot_candlestick_chart(klines, symbol, interval, display_limit)
             
             images.append({

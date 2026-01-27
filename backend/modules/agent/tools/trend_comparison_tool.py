@@ -2,10 +2,9 @@
 from typing import Dict, Any, List
 from langchain.tools import tool
 
-from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.data.models import Kline
-from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
+from modules.agent.tools.tool_utils import fetch_klines
 
 logger = get_logger('agent.tool.trend_comparison')
 
@@ -102,27 +101,21 @@ def trend_comparison_tool(symbol: str, interval: str, feedback: str) -> List[flo
         if not isinstance(feedback, str) or not feedback:
             return _error("参数 feedback 必须为非空字符串，详细分析当前的阶段，并且给出下一步的计划")
         
-        from modules.agent.tools.tool_utils import get_binance_client
-        client = get_binance_client()
-        
-        raw = client.get_klines(symbol, interval, fetch_limit)
-        if not raw:
+        klines, error = fetch_klines(symbol, interval, fetch_limit)
+        if error or not klines:
             import json
-            return json.dumps({"error": "TOOL_RUNTIME_ERROR: 未获取到K线数据"}, ensure_ascii=False)
+            return json.dumps({"error": f"TOOL_RUNTIME_ERROR: {error or '未获取到K线数据'}"}, ensure_ascii=False)
         
-        klines: List[Kline] = [Kline.from_rest_api(item) for item in raw]
         all_values: List[float] = []
         
         if symbol.upper() == 'BTCUSDT':
             logger.info(f"目标币种为BTCUSDT，趋势对比值全部返回0")
             all_values = [0.0] * len(klines)
         else:
-            raw_btc = client.get_klines('BTCUSDT', interval, fetch_limit)
-            if not raw_btc:
+            btc_klines, btc_error = fetch_klines('BTCUSDT', interval, fetch_limit)
+            if btc_error or not btc_klines:
                 import json
-                return json.dumps({"error": "TOOL_RUNTIME_ERROR: 未获取到BTC K线数据"}, ensure_ascii=False)
-            
-            btc_klines: List[Kline] = [Kline.from_rest_api(item) for item in raw_btc]
+                return json.dumps({"error": f"TOOL_RUNTIME_ERROR: {btc_error or '未获取到BTC K线数据'}"}, ensure_ascii=False)
             
             min_len = min(len(klines), len(btc_klines))
             klines = klines[:min_len]

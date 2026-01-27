@@ -41,24 +41,48 @@ class EngineProtocol(Protocol):
 _engine: Optional[EngineProtocol] = None
 _engine_lock = threading.RLock()
 
+_thread_local_engine = threading.local()
 
-def set_engine(engine: EngineProtocol) -> None:
+
+def set_engine(engine: EngineProtocol, thread_local: bool = False) -> None:
     """设置交易引擎实例（模拟或实盘）
-    线程安全。通常由入口处在初始化后调用一次。
+    
+    Args:
+        engine: 引擎实例
+        thread_local: 是否设置为线程本地（回测并发模式使用）
     """
-    global _engine
-    with _engine_lock:
-        _engine = engine
+    if thread_local:
+        _thread_local_engine.engine = engine
+    else:
+        global _engine
+        with _engine_lock:
+            _engine = engine
 
 
 def get_engine() -> Optional[EngineProtocol]:
-    """获取交易引擎实例（模拟或实盘）。线程安全。"""
+    """获取交易引擎实例（模拟或实盘）。
+    
+    优先返回线程本地引擎（回测模式），否则返回全局引擎。
+    """
+    thread_engine = getattr(_thread_local_engine, 'engine', None)
+    if thread_engine is not None:
+        return thread_engine
+    
     with _engine_lock:
         return _engine
 
 
+def clear_thread_local_engine() -> None:
+    """清除当前线程的本地引擎"""
+    if hasattr(_thread_local_engine, 'engine'):
+        delattr(_thread_local_engine, 'engine')
+
+
 def is_engine_initialized() -> bool:
     """引擎是否已初始化（单例是否存在）。"""
+    thread_engine = getattr(_thread_local_engine, 'engine', None)
+    if thread_engine is not None:
+        return True
     with _engine_lock:
         return _engine is not None
 
@@ -79,4 +103,3 @@ def ensure_engine(config: Dict[str, Any]) -> EngineProtocol:
                 from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine
                 _engine = TradeSimulatorEngine(config)
         return _engine
-

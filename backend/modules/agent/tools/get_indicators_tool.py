@@ -8,6 +8,7 @@ from modules.agent.tools.tool_utils import (
     validate_common_params,
     fetch_klines,
     get_binance_client,
+    get_kline_provider,
 )
 from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
@@ -143,22 +144,28 @@ def get_indicators_tool(symbol: str, interval: str, indicator_type: str, feedbac
                 all_points.append(point)
         
         elif indicator_type == 'oi':
-            try:
-                client = get_binance_client()
-                raw_oi = client.get_open_interest_hist(symbol, interval, fetch_limit)
-                if raw_oi:
-                    oi_values, oi_value_values, _ = parse_oi_hist_response(raw_oi)
-                    for i in range(len(klines)):
-                        point = {
-                            "oi": round(float(oi_values[i]), 2) if i < len(oi_values) else None,
-                            "oi_value": round(float(oi_value_values[i]), 2) if i < len(oi_value_values) else None
-                        }
-                        all_points.append(point)
-                else:
-                    return make_runtime_error_list("未获取到持仓量数据", feedback)
-            except Exception as e:
-                logger.error(f"获取持仓量数据失败: {e}")
-                return make_runtime_error_list(f"获取持仓量数据失败 - {str(e)}", feedback)
+            provider = get_kline_provider()
+            if provider is not None:
+                logger.warning("回测模式下不支持持仓量(oi)指标，返回空数据")
+                for i in range(len(klines)):
+                    all_points.append({"oi": None, "oi_value": None})
+            else:
+                try:
+                    client = get_binance_client()
+                    raw_oi = client.get_open_interest_hist(symbol, interval, fetch_limit)
+                    if raw_oi:
+                        oi_values, oi_value_values, _ = parse_oi_hist_response(raw_oi)
+                        for i in range(len(klines)):
+                            point = {
+                                "oi": round(float(oi_values[i]), 2) if i < len(oi_values) else None,
+                                "oi_value": round(float(oi_value_values[i]), 2) if i < len(oi_value_values) else None
+                            }
+                            all_points.append(point)
+                    else:
+                        return make_runtime_error_list("未获取到持仓量数据", feedback)
+                except Exception as e:
+                    logger.error(f"获取持仓量数据失败: {e}")
+                    return make_runtime_error_list(f"获取持仓量数据失败 - {str(e)}", feedback)
         
         series = all_points[-return_limit:] if len(all_points) >= return_limit else all_points
         

@@ -7,6 +7,7 @@ import {
   Settings,
   Wifi,
   WifiOff,
+  FlaskConical,
 } from 'lucide-react';
 import { useAppStore } from '../../stores';
 
@@ -15,6 +16,7 @@ const navItems = [
   { path: '/alerts', label: 'Alerts', icon: Bell },
   { path: '/positions', label: 'Positions', icon: TrendingUp },
   { path: '/workflow', label: 'Workflow', icon: Activity },
+  { path: '/backtest', label: 'Backtest', icon: FlaskConical },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];
 

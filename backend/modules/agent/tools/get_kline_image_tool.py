@@ -12,10 +12,8 @@ import matplotlib.patches as patches
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import MaxNLocator
 
-from modules.agent.tools.tool_utils import validate_symbol, validate_interval
-from modules.monitor.clients.binance_rest import BinanceRestClient
+from modules.agent.tools.tool_utils import validate_symbol, validate_interval, fetch_klines
 from modules.monitor.data.models import Kline
-from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
 
 from modules.monitor.indicators.volatility import (
@@ -333,7 +331,12 @@ def get_kline_image_tool(
     try:
         limit = 200
         
-        logger.info(f"get_kline_image_tool 被调用 - symbol={symbol}, interval={interval}, limit={limit}")
+        import threading
+        from modules.agent.tools.tool_utils import get_kline_provider
+        thread_name = threading.current_thread().name
+        provider = get_kline_provider()
+        provider_time = provider.get_current_time() if provider else "N/A"
+        logger.info(f"[{thread_name}] get_kline_image_tool 被调用 - symbol={symbol}, interval={interval}, provider_time={provider_time}")
         
         error = validate_symbol(symbol)
         if error:
@@ -348,17 +351,13 @@ def get_kline_image_tool(
         
         interval = interval.strip()
         
-        from modules.agent.tools.tool_utils import get_binance_client
         fetch_limit = limit + 100
-        client = get_binance_client()
         
         logger.info(f"获取 {symbol} {interval} K线数据，数量={fetch_limit} (显示{limit})")
-        raw = client.get_klines(symbol, interval, fetch_limit)
+        klines, error = fetch_klines(symbol, interval, fetch_limit)
         
-        if not raw:
-            return _make_runtime_error(f"未获取到 {symbol} {interval} 的K线数据")
-            
-        klines = [Kline.from_rest_api(item) for item in raw]
+        if error or not klines:
+            return _make_runtime_error(error or f"未获取到 {symbol} {interval} 的K线数据")
         
         logger.info(f"生成 {symbol} {interval} K线图（含技术指标）")
         image_base64 = _plot_candlestick_chart(klines, symbol, interval, limit)

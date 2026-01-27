@@ -1,12 +1,20 @@
 """FastAPI 主应用入口"""
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+env_path = Path(__file__).parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path, override=True)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import alerts, config, positions, system, workflow
+from app.api.routes import alerts, backtest, config, positions, system, workflow
 from app.api.websocket import router as websocket_router
 from app.core.config import get_settings
 from app.services.thread_manager import thread_manager
@@ -33,11 +41,8 @@ async def lifespan(app: FastAPI):
     logger.info("Crypto Monitor Backend 启动中...")
     logger.info("=" * 60)
     
-    logger.info("自动启动 Monitor 和 Workflow 服务...")
-    results = thread_manager.start_all()
-    for name, success in results.items():
-        status = "✅ 成功" if success else "❌ 失败"
-        logger.info(f"  {name}: {status}")
+    logger.info("服务已就绪，等待手动启动 Monitor 和 Workflow...")
+    logger.info("提示: 通过 API /api/system/start 或前端控制面板启动服务")
     
     logger.info("=" * 60)
     logger.info("✅ Backend 启动完成")
@@ -77,6 +82,7 @@ app.include_router(alerts.router)
 app.include_router(positions.router)
 app.include_router(config.router)
 app.include_router(workflow.router)
+app.include_router(backtest.router)
 app.include_router(websocket_router)
 
 

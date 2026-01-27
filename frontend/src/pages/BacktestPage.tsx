@@ -1,0 +1,189 @@
+import { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { FlaskConical, History } from 'lucide-react';
+import { Card } from '../components/ui';
+import {
+  BacktestConfig,
+  BacktestProgress,
+  BacktestResults,
+  BacktestList,
+  BacktestTradeList,
+  useBacktestList,
+  useBacktestStatus,
+  useBacktestHistory,
+  useBacktestTrades,
+  useStartBacktest,
+  useStopBacktest,
+  useDeleteBacktest,
+} from '../features/backtest';
+import { HistoryTable } from '../features/positions';
+import type { BacktestConfigData } from '../features/backtest/components/BacktestConfig';
+import type { PositionHistory } from '../types';
+
+export function BacktestPage() {
+  const navigate = useNavigate();
+  const [selectedBacktestId, setSelectedBacktestId] = useState<string | null>(null);
+
+  const { data: listData } = useBacktestList(20);
+  const { data: statusData } = useBacktestStatus(selectedBacktestId);
+  const { data: historyData } = useBacktestHistory(selectedBacktestId);
+  const { data: tradesData, isLoading: tradesLoading } = useBacktestTrades(selectedBacktestId);
+
+  const startMutation = useStartBacktest();
+  const stopMutation = useStopBacktest();
+  const deleteMutation = useDeleteBacktest();
+
+  const handleStart = useCallback(
+    async (config: BacktestConfigData) => {
+      try {
+        const result = await startMutation.mutateAsync({
+          symbols: config.symbols,
+          start_time: new Date(config.startTime).toISOString(),
+          end_time: new Date(config.endTime).toISOString(),
+          interval: config.interval,
+          initial_balance: config.initialBalance,
+          concurrency: config.concurrency,
+        });
+        setSelectedBacktestId(result.backtest_id);
+      } catch (error) {
+        console.error('Failed to start backtest:', error);
+      }
+    },
+    [startMutation]
+  );
+
+  const handleStop = useCallback(() => {
+    if (selectedBacktestId) {
+      stopMutation.mutate(selectedBacktestId);
+    }
+  }, [selectedBacktestId, stopMutation]);
+
+  const handleDelete = useCallback(
+    async (backtestId: string) => {
+      try {
+        await deleteMutation.mutateAsync(backtestId);
+        if (selectedBacktestId === backtestId) {
+          setSelectedBacktestId(null);
+        }
+      } catch (error) {
+        console.error('Failed to delete backtest:', error);
+      }
+    },
+    [deleteMutation, selectedBacktestId]
+  );
+
+  const handleViewWorkflow = useCallback(
+    (runId: string) => {
+      navigate(`/workflow?run_id=${runId}`);
+    },
+    [navigate]
+  );
+
+  const isRunning = statusData?.status === 'running';
+  const isCompleted = statusData?.status === 'completed';
+  const result = statusData?.result;
+
+  const historyPositions: PositionHistory[] =
+    historyData?.positions?.map((p) => ({
+      symbol: p.symbol,
+      side: p.side.toUpperCase() as 'LONG' | 'SHORT',
+      size: p.size,
+      entry_price: p.entry_price,
+      exit_price: p.close_price,
+      realized_pnl: p.realized_pnl,
+      pnl_percent: p.entry_price > 0 ? ((p.close_price - p.entry_price) / p.entry_price) : 0,
+      opened_at: p.open_time,
+      closed_at: p.close_time,
+      close_reason: p.close_reason,
+    })) ?? [];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <FlaskConical className="h-6 w-6 text-blue-400" />
+        <h1 className="text-xl font-semibold tracking-tight text-white">Backtest</h1>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-1 space-y-6">
+          <BacktestConfig
+            onStart={handleStart}
+            isLoading={startMutation.isPending}
+            disabled={isRunning}
+          />
+
+          <BacktestList
+            backtests={listData?.backtests ?? []}
+            onSelect={setSelectedBacktestId}
+            onDelete={handleDelete}
+            selectedId={selectedBacktestId ?? undefined}
+          />
+        </div>
+
+        <div className="lg:col-span-2 space-y-6">
+          {selectedBacktestId && statusData && (
+            <BacktestProgress
+              backtestId={selectedBacktestId}
+              status={statusData.status}
+              progress={statusData.progress}
+              onStop={isRunning ? handleStop : undefined}
+            />
+          )}
+
+          {isCompleted && result && <BacktestResults result={result} />}
+
+          {isCompleted && tradesData && tradesData.length > 0 && (
+            <BacktestTradeList trades={tradesData} isLoading={tradesLoading} />
+          )}
+
+          {selectedBacktestId && historyPositions.length > 0 && (
+            <Card>
+              <div className="flex items-center gap-2 text-white font-medium mb-4">
+                <History className="h-5 w-5 text-blue-400" />
+                Position History (Legacy)
+              </div>
+              <HistoryTable positions={historyPositions} />
+            </Card>
+          )}
+
+          {selectedBacktestId && result?.workflow_runs && result.workflow_runs.length > 0 && (
+            <Card>
+              <div className="text-white font-medium mb-4">Workflow Runs</div>
+              <div className="text-sm text-neutral-400 mb-2">
+                {result.workflow_runs.length} workflow executions
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {result.workflow_runs.slice(0, 10).map((runId) => (
+                  <button
+                    key={runId}
+                    onClick={() => handleViewWorkflow(runId)}
+                    className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-300 hover:text-white transition-colors"
+                  >
+                    {runId.slice(0, 12)}...
+                  </button>
+                ))}
+                {result.workflow_runs.length > 10 && (
+                  <span className="px-3 py-1.5 text-xs text-neutral-500">
+                    +{result.workflow_runs.length - 10} more
+                  </span>
+                )}
+              </div>
+            </Card>
+          )}
+
+          {!selectedBacktestId && (
+            <Card>
+              <div className="text-center py-12 text-neutral-500">
+                <FlaskConical className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                <div>Configure and start a backtest</div>
+                <div className="text-sm mt-1">
+                  Or select a previous backtest from the list
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

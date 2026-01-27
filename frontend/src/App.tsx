@@ -8,6 +8,7 @@ import {
   PositionsPage,
   WorkflowPage,
   SettingsPage,
+  BacktestPage,
 } from './pages';
 import { useWebSocket } from './hooks';
 import { useAppStore } from './stores';
@@ -38,6 +39,7 @@ function AppContent() {
         <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/positions" element={<PositionsPage />} />
         <Route path="/workflow" element={<WorkflowPage />} />
+        <Route path="/backtest" element={<BacktestPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Layout>

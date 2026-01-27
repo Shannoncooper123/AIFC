@@ -1,6 +1,7 @@
 """工具通用函数库 - 消除工具间的重复代码"""
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 from modules.config.settings import get_config
 from modules.constants import VALID_INTERVALS
@@ -12,6 +13,57 @@ logger = get_logger('agent.tool.utils')
 
 _binance_client: Optional[BinanceRestClient] = None
 _binance_client_lock = threading.Lock()
+
+
+@runtime_checkable
+class KlineProviderProtocol(Protocol):
+    """K线数据提供者协议 - 支持实盘和回测模式切换"""
+    
+    def get_klines(self, symbol: str, interval: str, limit: int) -> List[Kline]:
+        """获取K线数据
+        
+        Args:
+            symbol: 交易对
+            interval: K线周期
+            limit: 获取数量
+        
+        Returns:
+            K线数据列表
+        """
+        ...
+    
+    def get_current_time(self) -> datetime:
+        """获取当前时间（实盘为真实时间，回测为模拟时间）"""
+        ...
+
+
+_kline_provider: Optional[KlineProviderProtocol] = None
+_kline_provider_lock = threading.Lock()
+
+
+def set_kline_provider(provider: Optional[KlineProviderProtocol]) -> None:
+    """设置K线数据提供者（用于回测模式注入）
+    
+    Args:
+        provider: K线提供者实例，传入None则恢复默认行为
+    """
+    global _kline_provider
+    with _kline_provider_lock:
+        _kline_provider = provider
+        if provider is not None:
+            logger.info(f"KlineProvider 已设置: {type(provider).__name__}")
+        else:
+            logger.info("KlineProvider 已清除，恢复默认模式")
+
+
+def get_kline_provider() -> Optional[KlineProviderProtocol]:
+    """获取当前K线数据提供者
+    
+    Returns:
+        当前设置的K线提供者，如果未设置则返回None
+    """
+    with _kline_provider_lock:
+        return _kline_provider
 
 
 def make_input_error(msg: str, feedback: str = "") -> Dict[str, Any]:
@@ -156,6 +208,10 @@ def fetch_klines(
 ) -> Tuple[Optional[List[Kline]], Optional[str]]:
     """获取K线数据
     
+    支持两种模式：
+    1. 实盘模式：直接从 Binance REST API 获取
+    2. 回测模式：从注入的 KlineProvider 获取历史数据切片
+    
     Args:
         symbol: 交易对
         interval: K线周期
@@ -165,6 +221,13 @@ def fetch_klines(
         (klines列表, 错误信息)，成功时错误信息为None，失败时klines为None
     """
     try:
+        provider = get_kline_provider()
+        if provider is not None:
+            klines = provider.get_klines(symbol, interval, limit)
+            if not klines:
+                return None, "未获取到K线数据（回测模式）"
+            return klines, None
+        
         client = get_binance_client()
         raw = client.get_klines(symbol, interval, limit)
         if not raw:

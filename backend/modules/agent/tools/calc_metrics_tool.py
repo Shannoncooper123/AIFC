@@ -1,20 +1,28 @@
 from typing import Any, Dict, Optional
 from langchain.tools import tool
 from modules.monitor.utils.logger import get_logger
-from modules.monitor.data.models import Kline
-from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, get_binance_client
+from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, fetch_klines, get_kline_provider
 
 logger = get_logger('agent.tool.calc_metrics')
 
 
 def _get_latest_price(symbol: str) -> float | None:
-    """获取指定交易对的最新价格（使用1m K线的收盘价）"""
+    """获取指定交易对的最新价格
+    
+    回测模式下使用 KlineProvider 的当前模拟价格，
+    实盘模式下使用1m K线的收盘价。
+    """
     try:
-        client = get_binance_client()
-        raw = client.get_klines(symbol, "1m", 1)
-        if raw and len(raw) > 0:
-            k = Kline.from_rest_api(raw[0])
-            return k.close
+        provider = get_kline_provider()
+        if provider is not None:
+            klines = provider.get_klines(symbol, "15m", 1)
+            if klines:
+                return klines[-1].close
+            return None
+        
+        klines, error = fetch_klines(symbol, "1m", 1)
+        if klines and len(klines) > 0:
+            return klines[-1].close
         return None
     except Exception as e:
         logger.error(f"_get_latest_price: 获取 {symbol} 最新价格失败 -> {e}")

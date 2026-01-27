@@ -38,8 +38,8 @@ class ConfigLoader:
         if not os.path.isabs(env_path):
             env_path = os.path.join(base_dir, env_path)
         
-        # 1. 加载环境变量
-        load_dotenv(env_path)
+        # 1. 加载环境变量（override=True 确保覆盖系统环境变量）
+        load_dotenv(env_path, override=True)
         
         # 2. 加载YAML配置（config.yaml 是必需的）
         config = self._load_yaml(config_path)

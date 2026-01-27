@@ -1,7 +1,14 @@
 """LangGraph 工作流主入口 - 基于告警文件监控触发"""
 import os
 import sys
+from pathlib import Path
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dotenv import load_dotenv
+env_path = Path(__file__).parent.parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path, override=True)
 
 import time
 import signal

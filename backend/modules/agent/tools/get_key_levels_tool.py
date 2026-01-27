@@ -2,12 +2,11 @@ import json
 from typing import Dict, Any, List
 from langchain.tools import tool
 from modules.config.settings import get_config
-from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.data.models import Kline
 from modules.monitor.utils.logger import get_logger
 from modules.monitor.indicators.atr import calculate_atr_list
 
-from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, get_binance_client
+from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, fetch_klines
 
 logger = get_logger('agent.tool.get_key_levels')
 
@@ -98,12 +97,11 @@ def get_key_levels_tool(symbol: str, interval: str, feedback: str, limit: int = 
         if not isinstance(limit, int) or limit < 60 or limit > 500:
             return make_input_error("参数 limit 必须为 60..500 的整数", feedback)
 
-        client = get_binance_client()
-        raw = client.get_klines(symbol, interval, limit)
-        if not raw:
-            return make_runtime_error("未获取到K线数据", feedback)
+        kl, error = fetch_klines(symbol, interval, limit)
+        if error or not kl:
+            return make_runtime_error(error or "未获取到K线数据", feedback)
 
-        kl: List[Kline] = [Kline.from_rest_api(item) for item in raw]
+        cfg = get_config()
         closes = [k.close for k in kl]
         atr_period = int(cfg['indicators']['atr_period'])
         atr_list = calculate_atr_list(kl, atr_period)
