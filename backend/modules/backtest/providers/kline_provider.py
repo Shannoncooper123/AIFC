@@ -189,7 +189,7 @@ class BacktestKlineProvider:
     def get_current_time(self) -> datetime:
         """获取当前模拟时间
         
-            优先从 LangGraph config 中获取（支持跨线程），
+        优先从 LangGraph config 中获取（支持跨线程），
         其次从 contextvars 获取，最后使用默认时间。
         
         Returns:
