@@ -261,7 +261,7 @@ class BacktestEngine:
                         exit_price=exit_price,
                         tp_price=pos.tp_price or 0,
                         sl_price=pos.sl_price or 0,
-                        size=pos.size,
+                        size=pos.qty,
                         exit_time=current_time,
                         exit_type=exit_type,
                         realized_pnl=realized_pnl,
@@ -295,7 +295,7 @@ class BacktestEngine:
                         exit_price=final_kline.close,
                         tp_price=pos.tp_price or 0,
                         sl_price=pos.sl_price or 0,
-                        size=pos.size,
+                        size=pos.qty,
                         exit_time=self.config.end_time,
                         exit_type="timeout",
                         realized_pnl=realized_pnl,
@@ -484,7 +484,7 @@ class BacktestEngine:
         return ctx.run(self._run_single_step_isolated, current_time, step_index)
     
     def _run_batch(self, batch_times: List[Tuple[int, datetime]]) -> List[Tuple[str, List[BacktestTradeResult]]]:
-        """并发执行一批回测步骤
+        """并发执行一批回测步骤（保留用于兼容，实际使用流式模式）
         
         Args:
             batch_times: [(step_index, current_time), ...]
@@ -512,8 +512,90 @@ class BacktestEngine:
         
         return results
     
+    def _run_streaming(self, all_steps: List[Tuple[int, datetime]]) -> List[BacktestTradeResult]:
+        """流式并发执行回测步骤
+        
+        使用 as_completed 实现任务完成一个就立即补充一个新任务，
+        保持并发数始终为 concurrency，避免批次模式的"木桶效应"。
+        
+        Args:
+            all_steps: [(step_index, current_time), ...]
+        
+        Returns:
+            所有交易结果列表
+        """
+        from concurrent.futures import as_completed
+        
+        all_trades = []
+        completed_steps = 0
+        step_iter = iter(all_steps)
+        
+        with ThreadPoolExecutor(max_workers=self.config.concurrency) as executor:
+            pending_futures: Dict[Any, Tuple[int, datetime]] = {}
+            
+            for _ in range(min(self.config.concurrency, len(all_steps))):
+                try:
+                    step_index, current_time = next(step_iter)
+                    future = executor.submit(self._run_step_with_context, current_time, step_index)
+                    pending_futures[future] = (step_index, current_time)
+                except StopIteration:
+                    break
+            
+            while pending_futures:
+                if self._stop_requested:
+                    for f in pending_futures:
+                        f.cancel()
+                    break
+                
+                done_futures = []
+                for future in as_completed(pending_futures, timeout=600):
+                    done_futures.append(future)
+                    break
+                
+                for future in done_futures:
+                    step_index, current_time = pending_futures.pop(future)
+                    
+                    try:
+                        workflow_run_id, trade_results = future.result(timeout=1)
+                        
+                        if workflow_run_id != "error":
+                            self.result.workflow_runs.append(workflow_run_id)
+                        all_trades.extend(trade_results)
+                        completed_steps += 1
+                        
+                        self.result.trades = all_trades.copy()
+                        
+                        if self.on_progress and completed_steps % 5 == 0:
+                            progress = BacktestProgress(
+                                current_time=current_time,
+                                total_steps=self._total_count,
+                                completed_steps=completed_steps,
+                                current_step_info=f"已完成 {completed_steps}/{self._total_count}, 交易 {len(all_trades)} 笔",
+                            )
+                            try:
+                                self.on_progress(progress)
+                            except Exception as e:
+                                logger.error(f"进度回调失败: {e}")
+                        
+                    except Exception as e:
+                        logger.error(f"步骤 {step_index} 执行失败: {e}", exc_info=True)
+                        completed_steps += 1
+                    
+                    try:
+                        next_step_index, next_current_time = next(step_iter)
+                        new_future = executor.submit(self._run_step_with_context, next_current_time, next_step_index)
+                        pending_futures[new_future] = (next_step_index, next_current_time)
+                    except StopIteration:
+                        pass
+        
+        return all_trades
+    
     def _run_backtest(self) -> None:
-        """执行回测主循环 - 并发独立执行模式"""
+        """执行回测主循环 - 流式并发模式
+        
+        使用流式并发替代批次模式，任务完成一个就立即补充一个新任务，
+        保持并发数始终为 concurrency，避免"木桶效应"。
+        """
         self._running = True
         self.result.status = BacktestStatus.RUNNING
         
@@ -536,52 +618,17 @@ class BacktestEngine:
             self._total_count = len(all_steps)
             self.result.total_klines_analyzed = self._total_count
             
-            batch_size = self.config.concurrency
-            total_batches = (len(all_steps) + batch_size - 1) // batch_size
-            self.result.total_batches = total_batches
+            self.result.total_batches = (self._total_count + self.config.concurrency - 1) // self.config.concurrency
             
             logger.info(
-                f"开始回测: total_steps={self._total_count}, "
-                f"batch_size={batch_size}, total_batches={total_batches}"
+                f"开始回测（流式并发模式）: total_steps={self._total_count}, "
+                f"concurrency={self.config.concurrency}"
             )
             
-            all_trades = []
-            completed_steps = 0
-            
-            for batch_idx in range(total_batches):
-                if self._stop_requested:
-                    break
-                
-                batch_start = batch_idx * batch_size
-                batch_end = min(batch_start + batch_size, len(all_steps))
-                batch_times = all_steps[batch_start:batch_end]
-                
-                logger.info(f"执行批次 {batch_idx + 1}/{total_batches}, 步骤 {batch_start}-{batch_end-1}")
-                
-                batch_results = self._run_batch(batch_times)
-                
-                for workflow_run_id, trade_results in batch_results:
-                    if workflow_run_id != "error":
-                        self.result.workflow_runs.append(workflow_run_id)
-                    all_trades.extend(trade_results)
-                    completed_steps += 1
-                
-                self.result.completed_batches = batch_idx + 1
-                self.result.trades = all_trades.copy()
-                
-                if self.on_progress:
-                    progress = BacktestProgress(
-                        current_time=batch_times[-1][1] if batch_times else self.config.start_time,
-                        total_steps=self._total_count,
-                        completed_steps=completed_steps,
-                        current_step_info=f"批次 {batch_idx + 1}/{total_batches}, 已完成交易 {len(all_trades)} 笔",
-                    )
-                    try:
-                        self.on_progress(progress)
-                    except Exception as e:
-                        logger.error(f"进度回调失败: {e}")
+            all_trades = self._run_streaming(all_steps)
             
             self.result.trades = all_trades
+            self.result.completed_batches = self.result.total_batches
             self._compile_results()
             
             if self._stop_requested:
