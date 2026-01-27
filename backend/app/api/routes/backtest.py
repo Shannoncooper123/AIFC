@@ -32,7 +32,7 @@ class BacktestStartRequest(BaseModel):
     end_time: str = Field(..., description="结束时间 (ISO格式)")
     interval: str = Field(default="15m", description="K线周期")
     initial_balance: float = Field(default=10000.0, description="初始资金")
-    concurrency: int = Field(default=5, ge=1, le=20, description="并发数量")
+    concurrency: int = Field(default=5, ge=1, le=50, description="并发数量")
 
 
 class BacktestStartResponse(BaseModel):

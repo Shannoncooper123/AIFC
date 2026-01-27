@@ -155,7 +155,7 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
                 setConfig((prev) => ({ ...prev, concurrency: parseInt(e.target.value, 10) }))
               }
               min={1}
-              max={20}
+              max={50}
               step={1}
               className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-neutral-800 border border-neutral-700 accent-blue-500"
             />
