@@ -86,8 +86,7 @@ def initialize_system(config: Dict):
     # 6. 异常检测器
     logger.info("6. 初始化异常检测器...")
     detector = AnomalyDetector(config)
-    from .detection.constants import DEFAULT_THRESHOLDS
-    thresholds = {**DEFAULT_THRESHOLDS, **config.get('detection', {}).get('thresholds', {})}
+    thresholds = detector.strategy.thresholds
     logger.info(f"   ✓ 双门槛机制: 核心A(ATR/PRICE/VOL/BB_WIDTH)>={thresholds['min_group_a']}, "
                 f"核心B(BB_BREAKOUT/OI/MA_DEV)>={thresholds['min_group_b']}")
     

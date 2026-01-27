@@ -19,8 +19,8 @@ class DetectionStrategy:
         Args:
             config: 配置字典，可包含 detection.thresholds 覆盖默认阈值
         """
-        detection_config = config.get('detection', {})
-        config_thresholds = detection_config.get('thresholds', {})
+        detection_config = config.get('detection') or {}
+        config_thresholds = detection_config.get('thresholds') or {}
         self.thresholds = {**DEFAULT_THRESHOLDS, **config_thresholds}
     
     def detect(self, indicators: IndicatorValues) -> Tuple[bool, List[str]]:
