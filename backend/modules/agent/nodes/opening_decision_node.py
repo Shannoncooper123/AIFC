@@ -7,7 +7,6 @@ from langchain_core.runnables import RunnableConfig
 
 from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.open_position_tool import open_position_tool
-from modules.agent.tools.create_limit_order_tool import create_limit_order_tool
 from modules.agent.tools.tool_utils import fetch_klines
 from modules.agent.utils.model_factory import get_model_factory, with_retry
 from modules.agent.utils.trace_agent import create_trace_agent
@@ -152,7 +151,6 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
     try:
         tools = [
             open_position_tool,
-            create_limit_order_tool,
         ]
 
         prompt_path = os.path.join(os.path.dirname(__file__), 'prompts/opening_decision_prompt.md')
