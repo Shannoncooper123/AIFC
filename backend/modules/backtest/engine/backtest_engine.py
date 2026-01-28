@@ -428,18 +428,23 @@ class BacktestEngine:
             graph = create_workflow(cfg)
             workflow_app = graph.compile()
             
-            def _execute_workflow():
-                with workflow_trace_context(workflow_run_id):
-                    workflow_app.invoke(
-                        AgentState(),
-                        config=self._wrap_config(mock_alert, workflow_run_id, current_time)
-                    )
+            current_ctx = contextvars.copy_context()
+            
+            def _execute_workflow_with_context():
+                def _inner():
+                    with workflow_trace_context(workflow_run_id):
+                        workflow_app.invoke(
+                            AgentState(),
+                            config=self._wrap_config(mock_alert, workflow_run_id, current_time)
+                        )
+                current_ctx.run(_inner)
             
             try:
-                from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+                from concurrent.futures import ThreadPoolExecutor as InnerThreadPoolExecutor
+                from concurrent.futures import TimeoutError as FuturesTimeoutError
                 
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_execute_workflow)
+                with InnerThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_execute_workflow_with_context)
                     future.result(timeout=self.config.workflow_timeout)
                 
                 record_workflow_end(workflow_run_id, start_iso, "success", cfg=cfg)
