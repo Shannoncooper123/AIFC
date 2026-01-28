@@ -145,7 +145,8 @@ class BacktestEngine:
         set_kline_provider(self.kline_provider)
         set_backtest_mode(True)
         
-        chart_pool_size = self.config.concurrency * 4
+        # 限制图表渲染进程池大小为 CPU 核心数，避免进程过多导致服务器负载过高
+        chart_pool_size = os.cpu_count() or 4
         try:
             from modules.agent.tools.chart_renderer import _get_process_pool
             _get_process_pool(chart_pool_size)

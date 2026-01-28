@@ -35,7 +35,8 @@ def _get_process_pool(max_workers: Optional[int] = None) -> ProcessPoolExecutor:
     global _process_pool, _atexit_registered, _pool_max_workers
     
     cpu_count = os.cpu_count() or 4
-    target_workers = max_workers if max_workers else cpu_count * 2
+    # 默认使用 CPU 核心数作为进程池大小，避免过多进程竞争资源
+    target_workers = max_workers if max_workers else cpu_count
     
     if _process_pool is not None and target_workers > _pool_max_workers:
         logger.info(f"扩展进程池: {_pool_max_workers} -> {target_workers}")
