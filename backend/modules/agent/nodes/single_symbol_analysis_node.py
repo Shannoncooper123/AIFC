@@ -7,7 +7,6 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from modules.agent.state import SymbolAnalysisState
-from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
 from modules.agent.tools.trend_comparison_tool import trend_comparison_tool
 from modules.agent.utils.model_factory import get_model_factory, with_async_retry
@@ -124,7 +123,6 @@ def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
     tools = [
         get_kline_image_tool,
         trend_comparison_tool,
-        calc_metrics_tool,
     ]
     
     prompt_filename = f"single_symbol_analysis_{direction}_prompt.md"

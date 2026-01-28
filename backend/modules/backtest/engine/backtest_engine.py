@@ -122,6 +122,23 @@ class BacktestEngine:
         }
         return mapping.get(interval, 15)
     
+    def _align_to_kline_time(self, dt: datetime, interval_minutes: int) -> datetime:
+        """将时间对齐到K线的标准时间点
+        
+        Args:
+            dt: 原始时间
+            interval_minutes: K线周期（分钟）
+        
+        Returns:
+            对齐后的时间
+        """
+        total_minutes = dt.hour * 60 + dt.minute
+        aligned_minutes = (total_minutes // interval_minutes) * interval_minutes
+        aligned_hour = aligned_minutes // 60
+        aligned_minute = aligned_minutes % 60
+        
+        return dt.replace(hour=aligned_hour, minute=aligned_minute, second=0, microsecond=0)
+    
     def _calculate_total_steps(self) -> int:
         """计算总步数"""
         interval_minutes = self._get_interval_minutes(self.config.interval)
@@ -332,8 +349,10 @@ class BacktestEngine:
             interval_minutes = self._get_interval_minutes(self.config.interval)
             step_delta = timedelta(minutes=interval_minutes)
             
+            aligned_start = self._align_to_kline_time(self.config.start_time, interval_minutes)
+            
             all_steps = []
-            current_time = self.config.start_time
+            current_time = aligned_start
             step_index = 0
             
             while current_time <= self.config.end_time:
