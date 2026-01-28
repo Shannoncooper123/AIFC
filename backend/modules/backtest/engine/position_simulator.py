@@ -56,16 +56,18 @@ class PositionSimulator:
         workflow_run_id: str,
         order_type: str = "market",
         limit_price: Optional[float] = None,
+        filled_time: Optional[datetime] = None,
     ) -> Optional[BacktestTradeResult]:
         """模拟仓位的止盈止损结果
         
         Args:
             trade_engine: 回测交易引擎
             symbol: 交易对
-            entry_time: 入场时间
+            entry_time: 入场时间（对于限价单，这是订单创建时间）
             workflow_run_id: workflow运行ID
             order_type: 订单类型 (market/limit)
             limit_price: 限价单挂单价格（仅限价单有效）
+            filled_time: 限价单成交时间（仅限价单有效，市价单为 None）
         
         Returns:
             交易结果，如果没有触发止盈止损则返回 None
@@ -79,7 +81,10 @@ class PositionSimulator:
         
         saved_pos_data = self._save_position_data(pos)
         
-        current_time = entry_time + self._step_delta
+        actual_entry_time = filled_time if filled_time else entry_time
+        order_created_time = entry_time if filled_time else None
+        
+        current_time = actual_entry_time + self._step_delta
         holding_bars = 0
         max_bars = 1000
         
@@ -102,12 +107,13 @@ class PositionSimulator:
                     return self._create_trade_result(
                         result=result,
                         saved_data=saved_pos_data,
-                        entry_time=entry_time,
+                        entry_time=actual_entry_time,
                         exit_time=current_time,
                         holding_bars=holding_bars,
                         workflow_run_id=workflow_run_id,
                         order_type=order_type,
                         limit_price=limit_price,
+                        order_created_time=order_created_time,
                     )
             
             current_time += self._step_delta
@@ -116,11 +122,12 @@ class PositionSimulator:
             trade_engine=trade_engine,
             symbol=symbol,
             saved_data=saved_pos_data,
-            entry_time=entry_time,
+            entry_time=actual_entry_time,
             holding_bars=holding_bars,
             workflow_run_id=workflow_run_id,
             order_type=order_type,
             limit_price=limit_price,
+            order_created_time=order_created_time,
         )
     
     def simulate_limit_order_outcome(
@@ -169,17 +176,18 @@ class PositionSimulator:
                 if filled_orders:
                     for filled in filled_orders:
                         if filled['id'] == order['id']:
-                            logger.debug(f"限价单成交: {symbol} @ {filled['filled_price']}")
+                            logger.debug(f"限价单成交: {symbol} @ {filled['filled_price']} (创建于 {entry_time}, 成交于 {current_time})")
                             
                             if symbol in trade_engine.positions and \
                                trade_engine.positions[symbol].status == 'open':
                                 return self.simulate_position_outcome(
                                     trade_engine, 
                                     symbol, 
-                                    current_time, 
+                                    entry_time,
                                     workflow_run_id,
                                     order_type="limit",
                                     limit_price=limit_price,
+                                    filled_time=current_time,
                                 )
             
             current_time += self._step_delta
@@ -231,8 +239,13 @@ class PositionSimulator:
         workflow_run_id: str,
         order_type: str,
         limit_price: Optional[float],
+        order_created_time: Optional[datetime] = None,
     ) -> BacktestTradeResult:
-        """根据平仓结果创建交易记录"""
+        """根据平仓结果创建交易记录
+        
+        Args:
+            order_created_time: 限价单创建时间（仅限价单有效）
+        """
         close_reason = result.get('close_reason', '')
         exit_type = "tp" if "止盈" in close_reason else "sl"
         realized_pnl = result.get('realized_pnl', 0)
@@ -274,6 +287,7 @@ class PositionSimulator:
             tp_distance_percent=saved_data["tp_distance_pct"],
             sl_distance_percent=saved_data["sl_distance_pct"],
             close_reason=close_reason,
+            order_created_time=order_created_time,
         )
     
     def _handle_timeout_close(
@@ -286,8 +300,13 @@ class PositionSimulator:
         workflow_run_id: str,
         order_type: str,
         limit_price: Optional[float],
+        order_created_time: Optional[datetime] = None,
     ) -> Optional[BacktestTradeResult]:
-        """处理回测结束时的强制平仓"""
+        """处理回测结束时的强制平仓
+        
+        Args:
+            order_created_time: 限价单创建时间（仅限价单有效）
+        """
         if symbol not in trade_engine.positions:
             return None
         if trade_engine.positions[symbol].status != 'open':
@@ -346,6 +365,7 @@ class PositionSimulator:
             tp_distance_percent=saved_data["tp_distance_pct"],
             sl_distance_percent=saved_data["sl_distance_pct"],
             close_reason=close_reason,
+            order_created_time=order_created_time,
         )
     
     def _calculate_r_multiple(

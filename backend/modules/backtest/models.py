@@ -144,6 +144,7 @@ class BacktestTradeResult:
     tp_distance_percent: float = 0.0
     sl_distance_percent: float = 0.0
     close_reason: str = ""
+    order_created_time: Optional[datetime] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -174,6 +175,7 @@ class BacktestTradeResult:
             "tp_distance_percent": round(self.tp_distance_percent, 2),
             "sl_distance_percent": round(self.sl_distance_percent, 2),
             "close_reason": self.close_reason,
+            "order_created_time": self.order_created_time.isoformat() if self.order_created_time else None,
         }
 
 

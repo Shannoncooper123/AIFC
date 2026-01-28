@@ -1,5 +1,13 @@
-import { TrendingUp, TrendingDown, Target, BarChart3, DollarSign, Percent, Activity, Scale } from 'lucide-react';
+import { useMemo } from 'react';
+import { TrendingUp, TrendingDown, Target, BarChart3, DollarSign, Percent, Activity, Scale, Zap, Clock } from 'lucide-react';
 import { Card } from '../../../components/ui';
+
+interface Trade {
+  trade_id: string;
+  order_type?: string;
+  realized_pnl: number;
+  exit_type: string;
+}
 
 interface BacktestResultsProps {
   result: {
@@ -22,9 +30,20 @@ interface BacktestResultsProps {
       concurrency?: number;
     };
   };
+  trades?: Trade[];
 }
 
-export function BacktestResults({ result }: BacktestResultsProps) {
+interface OrderTypeStats {
+  total: number;
+  wins: number;
+  losses: number;
+  totalPnl: number;
+  winRate: number;
+  avgWin: number;
+  avgLoss: number;
+}
+
+export function BacktestResults({ result, trades = [] }: BacktestResultsProps) {
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -40,6 +59,34 @@ export function BacktestResults({ result }: BacktestResultsProps) {
 
   const isProfitable = result.total_pnl >= 0;
   const profitFactor = result.profit_factor ?? 0;
+
+  const { marketStats, limitStats } = useMemo(() => {
+    const calculateStats = (filteredTrades: Trade[]): OrderTypeStats => {
+      const wins = filteredTrades.filter(t => t.realized_pnl > 0);
+      const losses = filteredTrades.filter(t => t.realized_pnl <= 0);
+      const totalPnl = filteredTrades.reduce((sum, t) => sum + t.realized_pnl, 0);
+      const totalWinPnl = wins.reduce((sum, t) => sum + t.realized_pnl, 0);
+      const totalLossPnl = losses.reduce((sum, t) => sum + t.realized_pnl, 0);
+      
+      return {
+        total: filteredTrades.length,
+        wins: wins.length,
+        losses: losses.length,
+        totalPnl,
+        winRate: filteredTrades.length > 0 ? wins.length / filteredTrades.length : 0,
+        avgWin: wins.length > 0 ? totalWinPnl / wins.length : 0,
+        avgLoss: losses.length > 0 ? totalLossPnl / losses.length : 0,
+      };
+    };
+
+    const marketTrades = trades.filter(t => t.order_type === 'market' || !t.order_type);
+    const limitTrades = trades.filter(t => t.order_type === 'limit');
+
+    return {
+      marketStats: calculateStats(marketTrades),
+      limitStats: calculateStats(limitTrades),
+    };
+  }, [trades]);
 
   return (
     <Card>
@@ -163,6 +210,108 @@ export function BacktestResults({ result }: BacktestResultsProps) {
             </div>
           </div>
         </div>
+
+        {trades.length > 0 && (
+          <>
+            <div className="border-t border-neutral-700/50 pt-6">
+              <div className="text-white font-medium mb-4">Performance by Order Type</div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-lg bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Zap className="h-5 w-5 text-amber-400" />
+                    <span className="text-amber-400 font-medium">Market Orders</span>
+                    <span className="text-neutral-500 text-sm">({marketStats.total} trades)</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">P&L</div>
+                      <div className={`text-lg font-semibold ${marketStats.totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {formatCurrency(marketStats.totalPnl)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">Win Rate</div>
+                      <div className="text-lg font-semibold text-white">
+                        {(marketStats.winRate * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">W/L</div>
+                      <div className="text-lg font-semibold">
+                        <span className="text-emerald-400">{marketStats.wins}</span>
+                        <span className="text-neutral-500">/</span>
+                        <span className="text-rose-400">{marketStats.losses}</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-amber-500/20">
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">Avg Win</div>
+                      <div className="text-sm font-medium text-emerald-400">
+                        {formatCurrency(marketStats.avgWin)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">Avg Loss</div>
+                      <div className="text-sm font-medium text-rose-400">
+                        {formatCurrency(marketStats.avgLoss)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg bg-gradient-to-br from-purple-500/10 to-purple-600/5 border border-purple-500/20">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Clock className="h-5 w-5 text-purple-400" />
+                    <span className="text-purple-400 font-medium">Limit Orders</span>
+                    <span className="text-neutral-500 text-sm">({limitStats.total} trades)</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">P&L</div>
+                      <div className={`text-lg font-semibold ${limitStats.totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {formatCurrency(limitStats.totalPnl)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">Win Rate</div>
+                      <div className="text-lg font-semibold text-white">
+                        {(limitStats.winRate * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">W/L</div>
+                      <div className="text-lg font-semibold">
+                        <span className="text-emerald-400">{limitStats.wins}</span>
+                        <span className="text-neutral-500">/</span>
+                        <span className="text-rose-400">{limitStats.losses}</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-purple-500/20">
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">Avg Win</div>
+                      <div className="text-sm font-medium text-emerald-400">
+                        {formatCurrency(limitStats.avgWin)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500 text-xs mb-1">Avg Loss</div>
+                      <div className="text-sm font-medium text-rose-400">
+                        {formatCurrency(limitStats.avgLoss)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </Card>
   );

@@ -31,6 +31,7 @@ interface BacktestTrade {
   tp_distance_percent?: number;
   sl_distance_percent?: number;
   close_reason?: string;
+  order_created_time?: string | null;
 }
 
 interface BacktestTradeListProps {
@@ -250,7 +251,15 @@ export function BacktestTradeList({ trades, isLoading }: BacktestTradeListProps)
                         <div className="flex items-center gap-4 mt-2 text-xs text-neutral-500">
                           <div className="flex items-center gap-1">
                             <Clock className="h-3 w-3" />
-                            {formatTime(trade.kline_time)}
+                            {trade.order_created_time ? (
+                              <span title="Order Created → Filled">
+                                <span className="text-purple-400">{formatTime(trade.order_created_time)}</span>
+                                <span className="mx-1">→</span>
+                                <span>{formatTime(trade.kline_time)}</span>
+                              </span>
+                            ) : (
+                              formatTime(trade.kline_time)
+                            )}
                           </div>
                           <div>→ {formatTime(trade.exit_time)}</div>
                           <div>{trade.holding_bars} bars</div>
