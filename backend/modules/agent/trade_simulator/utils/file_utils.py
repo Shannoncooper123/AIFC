@@ -19,7 +19,7 @@ class TaskType(Enum):
     HISTORY = "history"   # 历史记录，严格保序
 
 
-def locked_write_json(path: str, data: Any, **json_dump_kwargs) -> None:
+def locked_write_json(path: str, data: Any, fsync: bool = True, **json_dump_kwargs) -> None:
     """使用文件锁的同步写入JSON文件（适合低频重要数据）
     
     Args:
@@ -66,7 +66,8 @@ def locked_write_json(path: str, data: Any, **json_dump_kwargs) -> None:
             try:
                 json.dump(data, f, **dump_kwargs)
                 f.flush()
-                os.fsync(f.fileno())  # 确保数据写入磁盘
+                if fsync:
+                    os.fsync(f.fileno())
             finally:
                 # 释放锁
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
@@ -75,7 +76,7 @@ def locked_write_json(path: str, data: Any, **json_dump_kwargs) -> None:
         raise
 
 
-def locked_append_jsonl(path: str, record: Any) -> None:
+def locked_append_jsonl(path: str, record: Any, fsync: bool = True) -> None:
     dir_name = os.path.dirname(path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
@@ -86,7 +87,8 @@ def locked_append_jsonl(path: str, record: Any) -> None:
             try:
                 f.write(json.dumps(record, ensure_ascii=False) + '\n')
                 f.flush()
-                os.fsync(f.fileno())
+                if fsync:
+                    os.fsync(f.fileno())
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except Exception as e:
@@ -94,7 +96,7 @@ def locked_append_jsonl(path: str, record: Any) -> None:
         raise
 
 
-def locked_write_jsonl(path: str, records: list[Any]) -> None:
+def locked_write_jsonl(path: str, records: list[Any], fsync: bool = True) -> None:
     dir_name = os.path.dirname(path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
@@ -106,7 +108,8 @@ def locked_write_jsonl(path: str, records: list[Any]) -> None:
                 for record in records:
                     f.write(json.dumps(record, ensure_ascii=False) + '\n')
                 f.flush()
-                os.fsync(f.fileno())
+                if fsync:
+                    os.fsync(f.fileno())
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except Exception as e:

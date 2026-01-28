@@ -1,5 +1,18 @@
-import { Loader2, Square, CheckCircle, XCircle, Clock, TrendingUp, TrendingDown, Target, BarChart3 } from 'lucide-react';
+import { Loader2, Square, CheckCircle, XCircle, Clock, TrendingUp, TrendingDown, Target, BarChart3, Activity, Zap, AlertTriangle } from 'lucide-react';
 import { Card, Button } from '../../../components/ui';
+
+interface RuntimeStats {
+  completed_steps: number;
+  total_steps: number;
+  elapsed_seconds: number;
+  avg_step_duration: number;
+  recent_avg_duration: number;
+  recent_min_duration: number;
+  recent_max_duration: number;
+  throughput_per_min: number;
+  timeout_count: number;
+  error_count: number;
+}
 
 interface BacktestProgressProps {
   backtestId: string;
@@ -17,6 +30,7 @@ interface BacktestProgressProps {
     losing_trades?: number;
     total_pnl?: number;
     win_rate?: number;
+    runtime_stats?: RuntimeStats;
   };
   onStop?: () => void;
 }
@@ -172,6 +186,68 @@ export function BacktestProgress({ backtestId, status, progress, onStop }: Backt
 
             {progress.current_step_info && (
               <div className="text-sm text-neutral-400">{progress.current_step_info}</div>
+            )}
+
+            {isRunning && progress.runtime_stats && (
+              <div className="pt-3 border-t border-neutral-800">
+                <div className="text-xs text-neutral-500 mb-2 flex items-center gap-1">
+                  <Activity className="h-3 w-3" />
+                  Runtime Diagnostics
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  <div className="p-2 rounded bg-neutral-800/50">
+                    <div className="text-neutral-500">Throughput</div>
+                    <div className="text-white font-medium flex items-center gap-1">
+                      <Zap className="h-3 w-3 text-yellow-400" />
+                      {progress.runtime_stats.throughput_per_min.toFixed(1)}/min
+                    </div>
+                  </div>
+                  <div className="p-2 rounded bg-neutral-800/50">
+                    <div className="text-neutral-500">Avg Duration</div>
+                    <div className="text-white font-medium">
+                      {progress.runtime_stats.avg_step_duration.toFixed(1)}s
+                    </div>
+                  </div>
+                  <div className="p-2 rounded bg-neutral-800/50">
+                    <div className="text-neutral-500">Recent Avg</div>
+                    <div className="text-white font-medium">
+                      {progress.runtime_stats.recent_avg_duration.toFixed(1)}s
+                    </div>
+                  </div>
+                  <div className="p-2 rounded bg-neutral-800/50">
+                    <div className="text-neutral-500">Recent Range</div>
+                    <div className="text-white font-medium">
+                      {progress.runtime_stats.recent_min_duration.toFixed(0)}-{progress.runtime_stats.recent_max_duration.toFixed(0)}s
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                  <div className="p-2 rounded bg-neutral-800/50">
+                    <div className="text-neutral-500">Elapsed</div>
+                    <div className="text-white font-medium">
+                      {Math.floor(progress.runtime_stats.elapsed_seconds / 60)}m {Math.floor(progress.runtime_stats.elapsed_seconds % 60)}s
+                    </div>
+                  </div>
+                  <div className="p-2 rounded bg-neutral-800/50">
+                    <div className="text-neutral-500 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 text-yellow-500" />
+                      Timeouts
+                    </div>
+                    <div className={`font-medium ${progress.runtime_stats.timeout_count > 0 ? 'text-yellow-400' : 'text-white'}`}>
+                      {progress.runtime_stats.timeout_count}
+                    </div>
+                  </div>
+                  <div className="p-2 rounded bg-neutral-800/50">
+                    <div className="text-neutral-500 flex items-center gap-1">
+                      <XCircle className="h-3 w-3 text-rose-500" />
+                      Errors
+                    </div>
+                    <div className={`font-medium ${progress.runtime_stats.error_count > 0 ? 'text-rose-400' : 'text-white'}`}>
+                      {progress.runtime_stats.error_count}
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
           </>
         )}

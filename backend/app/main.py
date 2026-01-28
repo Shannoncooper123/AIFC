@@ -64,6 +64,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"关闭图表渲染进程池失败: {e}")
     
+    logger.info("关闭 Trace 异步写入器...")
+    try:
+        from modules.agent.utils.workflow_trace_storage import shutdown_trace_writer
+        shutdown_trace_writer()
+    except Exception as e:
+        logger.warning(f"关闭 Trace 异步写入器失败: {e}")
+    
     logger.info("Backend 已关闭")
 
 

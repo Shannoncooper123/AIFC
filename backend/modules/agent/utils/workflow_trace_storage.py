@@ -15,12 +15,15 @@ Trace 类型:
 - now_iso: 返回当前 UTC 时间的 ISO 格式字符串
 - calculate_duration_ms: 计算两个 ISO 时间字符串之间的毫秒差
 """
+import atexit
 import base64
 import json
 import os
+import queue
 import time
 import random
 import string
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +32,60 @@ from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger("agent.workflow_trace")
+_TRACE_FSYNC = False
+_TRACE_ASYNC = True
+_TRACE_QUEUE_MAX = 10000
+_trace_queue: Optional["queue.Queue[Dict[str, Any]]"] = None
+_trace_worker: Optional[threading.Thread] = None
+_trace_running = False
+_trace_lock = threading.Lock()
+
+
+def _ensure_trace_worker() -> None:
+    global _trace_queue, _trace_worker, _trace_running
+    if not _TRACE_ASYNC:
+        return
+    if _trace_worker is None:
+        with _trace_lock:
+            if _trace_worker is None:
+                _trace_queue = queue.Queue(maxsize=_TRACE_QUEUE_MAX)
+                _trace_running = True
+                _trace_worker = threading.Thread(
+                    target=_trace_worker_loop,
+                    daemon=False,
+                    name="WorkflowTraceWriter",
+                )
+                _trace_worker.start()
+                atexit.register(shutdown_trace_writer)
+
+
+def _trace_worker_loop() -> None:
+    while _trace_running or (_trace_queue and not _trace_queue.empty()):
+        try:
+            item = _trace_queue.get(timeout=0.5)
+            trace_path = item["trace_path"]
+            event = item["event"]
+            locked_append_jsonl(trace_path, event, fsync=_TRACE_FSYNC)
+            _trace_queue.task_done()
+        except queue.Empty:
+            continue
+        except Exception as e:
+            logger.error(f"workflow trace 异步写入失败: {e}", exc_info=True)
+
+
+def shutdown_trace_writer(timeout: float = 5.0) -> None:
+    global _trace_running, _trace_worker, _trace_queue
+    if _trace_worker is None or _trace_queue is None:
+        return
+    _trace_running = False
+    start = time.time()
+    while not _trace_queue.empty():
+        if time.time() - start >= timeout:
+            break
+        time.sleep(0.1)
+    _trace_worker.join(timeout=max(0.5, timeout - (time.time() - start)))
+    _trace_worker = None
+    _trace_queue = None
 
 
 def now_iso() -> str:
@@ -98,7 +155,15 @@ def append_event(event: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) ->
     try:
         event["timestamp_ms"] = int(time.time() * 1000)
         trace_path = _get_trace_path(cfg)
-        locked_append_jsonl(trace_path, event)
+        if _TRACE_ASYNC:
+            _ensure_trace_worker()
+            item = {"trace_path": trace_path, "event": event}
+            try:
+                _trace_queue.put(item, timeout=0.2)
+            except queue.Full:
+                locked_append_jsonl(trace_path, event, fsync=_TRACE_FSYNC)
+        else:
+            locked_append_jsonl(trace_path, event, fsync=_TRACE_FSYNC)
     except Exception as e:
         logger.error(f"workflow trace 写入失败: {e}")
 

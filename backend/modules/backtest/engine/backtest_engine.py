@@ -1,28 +1,28 @@
-"""回测引擎主协调器 - 并发独立执行模式"""
+"""回测引擎主协调器 - 轻量级协调器模式
+
+职责：
+- 协调各个子模块（执行器、统计收集器、结果收集器）
+- 管理回测生命周期（启动、停止、清理）
+- 提供对外接口
+"""
 from __future__ import annotations
 
-import asyncio
-import contextvars
 import json
 import os
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from modules.agent.builder import create_workflow
-from modules.agent.engine import set_engine, get_engine, clear_thread_local_engine
-from modules.agent.state import AgentState
-from modules.agent.tools.tool_utils import set_kline_provider, get_kline_provider, clear_context_kline_provider
-from modules.agent.utils.trace_context import workflow_trace_context
-from modules.agent.utils.workflow_trace_storage import (
-    generate_trace_id,
-    record_workflow_start,
-    record_workflow_end,
-)
+from modules.agent.engine import get_engine
+from modules.agent.tools.tool_utils import get_kline_provider, set_kline_provider
+from modules.backtest.context import set_backtest_mode
 from modules.backtest.engine.backtest_trade_engine import BacktestTradeEngine
+from modules.backtest.engine.result_collector import ResultCollector
+from modules.backtest.engine.stats_collector import BacktestStatsCollector, StepMetrics
+from modules.backtest.engine.workflow_executor import WorkflowExecutor
 from modules.backtest.models import (
     BacktestConfig,
     BacktestProgress,
@@ -30,23 +30,26 @@ from modules.backtest.models import (
     BacktestStatus,
     BacktestTradeResult,
 )
-from modules.backtest.providers.kline_provider import BacktestKlineProvider, set_backtest_time
+from modules.backtest.providers.kline_provider import BacktestKlineProvider
 from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
-from modules.backtest.context import is_backtest_mode, set_backtest_mode
-from langchain_core.runnables import RunnableConfig
 
 logger = get_logger('backtest.engine')
 
 
 class BacktestEngine:
-    """回测引擎主协调器 - 并发独立执行模式
+    """回测引擎主协调器
     
     核心设计：
     1. 每个K线的分析完全独立，拥有相同的初始资金
     2. 开仓后立即在后续K线中模拟止盈止损
     3. 支持并发执行多个K线分析
     4. 统计胜率、盈亏比等指标
+    
+    架构：
+    - WorkflowExecutor: 执行单个回测步骤
+    - StatsCollector: 收集运行时统计
+    - ResultCollector: 收集交易结果
     """
     
     def __init__(
@@ -55,13 +58,6 @@ class BacktestEngine:
         on_progress: Optional[Callable[[BacktestProgress], None]] = None,
         on_complete: Optional[Callable[[BacktestResult], None]] = None,
     ):
-        """初始化回测引擎
-        
-        Args:
-            config: 回测配置
-            on_progress: 进度回调函数
-            on_complete: 完成回调函数
-        """
         self.config = config
         self.on_progress = on_progress
         self.on_complete = on_complete
@@ -75,10 +71,11 @@ class BacktestEngine:
         self._original_provider = None
         
         self.kline_provider: Optional[BacktestKlineProvider] = None
+        self._executor: Optional[WorkflowExecutor] = None
+        self._stats: Optional[BacktestStatsCollector] = None
+        self._result_collector: Optional[ResultCollector] = None
         
-        self._trades_lock = threading.Lock()
-        self._completed_count = 0
-        self._total_count = 0
+        self._total_steps = 0
         
         self.result = BacktestResult(
             backtest_id=self.backtest_id,
@@ -129,82 +126,33 @@ class BacktestEngine:
         except Exception as e:
             logger.warning(f"预热图表渲染进程池失败: {e}")
         
+        self._executor = WorkflowExecutor(
+            config=self.config,
+            kline_provider=self.kline_provider,
+            backtest_id=self.backtest_id,
+            simulate_position_outcome=self._simulate_position_outcome,
+            simulate_limit_order_outcome=self._simulate_limit_order_outcome,
+        )
+        
+        self._total_steps = self._calculate_total_steps()
+        self._stats = BacktestStatsCollector(self._total_steps)
+        self._result_collector = ResultCollector(self.result)
+        
         logger.info("回测环境初始化完成")
     
     def _cleanup(self) -> None:
-        """清理回测环境，恢复原始状态"""
+        """清理回测环境"""
         logger.info("清理回测环境...")
         
         set_backtest_mode(False)
-        set_kline_provider(self._original_provider)
-        if self._original_engine:
-            set_engine(self._original_engine)
         
-        logger.info("回测环境已清理")
-    
-    def _create_mock_alert(self, current_time: datetime) -> Dict[str, Any]:
-        """创建模拟的alert记录"""
-        entries = []
-        for symbol in self.config.symbols:
-            price = self.kline_provider.get_current_price(symbol) if self.kline_provider else 0
-            entries.append({
-                'symbol': symbol,
-                'price': price or 0,
-                'price_change_rate': 0,
-                'triggered_indicators': ['BACKTEST_TRIGGER'],
-                'engulfing_type': '非外包',
-            })
+        if self._original_provider:
+            set_kline_provider(self._original_provider)
         
-        return {
-            'type': 'aggregate',
-            'source': 'backtest',
-            'ts': current_time.isoformat(),
-            'interval': self.config.interval,
-            'symbols': self.config.symbols,
-            'pending_count': len(self.config.symbols),
-            'entries': entries,
-        }
-    
-    def _wrap_config(self, alert: Dict[str, Any], workflow_run_id: str, current_time: datetime) -> RunnableConfig:
-        """包装workflow配置"""
-        cfg = get_config()
-        return RunnableConfig(
-            configurable={
-                "workflow_run_id": workflow_run_id,
-                "current_trace_id": workflow_run_id,
-                "latest_alert": alert,
-                "backtest_mode": True,
-                "backtest_time": current_time.isoformat(),
-            },
-            recursion_limit=100,
-            tags=["backtest", f"bt_{self.backtest_id}"],
-            run_name="backtest_workflow_run",
-            metadata={
-                "env": cfg.get('env', {}),
-                "workflow_run_id": workflow_run_id,
-                "backtest_id": self.backtest_id,
-                "backtest_mode": True,
-                "backtest_time": current_time.isoformat(),
-            }
-        )
-    
-    def _create_isolated_trade_engine(self, step_id: str) -> BacktestTradeEngine:
-        """为单个步骤创建独立的交易引擎
+        self.kline_provider = None
+        self._executor = None
         
-        Args:
-            step_id: 步骤唯一标识
-        
-        Returns:
-            独立的交易引擎实例
-        """
-        cfg = get_config()
-        engine = BacktestTradeEngine(
-            config=cfg,
-            backtest_id=f"{self.backtest_id}_{step_id}",
-            initial_balance=self.config.initial_balance,
-        )
-        engine.start()
-        return engine
+        logger.info("回测环境清理完成")
     
     def _simulate_position_outcome(
         self,
@@ -213,19 +161,7 @@ class BacktestEngine:
         entry_time: datetime,
         workflow_run_id: str,
     ) -> Optional[BacktestTradeResult]:
-        """模拟仓位的止盈止损结果
-        
-        在开仓后，逐个K线检查止盈止损是否触发
-        
-        Args:
-            trade_engine: 交易引擎
-            symbol: 交易对
-            entry_time: 入场时间
-            workflow_run_id: workflow运行ID
-        
-        Returns:
-            交易结果，如果没有开仓则返回None
-        """
+        """模拟仓位的止盈止损结果"""
         if symbol not in trade_engine.positions:
             return None
         
@@ -321,22 +257,8 @@ class BacktestEngine:
         entry_time: datetime,
         workflow_run_id: str
     ) -> Optional[BacktestTradeResult]:
-        """模拟限价单的成交和后续止盈止损
-        
-        在后续K线中检测限价单是否触发成交，成交后继续模拟止盈止损。
-        
-        Args:
-            trade_engine: 回测交易引擎
-            order: 限价单信息
-            entry_time: 当前K线时间
-            workflow_run_id: workflow运行ID
-        
-        Returns:
-            如果限价单成交并平仓，返回交易结果；否则返回None
-        """
+        """模拟限价单的成交和后续止盈止损"""
         symbol = order['symbol']
-        limit_price = order['limit_price']
-        side = order['side']
         
         interval_minutes = self._get_interval_minutes(self.config.interval)
         step_delta = timedelta(minutes=interval_minutes)
@@ -361,7 +283,7 @@ class BacktestEngine:
                 if filled_orders:
                     for filled in filled_orders:
                         if filled['id'] == order['id']:
-                            logger.info(f"限价单成交: {symbol} @ {filled['filled_price']}")
+                            logger.debug(f"限价单成交: {symbol} @ {filled['filled_price']}")
                             
                             if symbol in trade_engine.positions and trade_engine.positions[symbol].status == 'open':
                                 return self._simulate_position_outcome(
@@ -375,186 +297,14 @@ class BacktestEngine:
             for p in pending:
                 if p['id'] == order['id']:
                     trade_engine.cancel_limit_order(order['id'])
-                    logger.info(f"限价单超时取消: {symbol} order_id={order['id']}")
+                    logger.debug(f"限价单超时取消: {symbol} order_id={order['id']}")
         
         return None
     
-    def _run_single_step_isolated(
-        self, 
-        current_time: datetime, 
-        step_index: int
-    ) -> Tuple[str, List[BacktestTradeResult]]:
-        """执行单个独立的回测步骤
-        
-        每个步骤拥有独立的交易引擎和初始资金
-        
-        Args:
-            current_time: 当前模拟时间
-            step_index: 步骤索引
-        
-        Returns:
-            (workflow_run_id, 交易结果列表)
-        """
-        step_id = f"step_{step_index}_{int(time.time() * 1000)}"
-        trade_results = []
-        thread_name = threading.current_thread().name
-        
-        logger.info(f"[{thread_name}] 步骤 {step_index} 开始: 目标时间={current_time}")
-        
-        time_token = set_backtest_time(current_time)
-        
-        kline_provider_token = set_kline_provider(self.kline_provider, context_local=True)
-        
-        trade_engine = self._create_isolated_trade_engine(step_id)
-        
-        try:
-            actual_time = self.kline_provider.get_current_time()
-            logger.info(f"[{thread_name}] 步骤 {step_index} 时间设置: 目标={current_time}, 实际={actual_time}, 匹配={current_time == actual_time}")
-            
-            prices = {}
-            for symbol in self.config.symbols:
-                kline = self.kline_provider.get_kline_at_time(symbol, self.config.interval, current_time)
-                if kline:
-                    prices[symbol] = kline.close
-                else:
-                    price = self.kline_provider.get_current_price(symbol)
-                    if price:
-                        prices[symbol] = price
-            
-            trade_engine.update_mark_prices(prices)
-            
-            set_engine(trade_engine, thread_local=True)
-            
-            mock_alert = self._create_mock_alert(current_time)
-            workflow_run_id = generate_trace_id("bt")
-            
-            cfg = get_config()
-            record_workflow_start(workflow_run_id, mock_alert, cfg)
-            
-            start_iso = datetime.now(timezone.utc).isoformat()
-            
-            graph = create_workflow(cfg)
-            workflow_app = graph.compile()
-            
-            current_ctx = contextvars.copy_context()
-            
-            def _execute_workflow_with_context():
-                def _inner():
-                    with workflow_trace_context(workflow_run_id):
-                        workflow_app.invoke(
-                            AgentState(),
-                            config=self._wrap_config(mock_alert, workflow_run_id, current_time)
-                        )
-                current_ctx.run(_inner)
-            
-            try:
-                from concurrent.futures import ThreadPoolExecutor as InnerThreadPoolExecutor
-                from concurrent.futures import TimeoutError as FuturesTimeoutError
-                
-                with InnerThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_execute_workflow_with_context)
-                    future.result(timeout=self.config.workflow_timeout)
-                
-                record_workflow_end(workflow_run_id, start_iso, "success", cfg=cfg)
-                logger.debug(f"步骤 {step_index} workflow完成: time={current_time}, run_id={workflow_run_id}")
-            except FuturesTimeoutError:
-                error_msg = f"workflow执行超时（{self.config.workflow_timeout}秒）"
-                logger.error(f"步骤 {step_index} {error_msg}")
-                record_workflow_end(workflow_run_id, start_iso, "timeout", error=error_msg, cfg=cfg)
-                return workflow_run_id, []
-            except Exception as e:
-                logger.error(f"步骤 {step_index} workflow失败: {e}", exc_info=True)
-                record_workflow_end(workflow_run_id, start_iso, "error", error=str(e), cfg=cfg)
-                return workflow_run_id, []
-            
-            for symbol in self.config.symbols:
-                if symbol in trade_engine.positions and trade_engine.positions[symbol].status == 'open':
-                    logger.info(f"步骤 {step_index} 检测到开仓: {symbol}, 开始模拟止盈止损...")
-                    trade_result = self._simulate_position_outcome(
-                        trade_engine, symbol, current_time, workflow_run_id
-                    )
-                    if trade_result:
-                        trade_results.append(trade_result)
-                        logger.info(
-                            f"步骤 {step_index} 交易完成: {symbol} {trade_result.side} "
-                            f"exit_type={trade_result.exit_type} pnl={trade_result.realized_pnl:.2f}"
-                        )
-            
-            pending_orders = trade_engine.get_pending_limit_orders()
-            if pending_orders:
-                logger.info(f"步骤 {step_index} 检测到 {len(pending_orders)} 个限价单, 开始模拟成交...")
-                for order in pending_orders:
-                    limit_trade_result = self._simulate_limit_order_outcome(
-                        trade_engine, order, current_time, workflow_run_id
-                    )
-                    if limit_trade_result:
-                        trade_results.append(limit_trade_result)
-                        logger.info(
-                            f"步骤 {step_index} 限价单交易完成: {order['symbol']} {limit_trade_result.side} "
-                            f"exit_type={limit_trade_result.exit_type} pnl={limit_trade_result.realized_pnl:.2f}"
-                        )
-            
-            return workflow_run_id, trade_results
-            
-        finally:
-            clear_thread_local_engine()
-            clear_context_kline_provider()
-            trade_engine.stop()
-    
-    def _run_step_with_context(self, current_time: datetime, step_index: int) -> Tuple[str, List[BacktestTradeResult]]:
-        """在独立的上下文中执行回测步骤
-        
-        使用 contextvars.copy_context() 确保每个任务有独立的上下文
-        """
-        ctx = contextvars.copy_context()
-        return ctx.run(self._run_single_step_isolated, current_time, step_index)
-    
-    def _run_batch(self, batch_times: List[Tuple[int, datetime]]) -> List[Tuple[str, List[BacktestTradeResult]]]:
-        """并发执行一批回测步骤（保留用于兼容，实际使用流式模式）
-        
-        Args:
-            batch_times: [(step_index, current_time), ...]
-        
-        Returns:
-            [(workflow_run_id, trade_results), ...]
-        """
-        results = []
-        
-        with ThreadPoolExecutor(max_workers=self.config.concurrency) as executor:
-            futures = [
-                executor.submit(self._run_step_with_context, current_time, step_index)
-                for step_index, current_time in batch_times
-            ]
-            
-            for future in futures:
-                if self._stop_requested:
-                    break
-                try:
-                    result = future.result(timeout=300)
-                    results.append(result)
-                except Exception as e:
-                    logger.error(f"批次执行失败: {e}", exc_info=True)
-                    results.append(("error", []))
-        
-        return results
-    
-    def _run_streaming(self, all_steps: List[Tuple[int, datetime]]) -> List[BacktestTradeResult]:
-        """流式并发执行回测步骤
-        
-        使用 as_completed 实现任务完成一个就立即补充一个新任务，
-        保持并发数始终为 concurrency，避免批次模式的"木桶效应"。
-        
-        Args:
-            all_steps: [(step_index, current_time), ...]
-        
-        Returns:
-            所有交易结果列表
-        """
-        from concurrent.futures import as_completed
-        
-        all_trades = []
-        completed_steps = 0
+    def _run_streaming(self, all_steps: List[Tuple[int, datetime]]) -> None:
+        """流式并发执行回测步骤"""
         step_iter = iter(all_steps)
+        step_start_times: Dict[Any, float] = {}
         
         with ThreadPoolExecutor(max_workers=self.config.concurrency) as executor:
             pending_futures: Dict[Any, Tuple[int, datetime]] = {}
@@ -562,8 +312,9 @@ class BacktestEngine:
             for _ in range(min(self.config.concurrency, len(all_steps))):
                 try:
                     step_index, current_time = next(step_iter)
-                    future = executor.submit(self._run_step_with_context, current_time, step_index)
+                    future = executor.submit(self._executor.execute_step, current_time, step_index)
                     pending_futures[future] = (step_index, current_time)
+                    step_start_times[future] = time.time()
                 except StopIteration:
                     break
             
@@ -580,23 +331,32 @@ class BacktestEngine:
                 
                 for future in done_futures:
                     step_index, current_time = pending_futures.pop(future)
+                    step_duration = time.time() - step_start_times.pop(future, time.time())
                     
                     try:
-                        workflow_run_id, trade_results = future.result(timeout=1)
+                        workflow_run_id, trade_results, is_timeout = future.result(timeout=1)
                         
-                        if workflow_run_id != "error":
-                            self.result.workflow_runs.append(workflow_run_id)
-                        all_trades.extend(trade_results)
-                        completed_steps += 1
+                        self._stats.record_step(StepMetrics(
+                            step_index=step_index,
+                            duration=step_duration,
+                            success=not is_timeout,
+                            is_timeout=is_timeout,
+                            trade_count=len(trade_results),
+                        ))
                         
-                        self.result.trades = all_trades.copy()
+                        self._result_collector.add_workflow_run(workflow_run_id)
+                        self._result_collector.add_trades(trade_results)
                         
-                        if self.on_progress and completed_steps % 5 == 0:
+                        if self._stats.should_log():
+                            self._stats.log_stats(len(pending_futures))
+                        
+                        completed = self._stats.completed_count
+                        if self.on_progress and completed % 5 == 0:
                             progress = BacktestProgress(
                                 current_time=current_time,
-                                total_steps=self._total_count,
-                                completed_steps=completed_steps,
-                                current_step_info=f"已完成 {completed_steps}/{self._total_count}, 交易 {len(all_trades)} 笔",
+                                total_steps=self._total_steps,
+                                completed_steps=completed,
+                                current_step_info=f"已完成 {completed}/{self._total_steps}, 交易 {self._result_collector.get_trade_count()} 笔",
                             )
                             try:
                                 self.on_progress(progress)
@@ -605,30 +365,28 @@ class BacktestEngine:
                         
                     except Exception as e:
                         logger.error(f"步骤 {step_index} 执行失败: {e}", exc_info=True)
-                        completed_steps += 1
+                        self._stats.record_step(StepMetrics(
+                            step_index=step_index,
+                            duration=step_duration,
+                            success=False,
+                        ))
                     
                     try:
                         next_step_index, next_current_time = next(step_iter)
-                        new_future = executor.submit(self._run_step_with_context, next_current_time, next_step_index)
+                        new_future = executor.submit(self._executor.execute_step, next_current_time, next_step_index)
                         pending_futures[new_future] = (next_step_index, next_current_time)
+                        step_start_times[new_future] = time.time()
                     except StopIteration:
                         pass
-        
-        return all_trades
     
     def _run_backtest(self) -> None:
-        """执行回测主循环 - 流式并发模式
-        
-        使用流式并发替代批次模式，任务完成一个就立即补充一个新任务，
-        保持并发数始终为 concurrency，避免"木桶效应"。
-        """
+        """执行回测主循环"""
         self._running = True
         self.result.status = BacktestStatus.RUNNING
         
         try:
             self._initialize()
             
-            total_steps = self._calculate_total_steps()
             interval_minutes = self._get_interval_minutes(self.config.interval)
             step_delta = timedelta(minutes=interval_minutes)
             
@@ -641,37 +399,35 @@ class BacktestEngine:
                 current_time += step_delta
                 step_index += 1
             
-            self._total_count = len(all_steps)
-            self.result.total_klines_analyzed = self._total_count
-            
-            self.result.total_batches = (self._total_count + self.config.concurrency - 1) // self.config.concurrency
+            self._total_steps = len(all_steps)
+            self.result.total_klines_analyzed = self._total_steps
+            self.result.total_batches = (self._total_steps + self.config.concurrency - 1) // self.config.concurrency
             
             logger.info(
-                f"开始回测（流式并发模式）: total_steps={self._total_count}, "
+                f"开始回测（流式并发模式）: total_steps={self._total_steps}, "
                 f"concurrency={self.config.concurrency}"
             )
             
-            all_trades = self._run_streaming(all_steps)
+            self._run_streaming(all_steps)
             
-            self.result.trades = all_trades
+            self._result_collector.compile_results()
             self.result.completed_batches = self.result.total_batches
-            self._compile_results()
             
             if self._stop_requested:
                 self.result.status = BacktestStatus.CANCELLED
                 logger.info("回测已取消")
             else:
                 self.result.status = BacktestStatus.COMPLETED
-                logger.info(f"回测完成: 总交易 {len(all_trades)} 笔")
+                logger.info("回测完成")
                 
         except Exception as e:
-            logger.error(f"回测失败: {e}", exc_info=True)
+            logger.error(f"回测执行失败: {e}", exc_info=True)
             self.result.status = BacktestStatus.FAILED
             self.result.error_message = str(e)
         finally:
             self._cleanup()
-            self._running = False
             self.result.end_timestamp = datetime.now(timezone.utc)
+            self._running = False
             
             if self.on_complete:
                 try:
@@ -681,133 +437,68 @@ class BacktestEngine:
             
             self._save_result()
     
-    def _compile_results(self) -> None:
-        """汇总回测结果"""
-        trades = self.result.trades
-        
-        if not trades:
-            self.result.final_balance = self.config.initial_balance
-            return
-        
-        self.result.total_trades = len(trades)
-        
-        winning_trades = [t for t in trades if t.realized_pnl > 0]
-        losing_trades = [t for t in trades if t.realized_pnl < 0]
-        
-        self.result.winning_trades = len(winning_trades)
-        self.result.losing_trades = len(losing_trades)
-        
-        self.result.total_pnl = sum(t.realized_pnl for t in trades)
-        
-        if winning_trades:
-            self.result.avg_win = sum(t.realized_pnl for t in winning_trades) / len(winning_trades)
-        
-        if losing_trades:
-            self.result.avg_loss = sum(t.realized_pnl for t in losing_trades) / len(losing_trades)
-        
-        self.result.final_balance = self.config.initial_balance + self.result.total_pnl
-        
-        cumulative_pnl = 0
-        peak = 0
-        max_drawdown = 0
-        
-        for trade in sorted(trades, key=lambda t: t.kline_time):
-            cumulative_pnl += trade.realized_pnl
-            if cumulative_pnl > peak:
-                peak = cumulative_pnl
-            drawdown = peak - cumulative_pnl
-            if drawdown > max_drawdown:
-                max_drawdown = drawdown
-        
-        self.result.max_drawdown = max_drawdown
-        
-        logger.info(
-            f"回测统计: 总交易={self.result.total_trades}, "
-            f"胜率={self.result.win_rate:.2%}, "
-            f"盈亏比={self.result.profit_factor:.2f}, "
-            f"总盈亏={self.result.total_pnl:.2f}"
-        )
-    
     def _save_result(self) -> None:
-        """保存回测结果"""
-        cfg = get_config()
-        base_dir = cfg.get('agent', {}).get('data_dir', 'modules/data')
-        result_path = os.path.join(base_dir, 'backtest', self.backtest_id, 'result.json')
-        
+        """保存回测结果到文件"""
         try:
-            os.makedirs(os.path.dirname(result_path), exist_ok=True)
+            agent_config = get_config("agent")
+            base_dir = agent_config.get("data_dir", "modules/data")
+            result_dir = os.path.join(base_dir, "backtest", self.backtest_id)
+            os.makedirs(result_dir, exist_ok=True)
+            
+            result_path = os.path.join(result_dir, "result.json")
             with open(result_path, 'w', encoding='utf-8') as f:
-                json.dump(self.result.to_dict(), f, indent=2, ensure_ascii=False)
+                json.dump(self.result.to_dict(), f, ensure_ascii=False, indent=2, default=str)
+            
             logger.info(f"回测结果已保存: {result_path}")
         except Exception as e:
             logger.error(f"保存回测结果失败: {e}")
     
     def start(self) -> str:
-        """启动回测（异步）
-        
-        Returns:
-            回测ID
-        """
+        """启动回测（异步）"""
         if self._running:
-            logger.warning("回测已在运行中")
-            return self.backtest_id
+            raise RuntimeError("回测已在运行中")
         
         self._thread = threading.Thread(target=self._run_backtest, daemon=True)
         self._thread.start()
         
-        logger.info(f"回测已启动: backtest_id={self.backtest_id}")
+        logger.info(f"回测已启动: {self.backtest_id}")
         return self.backtest_id
-    
-    def start_sync(self) -> BacktestResult:
-        """同步执行回测
-        
-        Returns:
-            回测结果
-        """
-        self._run_backtest()
-        return self.result
     
     def stop(self) -> None:
         """停止回测"""
-        logger.info("请求停止回测...")
+        if not self._running:
+            return
+        
+        logger.info(f"请求停止回测: {self.backtest_id}")
         self._stop_requested = True
     
-    def is_running(self) -> bool:
-        """检查回测是否正在运行"""
-        return self._running
-    
-    def get_status(self) -> BacktestStatus:
-        """获取回测状态"""
-        return self.result.status
+    def wait(self, timeout: Optional[float] = None) -> None:
+        """等待回测完成"""
+        if self._thread:
+            self._thread.join(timeout=timeout)
     
     def get_result(self) -> BacktestResult:
         """获取回测结果"""
         return self.result
-
-
-_active_backtests: Dict[str, BacktestEngine] = {}
-_backtests_lock = threading.Lock()
-
-
-def get_active_backtest(backtest_id: str) -> Optional[BacktestEngine]:
-    """获取活跃的回测引擎"""
-    with _backtests_lock:
-        return _active_backtests.get(backtest_id)
-
-
-def register_backtest(engine: BacktestEngine) -> None:
-    """注册回测引擎"""
-    with _backtests_lock:
-        _active_backtests[engine.backtest_id] = engine
-
-
-def unregister_backtest(backtest_id: str) -> None:
-    """注销回测引擎"""
-    with _backtests_lock:
-        _active_backtests.pop(backtest_id, None)
-
-
-def list_active_backtests() -> List[str]:
-    """列出所有活跃的回测ID"""
-    with _backtests_lock:
-        return list(_active_backtests.keys())
+    
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        """获取运行时统计信息"""
+        if self._stats:
+            return self._stats.get_stats()
+        return {
+            "completed_steps": 0,
+            "total_steps": self._total_steps,
+            "elapsed_seconds": 0,
+            "avg_step_duration": 0,
+            "recent_avg_duration": 0,
+            "recent_min_duration": 0,
+            "recent_max_duration": 0,
+            "throughput_per_min": 0,
+            "timeout_count": 0,
+            "error_count": 0,
+        }
+    
+    @property
+    def is_running(self) -> bool:
+        """是否正在运行"""
+        return self._running
