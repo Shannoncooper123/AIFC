@@ -15,7 +15,7 @@ from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.opening_decision')
 
-REVIEW_INTERVALS = ["1d", "4h", "1h", "15m"]
+REVIEW_INTERVALS = ["4h", "1h", "15m"]
 
 
 def _format_account_summary(account: Dict[str, Any]) -> str:
@@ -99,7 +99,7 @@ def _build_multimodal_content(symbol: str, account_info: str, analysis_result: s
 {analysis_result}
 
 【多周期K线图像】
-以下是 {symbol} 的 1d/4h/1h/15m 四个周期的K线图，请对比前序分析结论进行复核：
+以下是 {symbol} 的 4h/1h/15m 三个周期的K线图，请对比前序分析结论进行复核：
 """
     content.append({"type": "text", "text": text_part})
     
