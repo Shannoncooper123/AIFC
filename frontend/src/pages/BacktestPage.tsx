@@ -40,8 +40,8 @@ export function BacktestPage() {
       try {
         const result = await startMutation.mutateAsync({
           symbols: config.symbols,
-          start_time: new Date(config.startTime).toISOString(),
-          end_time: new Date(config.endTime).toISOString(),
+          start_time: config.startTime + ':00Z',
+          end_time: config.endTime + ':00Z',
           interval: config.interval,
           initial_balance: config.initialBalance,
           concurrency: config.concurrency,

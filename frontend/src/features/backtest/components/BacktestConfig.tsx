@@ -27,16 +27,25 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
     concurrency: 5,
   });
 
+  function toUTCDatetimeLocal(date: Date): string {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const hours = String(date.getUTCHours()).padStart(2, '0');
+    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+
   function getDefaultStartTime(): string {
     const date = new Date();
-    date.setDate(date.getDate() - 7);
-    return date.toISOString().slice(0, 16);
+    date.setUTCDate(date.getUTCDate() - 7);
+    return toUTCDatetimeLocal(date);
   }
 
   function getDefaultEndTime(): string {
     const date = new Date();
-    date.setDate(date.getDate() - 1);
-    return date.toISOString().slice(0, 16);
+    date.setUTCDate(date.getUTCDate() - 1);
+    return toUTCDatetimeLocal(date);
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -100,7 +109,7 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
           <div>
             <label className="block text-sm text-neutral-400 mb-2">
               <Calendar className="inline h-4 w-4 mr-1" />
-              Start Time
+              Start Time <span className="text-xs text-blue-400">(UTC)</span>
             </label>
             <input
               type="datetime-local"
@@ -113,7 +122,7 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
           <div>
             <label className="block text-sm text-neutral-400 mb-2">
               <Calendar className="inline h-4 w-4 mr-1" />
-              End Time
+              End Time <span className="text-xs text-blue-400">(UTC)</span>
             </label>
             <input
               type="datetime-local"
