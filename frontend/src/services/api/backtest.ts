@@ -44,6 +44,19 @@ export interface BacktestTradeResult {
   pnl_percent: number;
   holding_bars: number;
   workflow_run_id: string;
+  order_type?: string;
+  margin_usdt?: number;
+  leverage?: number;
+  notional_usdt?: number;
+  original_tp_price?: number;
+  original_sl_price?: number;
+  limit_price?: number;
+  fees_total?: number;
+  r_multiple?: number;
+  tp_distance_percent?: number;
+  sl_distance_percent?: number;
+  close_reason?: string;
+  order_created_time?: string;
 }
 
 export interface BacktestResult {
