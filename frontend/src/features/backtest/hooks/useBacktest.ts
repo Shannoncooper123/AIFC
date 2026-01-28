@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   startBacktest,
   getBacktestStatus,
@@ -8,8 +8,10 @@ import {
   getBacktestHistory,
   getBacktestTrades,
   deleteBacktest,
+  getConcurrency,
+  setConcurrency,
 } from '../../../services/api/backtest';
-import type { BacktestStartRequest, BacktestResult } from '../../../services/api/backtest';
+import type { BacktestStartRequest, BacktestResult, ConcurrencyInfo } from '../../../services/api/backtest';
 
 export function useBacktestList(limit = 20) {
   return useQuery({
@@ -72,11 +74,12 @@ export function useDeleteBacktest() {
   });
 }
 
-export function useBacktestTrades(backtestId: string | null, limit = 100) {
+export function useBacktestTrades(backtestId: string | null, limit = 100, isRunning = false) {
   return useQuery({
     queryKey: ['backtest', backtestId, 'trades', limit],
     queryFn: () => (backtestId ? getBacktestTrades(backtestId, limit) : []),
     enabled: !!backtestId,
+    refetchInterval: isRunning ? 5000 : false,
   });
 }
 
@@ -86,6 +89,8 @@ interface BacktestProgress {
   completed_steps: number;
   progress_percent: number;
   current_step_info: string;
+  current_running?: number;
+  max_concurrency?: number;
 }
 
 export function useBacktestWebSocket(backtestId: string | null) {
@@ -150,4 +155,43 @@ export function useBacktestWebSocket(backtestId: string | null) {
   }, [backtestId]);
 
   return { progress, result, isConnected };
+}
+
+export function useBacktestConcurrency(backtestId: string | null, isRunning = false) {
+  const queryClient = useQueryClient();
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const { data: concurrencyInfo, refetch } = useQuery({
+    queryKey: ['backtest', backtestId, 'concurrency'],
+    queryFn: () => (backtestId ? getConcurrency(backtestId) : null),
+    enabled: !!backtestId && isRunning,
+    refetchInterval: isRunning ? 2000 : false,
+  });
+
+  const updateConcurrency = useCallback(
+    async (newMax: number) => {
+      if (!backtestId || isUpdating) return false;
+
+      setIsUpdating(true);
+      try {
+        await setConcurrency(backtestId, newMax);
+        await refetch();
+        return true;
+      } catch (error) {
+        console.error('Failed to update concurrency:', error);
+        return false;
+      } finally {
+        setIsUpdating(false);
+      }
+    },
+    [backtestId, isUpdating, refetch]
+  );
+
+  return {
+    currentRunning: concurrencyInfo?.current_running ?? 0,
+    maxConcurrency: concurrencyInfo?.max_concurrency ?? 0,
+    available: concurrencyInfo?.available ?? 0,
+    isUpdating,
+    updateConcurrency,
+  };
 }

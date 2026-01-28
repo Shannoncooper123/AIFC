@@ -11,15 +11,15 @@ import json
 import os
 import threading
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from modules.agent.engine import get_engine
 from modules.agent.tools.tool_utils import get_kline_provider, set_kline_provider
 from modules.backtest.context import set_backtest_mode
-from modules.backtest.engine.backtest_trade_engine import BacktestTradeEngine
+from modules.backtest.engine.dynamic_semaphore import DynamicSemaphore
+from modules.backtest.engine.position_simulator import PositionSimulator
 from modules.backtest.engine.result_collector import ResultCollector
 from modules.backtest.engine.stats_collector import BacktestStatsCollector, StepMetrics
 from modules.backtest.engine.workflow_executor import WorkflowExecutor
@@ -28,7 +28,6 @@ from modules.backtest.models import (
     BacktestProgress,
     BacktestResult,
     BacktestStatus,
-    BacktestTradeResult,
 )
 from modules.backtest.providers.kline_provider import BacktestKlineProvider
 from modules.config.settings import get_config
@@ -98,9 +97,11 @@ class BacktestEngine:
         self._original_provider = None
         
         self.kline_provider: Optional[BacktestKlineProvider] = None
+        self._position_simulator: Optional[PositionSimulator] = None
         self._executor: Optional[WorkflowExecutor] = None
         self._stats: Optional[BacktestStatsCollector] = None
         self._result_collector: Optional[ResultCollector] = None
+        self._semaphore: Optional[DynamicSemaphore] = None
         
         self._total_steps = 0
         
@@ -154,12 +155,17 @@ class BacktestEngine:
         except Exception as e:
             logger.warning(f"预热图表渲染进程池失败: {e}")
         
+        self._position_simulator = PositionSimulator(
+            config=self.config,
+            kline_provider=self.kline_provider,
+            backtest_id=self.backtest_id,
+        )
+        
         self._executor = WorkflowExecutor(
             config=self.config,
             kline_provider=self.kline_provider,
             backtest_id=self.backtest_id,
-            simulate_position_outcome=self._simulate_position_outcome,
-            simulate_limit_order_outcome=self._simulate_limit_order_outcome,
+            position_simulator=self._position_simulator,
         )
         
         self._total_steps = self._calculate_total_steps()
@@ -182,180 +188,94 @@ class BacktestEngine:
         
         logger.info("回测环境清理完成")
     
-    def _simulate_position_outcome(
+    def _execute_step_with_semaphore(
         self,
-        trade_engine: BacktestTradeEngine,
-        symbol: str,
-        entry_time: datetime,
-        workflow_run_id: str,
-    ) -> Optional[BacktestTradeResult]:
-        """模拟仓位的止盈止损结果"""
-        if symbol not in trade_engine.positions:
-            return None
-        
-        pos = trade_engine.positions[symbol]
-        if pos.status != 'open':
-            return None
-        
-        interval_minutes = self._get_interval_minutes(self.config.interval)
-        step_delta = timedelta(minutes=interval_minutes)
-        
-        current_time = entry_time + step_delta
-        holding_bars = 0
-        max_bars = 1000
-        
-        while current_time <= self.config.end_time and holding_bars < max_bars:
-            kline = self.kline_provider.get_kline_at_time(symbol, self.config.interval, current_time)
-            
-            if kline:
-                holding_bars += 1
-                
-                result = trade_engine.check_tp_sl(
-                    symbol,
-                    current_price=kline.close,
-                    high_price=kline.high,
-                    low_price=kline.low
-                )
-                
-                if result and 'error' not in result:
-                    exit_type = "tp" if "止盈" in result.get('close_reason', '') else "sl"
-                    realized_pnl = result.get('realized_pnl', 0)
-                    exit_price = result.get('close_price', kline.close)
-                    
-                    pnl_percent = (realized_pnl / self.config.initial_balance) * 100
-                    
-                    return BacktestTradeResult(
-                        trade_id=f"{self.backtest_id}_{uuid.uuid4().hex[:8]}",
-                        kline_time=entry_time,
-                        symbol=symbol,
-                        side=pos.side,
-                        entry_price=pos.entry_price,
-                        exit_price=exit_price,
-                        tp_price=pos.tp_price or 0,
-                        sl_price=pos.sl_price or 0,
-                        size=pos.qty,
-                        exit_time=current_time,
-                        exit_type=exit_type,
-                        realized_pnl=realized_pnl,
-                        pnl_percent=pnl_percent,
-                        holding_bars=holding_bars,
-                        workflow_run_id=workflow_run_id,
-                    )
-            
-            current_time += step_delta
-        
-        if symbol in trade_engine.positions and trade_engine.positions[symbol].status == 'open':
-            final_kline = self.kline_provider.get_kline_at_time(
-                symbol, self.config.interval, self.config.end_time
-            )
-            if final_kline:
-                close_result = trade_engine.close_position(
-                    symbol=symbol,
-                    close_reason="回测结束强制平仓",
-                    close_price=final_kline.close
-                )
-                if close_result and 'error' not in close_result:
-                    realized_pnl = close_result.get('realized_pnl', 0)
-                    pnl_percent = (realized_pnl / self.config.initial_balance) * 100
-                    
-                    return BacktestTradeResult(
-                        trade_id=f"{self.backtest_id}_{uuid.uuid4().hex[:8]}",
-                        kline_time=entry_time,
-                        symbol=symbol,
-                        side=pos.side,
-                        entry_price=pos.entry_price,
-                        exit_price=final_kline.close,
-                        tp_price=pos.tp_price or 0,
-                        sl_price=pos.sl_price or 0,
-                        size=pos.qty,
-                        exit_time=self.config.end_time,
-                        exit_type="timeout",
-                        realized_pnl=realized_pnl,
-                        pnl_percent=pnl_percent,
-                        holding_bars=holding_bars,
-                        workflow_run_id=workflow_run_id,
-                    )
-        
-        return None
-    
-    def _simulate_limit_order_outcome(
-        self,
-        trade_engine: BacktestTradeEngine,
-        order: Dict[str, Any],
-        entry_time: datetime,
-        workflow_run_id: str
-    ) -> Optional[BacktestTradeResult]:
-        """模拟限价单的成交和后续止盈止损"""
-        symbol = order['symbol']
-        
-        interval_minutes = self._get_interval_minutes(self.config.interval)
-        step_delta = timedelta(minutes=interval_minutes)
-        
-        current_time = entry_time + step_delta
-        max_bars = 1000
-        bars_checked = 0
-        
-        while current_time <= self.config.end_time and bars_checked < max_bars:
-            kline = self.kline_provider.get_kline_at_time(symbol, self.config.interval, current_time)
-            
-            if kline:
-                bars_checked += 1
-                
-                filled_orders = trade_engine.check_limit_orders(
-                    symbol,
-                    high_price=kline.high,
-                    low_price=kline.low,
-                    close_price=kline.close
-                )
-                
-                if filled_orders:
-                    for filled in filled_orders:
-                        if filled['id'] == order['id']:
-                            logger.debug(f"限价单成交: {symbol} @ {filled['filled_price']}")
-                            
-                            if symbol in trade_engine.positions and trade_engine.positions[symbol].status == 'open':
-                                return self._simulate_position_outcome(
-                                    trade_engine, symbol, current_time, workflow_run_id
-                                )
-            
-            current_time += step_delta
-        
-        pending = trade_engine.get_pending_limit_orders(symbol)
-        if pending:
-            for p in pending:
-                if p['id'] == order['id']:
-                    trade_engine.cancel_limit_order(order['id'])
-                    logger.debug(f"限价单超时取消: {symbol} order_id={order['id']}")
-        
-        return None
+        current_time: datetime,
+        step_index: int,
+    ) -> Tuple[str, List[BacktestTradeResult], bool]:
+        """执行步骤并在完成后释放信号量"""
+        try:
+            return self._executor.execute_step(current_time, step_index)
+        finally:
+            if self._semaphore:
+                self._semaphore.release()
     
     def _run_streaming(self, all_steps: List[Tuple[int, datetime]]) -> None:
-        """流式并发执行回测步骤"""
+        """流式并发执行回测步骤（使用动态信号量控制并发）"""
+        self._semaphore = DynamicSemaphore(self.config.concurrency)
         step_iter = iter(all_steps)
         step_start_times: Dict[Any, float] = {}
+        pending_step: Optional[Tuple[int, datetime]] = None
+        steps_exhausted = False
         
-        with ThreadPoolExecutor(max_workers=self.config.concurrency) as executor:
+        max_workers = max(200, self.config.concurrency * 2)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             pending_futures: Dict[Any, Tuple[int, datetime]] = {}
             
-            for _ in range(min(self.config.concurrency, len(all_steps))):
+            def get_next_step() -> Optional[Tuple[int, datetime]]:
+                """获取下一个待提交的步骤"""
+                nonlocal pending_step, steps_exhausted
+                if pending_step:
+                    step = pending_step
+                    pending_step = None
+                    return step
+                if steps_exhausted:
+                    return None
                 try:
-                    step_index, current_time = next(step_iter)
-                    future = executor.submit(self._executor.execute_step, current_time, step_index)
-                    pending_futures[future] = (step_index, current_time)
-                    step_start_times[future] = time.time()
+                    return next(step_iter)
                 except StopIteration:
-                    break
+                    steps_exhausted = True
+                    return None
             
-            while pending_futures:
+            def submit_available_steps() -> int:
+                """尽可能多地提交步骤，返回成功提交的数量"""
+                nonlocal pending_step
+                submitted = 0
+                while self._semaphore.available > 0:
+                    step = get_next_step()
+                    if step is None:
+                        break
+                    step_index, current_time = step
+                    if self._semaphore.acquire(timeout=0):
+                        future = executor.submit(
+                            self._execute_step_with_semaphore, 
+                            current_time, 
+                            step_index
+                        )
+                        pending_futures[future] = (step_index, current_time)
+                        step_start_times[future] = time.time()
+                        submitted += 1
+                    else:
+                        pending_step = step
+                        break
+                return submitted
+            
+            submit_available_steps()
+            
+            while pending_futures or (not steps_exhausted and self._semaphore.available > 0):
                 if self._stop_requested:
                     for f in pending_futures:
                         f.cancel()
                     break
                 
+                submitted = submit_available_steps()
+                if submitted > 0:
+                    logger.debug(f"动态提交了 {submitted} 个新任务, 当前运行: {self._semaphore.current_count}")
+                
+                if not pending_futures:
+                    if steps_exhausted:
+                        break
+                    time.sleep(0.1)
+                    continue
+                
                 done_futures = []
-                for future in as_completed(pending_futures, timeout=600):
-                    done_futures.append(future)
-                    break
+                try:
+                    for future in as_completed(pending_futures, timeout=0.2):
+                        done_futures.append(future)
+                        break
+                except TimeoutError:
+                    pass
                 
                 for future in done_futures:
                     step_index, current_time = pending_futures.pop(future)
@@ -385,6 +305,8 @@ class BacktestEngine:
                                 total_steps=self._total_steps,
                                 completed_steps=completed,
                                 current_step_info=f"已完成 {completed}/{self._total_steps}, 交易 {self._result_collector.get_trade_count()} 笔",
+                                current_running=self._semaphore.current_count if self._semaphore else 0,
+                                max_concurrency=self._semaphore.max_value if self._semaphore else self.config.concurrency,
                             )
                             try:
                                 self.on_progress(progress)
@@ -398,14 +320,6 @@ class BacktestEngine:
                             duration=step_duration,
                             success=False,
                         ))
-                    
-                    try:
-                        next_step_index, next_current_time = next(step_iter)
-                        new_future = executor.submit(self._executor.execute_step, next_current_time, next_step_index)
-                        pending_futures[new_future] = (next_step_index, next_current_time)
-                        step_start_times[new_future] = time.time()
-                    except StopIteration:
-                        pass
     
     def _run_backtest(self) -> None:
         """执行回测主循环"""
@@ -530,3 +444,47 @@ class BacktestEngine:
     def is_running(self) -> bool:
         """是否正在运行"""
         return self._running
+    
+    def get_concurrency_info(self) -> Dict[str, Any]:
+        """获取当前并发信息
+        
+        Returns:
+            包含 current_running 和 max_concurrency 的字典
+        """
+        if self._semaphore:
+            return {
+                "current_running": self._semaphore.current_count,
+                "max_concurrency": self._semaphore.max_value,
+                "available": self._semaphore.available,
+            }
+        return {
+            "current_running": 0,
+            "max_concurrency": self.config.concurrency,
+            "available": self.config.concurrency,
+        }
+    
+    def set_max_concurrency(self, new_max: int) -> bool:
+        """动态调整并发上限
+        
+        Args:
+            new_max: 新的并发上限（必须 >= 1）
+            
+        Returns:
+            是否成功调整
+        """
+        if new_max < 1:
+            logger.warning(f"无效的并发上限: {new_max}")
+            return False
+        
+        if not self._running:
+            logger.warning("回测未在运行中，无法调整并发")
+            return False
+        
+        if self._semaphore:
+            old_max = self._semaphore.max_value
+            self._semaphore.set_max_value(new_max)
+            logger.info(f"并发上限已调整: {old_max} -> {new_max}")
+            return True
+        
+        logger.warning("信号量未初始化，无法调整并发")
+        return False

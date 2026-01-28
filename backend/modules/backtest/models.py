@@ -56,6 +56,8 @@ class BacktestProgress:
     total_steps: int
     completed_steps: int
     current_step_info: str = ""
+    current_running: int = 0
+    max_concurrency: int = 0
     
     @property
     def progress_percent(self) -> float:
@@ -70,6 +72,8 @@ class BacktestProgress:
             "completed_steps": self.completed_steps,
             "progress_percent": round(self.progress_percent, 2),
             "current_step_info": self.current_step_info,
+            "current_running": self.current_running,
+            "max_concurrency": self.max_concurrency,
         }
 
 
@@ -102,7 +106,16 @@ class BacktestTradeRecord:
 
 @dataclass
 class BacktestTradeResult:
-    """单次回测交易结果（独立执行）"""
+    """单次回测交易结果（独立执行）
+    
+    包含完整的交易详情：
+    - 订单类型（市价单/限价单）
+    - 开仓/平仓价格和时间
+    - 原始设置的止盈止损价格
+    - 保证金和杠杆信息
+    - R值（风险回报比）
+    - 手续费
+    """
     trade_id: str
     kline_time: datetime
     symbol: str
@@ -118,6 +131,19 @@ class BacktestTradeResult:
     pnl_percent: float
     holding_bars: int
     workflow_run_id: str
+    
+    order_type: str = "market"
+    margin_usdt: float = 0.0
+    leverage: int = 10
+    notional_usdt: float = 0.0
+    original_tp_price: Optional[float] = None
+    original_sl_price: Optional[float] = None
+    limit_price: Optional[float] = None
+    fees_total: float = 0.0
+    r_multiple: Optional[float] = None
+    tp_distance_percent: float = 0.0
+    sl_distance_percent: float = 0.0
+    close_reason: str = ""
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -136,6 +162,18 @@ class BacktestTradeResult:
             "pnl_percent": round(self.pnl_percent, 4),
             "holding_bars": self.holding_bars,
             "workflow_run_id": self.workflow_run_id,
+            "order_type": self.order_type,
+            "margin_usdt": round(self.margin_usdt, 4),
+            "leverage": self.leverage,
+            "notional_usdt": round(self.notional_usdt, 4),
+            "original_tp_price": self.original_tp_price,
+            "original_sl_price": self.original_sl_price,
+            "limit_price": self.limit_price,
+            "fees_total": round(self.fees_total, 6),
+            "r_multiple": round(self.r_multiple, 2) if self.r_multiple is not None else None,
+            "tp_distance_percent": round(self.tp_distance_percent, 2),
+            "sl_distance_percent": round(self.sl_distance_percent, 2),
+            "close_reason": self.close_reason,
         }
 
 

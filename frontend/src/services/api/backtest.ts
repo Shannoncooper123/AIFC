@@ -173,3 +173,33 @@ export async function getBacktestTrades(
   const { data } = await apiClient.get<BacktestTradesResponse>(`/backtest/${backtestId}/trades`, { params: { limit } });
   return data.trades;
 }
+
+export interface ConcurrencyInfo {
+  backtest_id: string;
+  current_running: number;
+  max_concurrency: number;
+  available: number;
+}
+
+export interface ConcurrencyUpdateResponse {
+  success: boolean;
+  backtest_id: string;
+  max_concurrency: number;
+  message: string;
+}
+
+export async function getConcurrency(backtestId: string): Promise<ConcurrencyInfo> {
+  const { data } = await apiClient.get<ConcurrencyInfo>(`/backtest/${backtestId}/concurrency`);
+  return data;
+}
+
+export async function setConcurrency(
+  backtestId: string,
+  maxConcurrency: number
+): Promise<ConcurrencyUpdateResponse> {
+  const { data } = await apiClient.put<ConcurrencyUpdateResponse>(
+    `/backtest/${backtestId}/concurrency`,
+    { max_concurrency: maxConcurrency }
+  );
+  return data;
+}

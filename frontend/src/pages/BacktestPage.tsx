@@ -8,6 +8,7 @@ import {
   BacktestResults,
   BacktestList,
   BacktestTradeList,
+  ConcurrencyControl,
   useBacktestList,
   useBacktestStatus,
   useBacktestHistory,
@@ -27,7 +28,8 @@ export function BacktestPage() {
   const { data: listData } = useBacktestList(20);
   const { data: statusData } = useBacktestStatus(selectedBacktestId);
   const { data: historyData } = useBacktestHistory(selectedBacktestId);
-  const { data: tradesData, isLoading: tradesLoading } = useBacktestTrades(selectedBacktestId);
+  const isBacktestRunning = statusData?.status === 'running';
+  const { data: tradesData, isLoading: tradesLoading } = useBacktestTrades(selectedBacktestId, 100, isBacktestRunning);
 
   const startMutation = useStartBacktest();
   const stopMutation = useStopBacktest();
@@ -79,7 +81,7 @@ export function BacktestPage() {
     [navigate]
   );
 
-  const isRunning = statusData?.status === 'running';
+  const isRunning = isBacktestRunning;
   const isCompleted = statusData?.status === 'completed';
   const result = statusData?.result;
 
@@ -130,10 +132,21 @@ export function BacktestPage() {
             />
           )}
 
+          {selectedBacktestId && isRunning && (
+            <ConcurrencyControl
+              backtestId={selectedBacktestId}
+              isRunning={isRunning}
+            />
+          )}
+
           {isCompleted && result && <BacktestResults result={result} />}
 
-          {isCompleted && tradesData && tradesData.length > 0 && (
-            <BacktestTradeList trades={tradesData} isLoading={tradesLoading} />
+          {/* 显示交易列表：运行中或已完成时都显示 */}
+          {selectedBacktestId && (isRunning || isCompleted) && (
+            <BacktestTradeList 
+              trades={tradesData ?? []} 
+              isLoading={tradesLoading} 
+            />
           )}
 
           {selectedBacktestId && historyPositions.length > 0 && (

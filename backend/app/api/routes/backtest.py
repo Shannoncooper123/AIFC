@@ -68,6 +68,27 @@ class BacktestListResponse(BaseModel):
     total: int
 
 
+class ConcurrencyInfoResponse(BaseModel):
+    """并发信息响应"""
+    backtest_id: str
+    current_running: int
+    max_concurrency: int
+    available: int
+
+
+class ConcurrencyUpdateRequest(BaseModel):
+    """更新并发上限请求"""
+    max_concurrency: int = Field(..., ge=1, le=500, description="新的并发上限")
+
+
+class ConcurrencyUpdateResponse(BaseModel):
+    """更新并发上限响应"""
+    success: bool
+    backtest_id: str
+    max_concurrency: int
+    message: str
+
+
 _progress_subscribers: Dict[str, List[asyncio.Queue]] = {}
 
 
@@ -208,6 +229,51 @@ async def stop_backtest(backtest_id: str):
     engine.stop()
     
     return {"message": "已请求停止回测", "backtest_id": backtest_id}
+
+
+@router.get("/{backtest_id}/concurrency", response_model=ConcurrencyInfoResponse)
+async def get_concurrency(backtest_id: str):
+    """获取回测的当前并发信息"""
+    engine = get_active_backtest(backtest_id)
+    
+    if not engine:
+        raise HTTPException(status_code=404, detail=f"回测不存在或已完成: {backtest_id}")
+    
+    if not engine.is_running:
+        raise HTTPException(status_code=400, detail=f"回测未在运行中: {backtest_id}")
+    
+    info = engine.get_concurrency_info()
+    
+    return ConcurrencyInfoResponse(
+        backtest_id=backtest_id,
+        current_running=info["current_running"],
+        max_concurrency=info["max_concurrency"],
+        available=info["available"],
+    )
+
+
+@router.put("/{backtest_id}/concurrency", response_model=ConcurrencyUpdateResponse)
+async def set_concurrency(backtest_id: str, request: ConcurrencyUpdateRequest):
+    """动态调整回测的并发上限"""
+    engine = get_active_backtest(backtest_id)
+    
+    if not engine:
+        raise HTTPException(status_code=404, detail=f"回测不存在或已完成: {backtest_id}")
+    
+    if not engine.is_running:
+        raise HTTPException(status_code=400, detail=f"回测未在运行中: {backtest_id}")
+    
+    success = engine.set_max_concurrency(request.max_concurrency)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="调整并发上限失败")
+    
+    return ConcurrencyUpdateResponse(
+        success=True,
+        backtest_id=backtest_id,
+        max_concurrency=request.max_concurrency,
+        message=f"并发上限已调整为 {request.max_concurrency}",
+    )
 
 
 @router.get("/list", response_model=BacktestListResponse)

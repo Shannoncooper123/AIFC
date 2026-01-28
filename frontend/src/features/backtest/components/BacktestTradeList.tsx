@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { List, TrendingUp, TrendingDown, Clock, ChevronDown, ChevronUp } from 'lucide-react';
+import { List, TrendingUp, TrendingDown, Clock, ChevronDown, ChevronUp, Info, DollarSign, Percent, Target } from 'lucide-react';
 import { Card } from '../../../components/ui';
 
 interface BacktestTrade {
@@ -18,6 +18,18 @@ interface BacktestTrade {
   pnl_percent: number;
   holding_bars: number;
   workflow_run_id: string;
+  order_type?: string;
+  margin_usdt?: number;
+  leverage?: number;
+  notional_usdt?: number;
+  original_tp_price?: number | null;
+  original_sl_price?: number | null;
+  limit_price?: number | null;
+  fees_total?: number;
+  r_multiple?: number | null;
+  tp_distance_percent?: number;
+  sl_distance_percent?: number;
+  close_reason?: string;
 }
 
 interface BacktestTradeListProps {
@@ -29,6 +41,7 @@ export function BacktestTradeList({ trades, isLoading }: BacktestTradeListProps)
   const [expanded, setExpanded] = useState(true);
   const [sortBy, setSortBy] = useState<'time' | 'pnl'>('time');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -144,82 +157,208 @@ export function BacktestTradeList({ trades, isLoading }: BacktestTradeListProps)
             {trades.length === 0 ? (
               <div className="text-center py-8 text-neutral-500">No trades recorded</div>
             ) : (
-              <div className="space-y-2 max-h-[500px] overflow-y-auto">
+              <div className="space-y-2 max-h-[600px] overflow-y-auto">
                 {sortedTrades.map((trade) => {
                   const exitTypeInfo = getExitTypeLabel(trade.exit_type);
                   const isProfitable = trade.realized_pnl >= 0;
+                  const isExpanded = expandedTradeId === trade.trade_id;
+                  const orderTypeLabel = trade.order_type === 'limit' ? 'Limit' : 'Market';
 
                   return (
                     <div
                       key={trade.trade_id}
-                      className="p-3 rounded-lg bg-neutral-800/50 border border-neutral-700/50 hover:border-neutral-600/50 transition-colors"
+                      className="rounded-lg bg-neutral-800/50 border border-neutral-700/50 hover:border-neutral-600/50 transition-colors"
                     >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-3">
-                          <span className="font-medium text-white">{trade.symbol}</span>
-                          <span
-                            className={`px-2 py-0.5 rounded text-xs font-medium ${
-                              trade.side === 'long'
-                                ? 'bg-emerald-400/10 text-emerald-400'
-                                : 'bg-rose-400/10 text-rose-400'
-                            }`}
-                          >
-                            {trade.side.toUpperCase()}
-                          </span>
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${exitTypeInfo.color}`}>
-                            {exitTypeInfo.label}
-                          </span>
+                      <div 
+                        className="p-3 cursor-pointer"
+                        onClick={() => setExpandedTradeId(isExpanded ? null : trade.trade_id)}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-white">{trade.symbol}</span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                trade.side === 'long'
+                                  ? 'bg-emerald-400/10 text-emerald-400'
+                                  : 'bg-rose-400/10 text-rose-400'
+                              }`}
+                            >
+                              {trade.side.toUpperCase()}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${exitTypeInfo.color}`}>
+                              {exitTypeInfo.label}
+                            </span>
+                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-400/10 text-blue-400">
+                              {orderTypeLabel}
+                            </span>
+                            {trade.r_multiple !== null && trade.r_multiple !== undefined && (
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                trade.r_multiple >= 0 ? 'bg-emerald-400/10 text-emerald-400' : 'bg-rose-400/10 text-rose-400'
+                              }`}>
+                                {trade.r_multiple >= 0 ? '+' : ''}{trade.r_multiple.toFixed(1)}R
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {isProfitable ? (
+                              <TrendingUp className="h-4 w-4 text-emerald-400" />
+                            ) : (
+                              <TrendingDown className="h-4 w-4 text-rose-400" />
+                            )}
+                            <span
+                              className={`font-semibold ${
+                                isProfitable ? 'text-emerald-400' : 'text-rose-400'
+                              }`}
+                            >
+                              {formatCurrency(trade.realized_pnl)}
+                            </span>
+                            <span
+                              className={`text-sm ${
+                                isProfitable ? 'text-emerald-400/70' : 'text-rose-400/70'
+                              }`}
+                            >
+                              ({trade.pnl_percent >= 0 ? '+' : ''}{trade.pnl_percent.toFixed(2)}%)
+                            </span>
+                            {isExpanded ? (
+                              <ChevronUp className="h-4 w-4 text-neutral-400" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4 text-neutral-400" />
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {isProfitable ? (
-                            <TrendingUp className="h-4 w-4 text-emerald-400" />
-                          ) : (
-                            <TrendingDown className="h-4 w-4 text-rose-400" />
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                          <div>
+                            <span className="text-neutral-500">Entry:</span>{' '}
+                            <span className="text-neutral-300">{formatPrice(trade.entry_price)}</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-500">Exit:</span>{' '}
+                            <span className="text-neutral-300">{formatPrice(trade.exit_price)}</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-500">TP:</span>{' '}
+                            <span className="text-emerald-400/70">{formatPrice(trade.tp_price)}</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-500">SL:</span>{' '}
+                            <span className="text-rose-400/70">{formatPrice(trade.sl_price)}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4 mt-2 text-xs text-neutral-500">
+                          <div className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {formatTime(trade.kline_time)}
+                          </div>
+                          <div>→ {formatTime(trade.exit_time)}</div>
+                          <div>{trade.holding_bars} bars</div>
+                          {trade.leverage && trade.leverage > 1 && (
+                            <div className="text-blue-400">{trade.leverage}x</div>
                           )}
-                          <span
-                            className={`font-semibold ${
-                              isProfitable ? 'text-emerald-400' : 'text-rose-400'
-                            }`}
-                          >
-                            {formatCurrency(trade.realized_pnl)}
-                          </span>
-                          <span
-                            className={`text-sm ${
-                              isProfitable ? 'text-emerald-400/70' : 'text-rose-400/70'
-                            }`}
-                          >
-                            ({trade.pnl_percent >= 0 ? '+' : ''}{trade.pnl_percent.toFixed(2)}%)
-                          </span>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                        <div>
-                          <span className="text-neutral-500">Entry:</span>{' '}
-                          <span className="text-neutral-300">{formatPrice(trade.entry_price)}</span>
+                      {isExpanded && (
+                        <div className="px-3 pb-3 border-t border-neutral-700/50 mt-2 pt-3">
+                          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 text-sm">
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="flex items-center gap-1 text-neutral-500 text-xs mb-1">
+                                <DollarSign className="h-3 w-3" />
+                                Margin
+                              </div>
+                              <div className="text-white font-medium">
+                                {trade.margin_usdt ? formatCurrency(trade.margin_usdt) : 'N/A'}
+                              </div>
+                            </div>
+                            
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="flex items-center gap-1 text-neutral-500 text-xs mb-1">
+                                <DollarSign className="h-3 w-3" />
+                                Notional
+                              </div>
+                              <div className="text-white font-medium">
+                                {trade.notional_usdt ? formatCurrency(trade.notional_usdt) : 'N/A'}
+                              </div>
+                            </div>
+                            
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="flex items-center gap-1 text-neutral-500 text-xs mb-1">
+                                <Percent className="h-3 w-3" />
+                                Leverage
+                              </div>
+                              <div className="text-blue-400 font-medium">
+                                {trade.leverage ? `${trade.leverage}x` : 'N/A'}
+                              </div>
+                            </div>
+                            
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="flex items-center gap-1 text-neutral-500 text-xs mb-1">
+                                <Target className="h-3 w-3" />
+                                R Multiple
+                              </div>
+                              <div className={`font-medium ${
+                                trade.r_multiple && trade.r_multiple >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                              }`}>
+                                {trade.r_multiple !== null && trade.r_multiple !== undefined 
+                                  ? `${trade.r_multiple >= 0 ? '+' : ''}${trade.r_multiple.toFixed(2)}R` 
+                                  : 'N/A'}
+                              </div>
+                            </div>
+                            
+                            {trade.order_type === 'limit' && trade.limit_price && (
+                              <div className="p-2 rounded bg-neutral-900/50">
+                                <div className="text-neutral-500 text-xs mb-1">Limit Price</div>
+                                <div className="text-blue-400 font-medium">
+                                  {formatPrice(trade.limit_price)}
+                                </div>
+                              </div>
+                            )}
+                            
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="text-neutral-500 text-xs mb-1">Original TP</div>
+                              <div className="text-emerald-400/70 font-medium">
+                                {trade.original_tp_price ? formatPrice(trade.original_tp_price) : 'N/A'}
+                                {trade.tp_distance_percent ? (
+                                  <span className="text-xs ml-1">({trade.tp_distance_percent.toFixed(1)}%)</span>
+                                ) : null}
+                              </div>
+                            </div>
+                            
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="text-neutral-500 text-xs mb-1">Original SL</div>
+                              <div className="text-rose-400/70 font-medium">
+                                {trade.original_sl_price ? formatPrice(trade.original_sl_price) : 'N/A'}
+                                {trade.sl_distance_percent ? (
+                                  <span className="text-xs ml-1">({trade.sl_distance_percent.toFixed(1)}%)</span>
+                                ) : null}
+                              </div>
+                            </div>
+                            
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="text-neutral-500 text-xs mb-1">Fees</div>
+                              <div className="text-amber-400 font-medium">
+                                {trade.fees_total ? formatCurrency(trade.fees_total) : '$0.00'}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {trade.close_reason && (
+                            <div className="mt-3 p-2 rounded bg-neutral-900/50">
+                              <div className="flex items-center gap-1 text-neutral-500 text-xs mb-1">
+                                <Info className="h-3 w-3" />
+                                Close Reason
+                              </div>
+                              <div className="text-neutral-300 text-sm">{trade.close_reason}</div>
+                            </div>
+                          )}
+                          
+                          <div className="mt-3 text-xs text-neutral-500">
+                            <span>Workflow: </span>
+                            <span className="font-mono text-neutral-400">{trade.workflow_run_id}</span>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-neutral-500">Exit:</span>{' '}
-                          <span className="text-neutral-300">{formatPrice(trade.exit_price)}</span>
-                        </div>
-                        <div>
-                          <span className="text-neutral-500">TP:</span>{' '}
-                          <span className="text-emerald-400/70">{formatPrice(trade.tp_price)}</span>
-                        </div>
-                        <div>
-                          <span className="text-neutral-500">SL:</span>{' '}
-                          <span className="text-rose-400/70">{formatPrice(trade.sl_price)}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-4 mt-2 text-xs text-neutral-500">
-                        <div className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {formatTime(trade.kline_time)}
-                        </div>
-                        <div>→ {formatTime(trade.exit_time)}</div>
-                        <div>{trade.holding_bars} bars</div>
-                      </div>
+                      )}
                     </div>
                   );
                 })}

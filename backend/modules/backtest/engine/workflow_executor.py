@@ -5,7 +5,7 @@ import contextvars
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from langchain_core.runnables import RunnableConfig
 
@@ -25,6 +25,9 @@ from modules.backtest.providers.kline_provider import BacktestKlineProvider, set
 from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
 
+if TYPE_CHECKING:
+    from modules.backtest.engine.position_simulator import PositionSimulator
+
 logger = get_logger('backtest.executor')
 
 
@@ -43,14 +46,12 @@ class WorkflowExecutor:
         config: BacktestConfig,
         kline_provider: BacktestKlineProvider,
         backtest_id: str,
-        simulate_position_outcome: Callable,
-        simulate_limit_order_outcome: Callable,
+        position_simulator: "PositionSimulator",
     ):
         self.config = config
         self.kline_provider = kline_provider
         self.backtest_id = backtest_id
-        self._simulate_position_outcome = simulate_position_outcome
-        self._simulate_limit_order_outcome = simulate_limit_order_outcome
+        self._position_simulator = position_simulator
     
     def execute_step(
         self,
@@ -241,7 +242,7 @@ class WorkflowExecutor:
         for symbol in self.config.symbols:
             if symbol in trade_engine.positions and trade_engine.positions[symbol].status == 'open':
                 logger.debug(f"步骤 {step_index} 检测到开仓: {symbol}")
-                trade_result = self._simulate_position_outcome(
+                trade_result = self._position_simulator.simulate_position_outcome(
                     trade_engine, symbol, current_time, workflow_run_id
                 )
                 if trade_result:
@@ -255,7 +256,7 @@ class WorkflowExecutor:
         if pending_orders:
             logger.debug(f"步骤 {step_index} 检测到 {len(pending_orders)} 个限价单")
             for order in pending_orders:
-                limit_trade_result = self._simulate_limit_order_outcome(
+                limit_trade_result = self._position_simulator.simulate_limit_order_outcome(
                     trade_engine, order, current_time, workflow_run_id
                 )
                 if limit_trade_result:
