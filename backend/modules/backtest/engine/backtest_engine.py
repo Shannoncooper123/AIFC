@@ -121,6 +121,14 @@ class BacktestEngine:
         set_kline_provider(self.kline_provider)
         set_backtest_mode(True)
         
+        chart_pool_size = self.config.concurrency * 4
+        try:
+            from modules.agent.tools.chart_renderer import _get_process_pool
+            _get_process_pool(chart_pool_size)
+            logger.info(f"预热图表渲染进程池: size={chart_pool_size}")
+        except Exception as e:
+            logger.warning(f"预热图表渲染进程池失败: {e}")
+        
         logger.info("回测环境初始化完成")
     
     def _cleanup(self) -> None:

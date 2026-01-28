@@ -22,23 +22,34 @@ logger = get_logger('agent.tool.chart_renderer')
 
 _process_pool: Optional[ProcessPoolExecutor] = None
 _atexit_registered = False
+_pool_max_workers: int = 0
 
 
-def _get_process_pool() -> ProcessPoolExecutor:
+def _get_process_pool(max_workers: Optional[int] = None) -> ProcessPoolExecutor:
     """获取或创建进程池（懒加载）
     
-    不限制 max_workers，让系统根据 CPU 核心数自动决定。
-    默认为 min(32, os.cpu_count() + 4)
+    Args:
+        max_workers: 最大工作进程数。如果为 None，使用 CPU 核心数 * 2。
+                     如果已有进程池且 max_workers 更大，会重建进程池。
     """
-    global _process_pool, _atexit_registered
+    global _process_pool, _atexit_registered, _pool_max_workers
+    
+    cpu_count = os.cpu_count() or 4
+    target_workers = max_workers if max_workers else cpu_count * 2
+    
+    if _process_pool is not None and target_workers > _pool_max_workers:
+        logger.info(f"扩展进程池: {_pool_max_workers} -> {target_workers}")
+        _process_pool.shutdown(wait=False)
+        _process_pool = None
+    
     if _process_pool is None:
-        _process_pool = ProcessPoolExecutor()
-        logger.info(f"图表渲染进程池已创建")
+        _pool_max_workers = target_workers
+        _process_pool = ProcessPoolExecutor(max_workers=target_workers)
+        logger.info(f"图表渲染进程池已创建: max_workers={target_workers}")
         
         if not _atexit_registered:
             atexit.register(shutdown_chart_renderer)
             _atexit_registered = True
-            logger.debug("已注册 atexit 清理钩子")
     
     return _process_pool
 
@@ -327,7 +338,8 @@ def render_kline_chart(
     symbol: str,
     interval: str,
     visible_count: int = 200,
-    timeout: float = 120.0
+    timeout: float = 120.0,
+    pool_size_hint: Optional[int] = None,
 ) -> str:
     """渲染K线图（在独立进程中执行）
     
@@ -337,6 +349,7 @@ def render_kline_chart(
         interval: 时间周期
         visible_count: 显示的K线数量
         timeout: 超时时间（秒）
+        pool_size_hint: 进程池大小提示（用于回测时根据并发数调整）
     
     Returns:
         base64 编码的 PNG 图像
@@ -357,7 +370,7 @@ def render_kline_chart(
         for k in klines
     ]
     
-    pool = _get_process_pool()
+    pool = _get_process_pool(pool_size_hint)
     
     try:
         future = pool.submit(_render_chart_in_process, kline_data, symbol, interval, visible_count)

@@ -55,6 +55,19 @@ kill_process_tree() {
     kill -"$signal" "$pid" 2>/dev/null
 }
 
+kill_port_processes() {
+    local port="$1"
+    local signal="${2:-TERM}"
+    
+    local pids=$(lsof -t -i :"$port" 2>/dev/null | sort -u)
+    if [ -n "$pids" ]; then
+        log_info "发现占用端口 $port 的进程: $pids"
+        for pid in $pids; do
+            kill -"$signal" "$pid" 2>/dev/null
+        done
+    fi
+}
+
 stop_service() {
     local name="$1"
     local pid_file="$2"
@@ -103,6 +116,27 @@ stop_service() {
 
 stop_backend() {
     stop_service "后端服务" "$BACKEND_PID_FILE" 15
+    
+    # 额外清理：确保 8000 端口上的所有进程都被终止
+    log_info "清理端口 8000 上的残留进程..."
+    kill_port_processes 8000 "TERM"
+    sleep 2
+    
+    # 检查是否还有残留进程
+    local remaining=$(lsof -t -i :8000 2>/dev/null | wc -l)
+    if [ "$remaining" -gt 0 ]; then
+        log_warn "仍有 $remaining 个进程占用端口 8000，强制终止..."
+        kill_port_processes 8000 "9"
+        sleep 1
+    fi
+    
+    # 最终检查
+    remaining=$(lsof -t -i :8000 2>/dev/null | wc -l)
+    if [ "$remaining" -gt 0 ]; then
+        log_error "无法清理端口 8000 上的所有进程"
+    else
+        log_success "端口 8000 已清理干净"
+    fi
 }
 
 stop_frontend() {
