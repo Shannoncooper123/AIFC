@@ -127,12 +127,14 @@ class WorkflowExecutor:
     
     def _create_trade_engine(self, step_id: str) -> BacktestTradeEngine:
         """创建隔离的交易引擎"""
-        return BacktestTradeEngine(
+        cfg = get_config()
+        engine = BacktestTradeEngine(
+            config=cfg,
+            backtest_id=f"{self.backtest_id}_{step_id}",
             initial_balance=self.config.initial_balance,
-            symbols=self.config.symbols,
-            backtest_id=self.backtest_id,
-            step_id=step_id,
         )
+        engine.start()
+        return engine
     
     def _update_prices(self, trade_engine: BacktestTradeEngine, current_time: datetime) -> None:
         """更新交易引擎的价格"""
@@ -148,13 +150,36 @@ class WorkflowExecutor:
         trade_engine.update_mark_prices(prices)
     
     def _create_mock_alert(self, current_time: datetime) -> Dict[str, Any]:
-        """创建模拟警报"""
+        """创建模拟警报
+        
+        构造符合 context_injection_node 期望的 alert 结构，
+        包含 entries 字段以便正确填充 opportunities。
+        """
+        entries = []
+        for symbol in self.config.symbols:
+            kline = self.kline_provider.get_kline_at_time(symbol, self.config.interval, current_time)
+            price = kline.close if kline else 0.0
+            price_change_rate = 0.0
+            if kline and kline.open > 0:
+                price_change_rate = (kline.close - kline.open) / kline.open
+            
+            entries.append({
+                "symbol": symbol,
+                "price": price,
+                "price_change_rate": price_change_rate,
+                "triggered_indicators": ["BACKTEST"],
+                "engulfing_type": "非外包",
+            })
+        
         return {
             "type": "backtest",
             "symbols": self.config.symbols,
             "timestamp": current_time.isoformat(),
+            "ts": current_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "interval": self.config.interval,
             "source": "backtest_engine",
             "backtest_id": self.backtest_id,
+            "entries": entries,
         }
     
     def _run_workflow(
