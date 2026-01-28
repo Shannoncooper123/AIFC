@@ -4,8 +4,6 @@ from __future__ import annotations
 import contextvars
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor as InnerThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -189,31 +187,26 @@ class WorkflowExecutor:
         current_time: datetime,
         step_index: int,
     ) -> Tuple[bool, Optional[str]]:
-        """执行 workflow（带超时控制）"""
+        """执行 workflow
+        
+        注意：移除了内部的 ThreadPoolExecutor 超时控制，因为：
+        1. 外层已经有 ThreadPoolExecutor 管理并发
+        2. 嵌套 ThreadPoolExecutor 会导致线程爆炸和潜在死锁
+        3. workflow 超时由外层的 as_completed(timeout=600) 控制
+        
+        如果需要更精细的超时控制，应该在 LangGraph 层面配置。
+        """
         cfg = get_config()
         graph = create_workflow(cfg)
         workflow_app = graph.compile()
         
-        current_ctx = contextvars.copy_context()
-        
-        def _execute_with_context():
-            def _inner():
-                with workflow_trace_context(workflow_run_id):
-                    workflow_app.invoke(
-                        AgentState(),
-                        config=self._wrap_config(mock_alert, workflow_run_id, current_time)
-                    )
-            current_ctx.run(_inner)
-        
         try:
-            with InnerThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_execute_with_context)
-                future.result(timeout=self.config.workflow_timeout)
+            with workflow_trace_context(workflow_run_id):
+                workflow_app.invoke(
+                    AgentState(),
+                    config=self._wrap_config(mock_alert, workflow_run_id, current_time)
+                )
             return True, None
-        except FuturesTimeoutError:
-            error_msg = f"workflow执行超时（{self.config.workflow_timeout}秒）"
-            logger.error(f"步骤 {step_index} {error_msg}")
-            return False, error_msg
         except Exception as e:
             logger.error(f"步骤 {step_index} workflow失败: {e}", exc_info=True)
             return False, str(e)
