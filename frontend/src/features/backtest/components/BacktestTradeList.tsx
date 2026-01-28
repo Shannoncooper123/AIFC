@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { List, TrendingUp, TrendingDown, Clock, ChevronDown, ChevronUp, Info, DollarSign, Percent, Target } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { List, TrendingUp, TrendingDown, Clock, ChevronDown, ChevronUp, Info, DollarSign, Percent, Target, ExternalLink } from 'lucide-react';
 import { Card } from '../../../components/ui';
 
 interface BacktestTrade {
@@ -353,9 +354,19 @@ export function BacktestTradeList({ trades, isLoading }: BacktestTradeListProps)
                             </div>
                           )}
                           
-                          <div className="mt-3 text-xs text-neutral-500">
-                            <span>Workflow: </span>
-                            <span className="font-mono text-neutral-400">{trade.workflow_run_id}</span>
+                          <div className="mt-3 flex items-center justify-between">
+                            <div className="text-xs text-neutral-500">
+                              <span>Workflow: </span>
+                              <span className="font-mono text-neutral-400">{trade.workflow_run_id}</span>
+                            </div>
+                            <Link
+                              to={`/workflow?run_id=${trade.workflow_run_id}`}
+                              className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-purple-400/10 text-purple-400 hover:bg-purple-400/20 transition-colors"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              View Trace
+                            </Link>
                           </div>
                         </div>
                       )}

@@ -38,12 +38,6 @@ def _format_account_summary(account: Dict[str, Any]) -> str:
 def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
     """获取多周期K线图像用于复核
     
-    始终重新生成所有周期的图像，确保决策节点使用最新的K线数据。
-    由于 single_symbol_analysis 节点现在并行执行两个 subagent（做多+做空），
-    可能产生时间差或重复图像，因此决策节点统一重新生成以保证一致性。
-    
-    支持回测模式：通过 fetch_klines 自动使用 KlineProvider 获取历史数据。
-    
     注意：不再在此处保存 artifact，而是通过 HumanMessage.additional_kwargs 传递元数据，
     由 workflow_trace_middleware 统一处理图像保存，实现 trace 层与业务层解耦。
     
