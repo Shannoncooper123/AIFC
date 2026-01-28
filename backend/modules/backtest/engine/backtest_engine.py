@@ -36,6 +36,33 @@ from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('backtest.engine')
 
+_active_backtests: Dict[str, "BacktestEngine"] = {}
+_backtests_lock = threading.Lock()
+
+
+def register_backtest(engine: "BacktestEngine") -> None:
+    """注册活跃的回测引擎"""
+    with _backtests_lock:
+        _active_backtests[engine.backtest_id] = engine
+
+
+def unregister_backtest(backtest_id: str) -> None:
+    """注销回测引擎"""
+    with _backtests_lock:
+        _active_backtests.pop(backtest_id, None)
+
+
+def get_active_backtest(backtest_id: str) -> Optional["BacktestEngine"]:
+    """获取活跃的回测引擎"""
+    with _backtests_lock:
+        return _active_backtests.get(backtest_id)
+
+
+def list_active_backtests() -> List[str]:
+    """列出所有活跃的回测ID"""
+    with _backtests_lock:
+        return list(_active_backtests.keys())
+
 
 class BacktestEngine:
     """回测引擎主协调器
