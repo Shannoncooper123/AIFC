@@ -11,7 +11,7 @@ import {
   getConcurrency,
   setConcurrency,
 } from '../../../services/api/backtest';
-import type { BacktestStartRequest, BacktestResult, ConcurrencyInfo } from '../../../services/api/backtest';
+import type { BacktestStartRequest, BacktestResult } from '../../../services/api/backtest';
 
 export function useBacktestList(limit = 20) {
   return useQuery({
@@ -158,7 +158,6 @@ export function useBacktestWebSocket(backtestId: string | null) {
 }
 
 export function useBacktestConcurrency(backtestId: string | null, isRunning = false) {
-  const queryClient = useQueryClient();
   const [isUpdating, setIsUpdating] = useState(false);
 
   const { data: concurrencyInfo, refetch } = useQuery({
