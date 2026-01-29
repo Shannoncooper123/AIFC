@@ -283,6 +283,30 @@ def open_position_tool(
             logger.error(f"open_position_tool: sl_price非法 {sl_price}")
             return make_input_error("sl_price必须为正数价格")
         
+        # 获取当前价格用于验证 TP/SL 合理性
+        current_price = eng.position_manager.get_latest_close_price(symbol)
+        if current_price is None:
+            logger.error(f"open_position_tool: 无法获取 {symbol} 当前价格")
+            return make_input_error(f"无法获取 {symbol} 当前价格，请稍后重试")
+        
+        # 验证 TP/SL 与当前价格的关系
+        if side == "BUY":
+            # 做多：止盈价应高于当前价格，止损价应低于当前价格
+            if tp_price <= current_price:
+                logger.error(f"open_position_tool: 做多止盈价({tp_price})应高于当前价格({current_price})")
+                return make_input_error(f"做多时止盈价({tp_price})必须高于当前价格({current_price})")
+            if sl_price >= current_price:
+                logger.error(f"open_position_tool: 做多止损价({sl_price})应低于当前价格({current_price})")
+                return make_input_error(f"做多时止损价({sl_price})必须低于当前价格({current_price})")
+        else:
+            # 做空：止盈价应低于当前价格，止损价应高于当前价格
+            if tp_price >= current_price:
+                logger.error(f"open_position_tool: 做空止盈价({tp_price})应低于当前价格({current_price})")
+                return make_input_error(f"做空时止盈价({tp_price})必须低于当前价格({current_price})")
+            if sl_price <= current_price:
+                logger.error(f"open_position_tool: 做空止损价({sl_price})应高于当前价格({current_price})")
+                return make_input_error(f"做空时止损价({sl_price})必须高于当前价格({current_price})")
+        
         # 转换side参数：BUY -> long, SELL -> short
         engine_side = "long" if side == "BUY" else "short"
         
