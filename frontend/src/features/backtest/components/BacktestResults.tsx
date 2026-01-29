@@ -1,12 +1,23 @@
 import { useMemo } from 'react';
-import { TrendingUp, TrendingDown, Target, BarChart3, DollarSign, Percent, Activity, Scale, Zap, Clock } from 'lucide-react';
+import { TrendingUp, TrendingDown, Target, BarChart3, DollarSign, Percent, Activity, Scale, Zap, Clock, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 import { Card } from '../../../components/ui';
 
 interface Trade {
   trade_id: string;
   order_type?: string;
+  side?: string;
   realized_pnl: number;
   exit_type: string;
+}
+
+interface SideStats {
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  total_pnl: number;
+  win_rate: number;
+  avg_win: number;
+  avg_loss: number;
 }
 
 interface BacktestResultsProps {
@@ -25,6 +36,8 @@ interface BacktestResultsProps {
     total_klines_analyzed?: number;
     completed_batches?: number;
     total_batches?: number;
+    long_stats?: SideStats;
+    short_stats?: SideStats;
     config: {
       initial_balance: number;
       concurrency?: number;
@@ -60,7 +73,7 @@ export function BacktestResults({ result, trades = [] }: BacktestResultsProps) {
   const isProfitable = result.total_pnl >= 0;
   const profitFactor = result.profit_factor ?? 0;
 
-  const { marketStats, limitStats } = useMemo(() => {
+  const { marketStats, limitStats, longStats, shortStats } = useMemo(() => {
     const calculateStats = (filteredTrades: Trade[]): OrderTypeStats => {
       const wins = filteredTrades.filter(t => t.realized_pnl > 0);
       const losses = filteredTrades.filter(t => t.realized_pnl <= 0);
@@ -81,12 +94,36 @@ export function BacktestResults({ result, trades = [] }: BacktestResultsProps) {
 
     const marketTrades = trades.filter(t => t.order_type === 'market' || !t.order_type);
     const limitTrades = trades.filter(t => t.order_type === 'limit');
+    const longTrades = trades.filter(t => t.side?.toLowerCase() === 'long');
+    const shortTrades = trades.filter(t => t.side?.toLowerCase() === 'short');
 
     return {
       marketStats: calculateStats(marketTrades),
       limitStats: calculateStats(limitTrades),
+      longStats: calculateStats(longTrades),
+      shortStats: calculateStats(shortTrades),
     };
   }, [trades]);
+
+  const displayLongStats = result.long_stats || {
+    total_trades: longStats.total,
+    winning_trades: longStats.wins,
+    losing_trades: longStats.losses,
+    total_pnl: longStats.totalPnl,
+    win_rate: longStats.winRate,
+    avg_win: longStats.avgWin,
+    avg_loss: longStats.avgLoss,
+  };
+
+  const displayShortStats = result.short_stats || {
+    total_trades: shortStats.total,
+    winning_trades: shortStats.wins,
+    losing_trades: shortStats.losses,
+    total_pnl: shortStats.totalPnl,
+    win_rate: shortStats.winRate,
+    avg_win: shortStats.avgWin,
+    avg_loss: shortStats.avgLoss,
+  };
 
   return (
     <Card>
@@ -210,6 +247,106 @@ export function BacktestResults({ result, trades = [] }: BacktestResultsProps) {
             </div>
           </div>
         </div>
+
+        {(displayLongStats.total_trades > 0 || displayShortStats.total_trades > 0) && (
+          <div className="border-t border-neutral-700/50 pt-6">
+            <div className="text-white font-medium mb-4">Performance by Position Side</div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 rounded-lg bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20">
+                <div className="flex items-center gap-2 mb-3">
+                  <ArrowUpCircle className="h-5 w-5 text-emerald-400" />
+                  <span className="text-emerald-400 font-medium">Long Positions</span>
+                  <span className="text-neutral-500 text-sm">({displayLongStats.total_trades} trades)</span>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">P&L</div>
+                    <div className={`text-lg font-semibold ${displayLongStats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {formatCurrency(displayLongStats.total_pnl)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">Win Rate</div>
+                    <div className="text-lg font-semibold text-white">
+                      {(displayLongStats.win_rate * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">W/L</div>
+                    <div className="text-lg font-semibold">
+                      <span className="text-emerald-400">{displayLongStats.winning_trades}</span>
+                      <span className="text-neutral-500">/</span>
+                      <span className="text-rose-400">{displayLongStats.losing_trades}</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-emerald-500/20">
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">Avg Win</div>
+                    <div className="text-sm font-medium text-emerald-400">
+                      {formatCurrency(displayLongStats.avg_win)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">Avg Loss</div>
+                    <div className="text-sm font-medium text-rose-400">
+                      {formatCurrency(displayLongStats.avg_loss)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-lg bg-gradient-to-br from-rose-500/10 to-rose-600/5 border border-rose-500/20">
+                <div className="flex items-center gap-2 mb-3">
+                  <ArrowDownCircle className="h-5 w-5 text-rose-400" />
+                  <span className="text-rose-400 font-medium">Short Positions</span>
+                  <span className="text-neutral-500 text-sm">({displayShortStats.total_trades} trades)</span>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">P&L</div>
+                    <div className={`text-lg font-semibold ${displayShortStats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {formatCurrency(displayShortStats.total_pnl)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">Win Rate</div>
+                    <div className="text-lg font-semibold text-white">
+                      {(displayShortStats.win_rate * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">W/L</div>
+                    <div className="text-lg font-semibold">
+                      <span className="text-emerald-400">{displayShortStats.winning_trades}</span>
+                      <span className="text-neutral-500">/</span>
+                      <span className="text-rose-400">{displayShortStats.losing_trades}</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-rose-500/20">
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">Avg Win</div>
+                    <div className="text-sm font-medium text-emerald-400">
+                      {formatCurrency(displayShortStats.avg_win)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-neutral-500 text-xs mb-1">Avg Loss</div>
+                    <div className="text-sm font-medium text-rose-400">
+                      {formatCurrency(displayShortStats.avg_loss)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {trades.length > 0 && (
           <>

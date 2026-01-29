@@ -175,6 +175,7 @@ async def get_backtest_status(backtest_id: str):
             progress_percent = min((completed_steps / total_steps) * 100, 100) if total_steps > 0 else 0
             
             runtime_stats = engine.get_runtime_stats()
+            side_stats = engine.get_side_stats()
             
             progress_data = {
                 "current_time": result.trades[-1].kline_time.isoformat() if result.trades else None,
@@ -190,6 +191,8 @@ async def get_backtest_status(backtest_id: str):
                 "total_pnl": round(sum(t.realized_pnl for t in result.trades), 2),
                 "win_rate": round(sum(1 for t in result.trades if t.realized_pnl > 0) / len(result.trades), 4) if result.trades else 0,
                 "runtime_stats": runtime_stats,
+                "long_stats": side_stats["long_stats"],
+                "short_stats": side_stats["short_stats"],
             }
         
         return BacktestStatusResponse(

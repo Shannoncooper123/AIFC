@@ -13,7 +13,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from modules.agent.engine import get_engine
 from modules.agent.tools.tool_utils import get_kline_provider, set_kline_provider
@@ -457,6 +457,21 @@ class BacktestEngine:
             "throughput_per_min": 0,
             "timeout_count": 0,
             "error_count": 0,
+        }
+    
+    def get_side_stats(self) -> Dict[str, Dict[str, Any]]:
+        """获取做多/做空实时统计数据"""
+        if self._result_collector:
+            return self._result_collector.get_realtime_side_stats()
+        return {
+            "long_stats": {
+                "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+                "total_pnl": 0.0, "win_rate": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
+            },
+            "short_stats": {
+                "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+                "total_pnl": 0.0, "win_rate": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
+            },
         }
     
     @property
