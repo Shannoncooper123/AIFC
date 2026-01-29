@@ -7,7 +7,6 @@ from langchain_core.runnables import RunnableConfig
 
 from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.open_position_tool import open_position_tool
-from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.tool_utils import fetch_klines
 from modules.agent.utils.model_factory import get_model_factory, with_retry
 from modules.agent.utils.trace_agent import create_trace_agent
@@ -151,7 +150,6 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
 
     try:
         tools = [
-            calc_metrics_tool,
             open_position_tool,
         ]
 
