@@ -179,11 +179,10 @@ def calc_metrics_tool(
         }
 
         logger.info(
-            "calc_metrics_tool: 计算完成 -> symbol=%s, entry=%.8f, rr=%.2f, qualified=%s",
+            "calc_metrics_tool: 计算完成 -> symbol=%s, entry=%.8f, rr=%.2f",
             symbol,
             entry_price,
             rr,
-            result["rr_qualified"],
         )
         return result
 
