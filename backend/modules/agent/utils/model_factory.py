@@ -146,7 +146,7 @@ class ModelFactory:
         temperature: float = 0.1,
         timeout: int = 600,
         max_tokens: int = 16000,
-        thinking_enabled: bool = True,
+        thinking_enabled: bool = False,
         max_retries: int = DEFAULT_MAX_RETRIES,
     ) -> ChatOpenAI:
         """获取或创建 ChatOpenAI 模型实例
@@ -191,7 +191,7 @@ class ModelFactory:
             temperature=0.1,
             timeout=600,
             max_tokens=16000,
-            thinking_enabled=True,
+            thinking_enabled=False,
         )
     
     def get_decision_model(self) -> ChatOpenAI:
@@ -200,7 +200,7 @@ class ModelFactory:
             temperature=0.1,
             timeout=300,
             max_tokens=8000,
-            thinking_enabled=True,
+            thinking_enabled=False,
         )
     
     def get_position_management_model(self) -> ChatOpenAI:
@@ -218,7 +218,7 @@ class ModelFactory:
             temperature=0.8,
             timeout=600,
             max_tokens=4096,
-            thinking_enabled=False,
+            thinking_enabled=True,
         )
     
     def clear_cache(self) -> None:
