@@ -105,6 +105,7 @@ class BacktestEngine:
         self._position_logger: Optional[PositionLogger] = None
         self._semaphore: Optional[DynamicSemaphore] = None
         
+        self._base_dir = get_config().get("agent", {}).get("data_dir", "modules/data")
         self._total_steps = 0
         
         self.result = BacktestResult(
@@ -174,12 +175,9 @@ class BacktestEngine:
         except Exception as e:
             logger.warning(f"预热图表渲染进程池失败: {e}")
         
-        agent_config = get_config("agent")
-        base_dir = agent_config.get("data_dir", "modules/data")
-        
         self._position_logger = PositionLogger(
             backtest_id=self.backtest_id,
-            base_dir=base_dir,
+            base_dir=self._base_dir,
         )
         
         self._position_simulator = PositionSimulator(
@@ -415,9 +413,7 @@ class BacktestEngine:
     def _save_result(self) -> None:
         """保存回测结果到文件"""
         try:
-            agent_config = get_config("agent")
-            base_dir = agent_config.get("data_dir", "modules/data")
-            result_dir = os.path.join(base_dir, "backtest", self.backtest_id)
+            result_dir = os.path.join(self._base_dir, "backtest", self.backtest_id)
             os.makedirs(result_dir, exist_ok=True)
             
             result_path = os.path.join(result_dir, "result.json")
