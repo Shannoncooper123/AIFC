@@ -143,7 +143,7 @@ class ModelFactory:
     
     def get_model(
         self,
-        temperature: float = 0.1,
+        temperature: float = 0.0,
         timeout: int = 600,
         max_tokens: int = 16000,
         thinking_enabled: bool = False,
@@ -188,7 +188,7 @@ class ModelFactory:
     def get_analysis_model(self) -> ChatOpenAI:
         """获取分析节点专用模型（做多/做空分析）"""
         return self.get_model(
-            temperature=0.1,
+            temperature=0.0,
             timeout=600,
             max_tokens=16000,
             thinking_enabled=False,
@@ -197,7 +197,7 @@ class ModelFactory:
     def get_decision_model(self) -> ChatOpenAI:
         """获取决策节点专用模型（开仓决策）"""
         return self.get_model(
-            temperature=0.1,
+            temperature=0.0,
             timeout=300,
             max_tokens=8000,
             thinking_enabled=False,
@@ -206,7 +206,7 @@ class ModelFactory:
     def get_position_management_model(self) -> ChatOpenAI:
         """获取持仓管理节点专用模型"""
         return self.get_model(
-            temperature=0.8,
+            temperature=0.0,    
             timeout=600,
             max_tokens=16000,
             thinking_enabled=False,
@@ -215,7 +215,7 @@ class ModelFactory:
     def get_reporting_model(self) -> ChatOpenAI:
         """获取报告节点专用模型"""
         return self.get_model(
-            temperature=0.8,
+            temperature=0.0,
             timeout=600,
             max_tokens=4096,
             thinking_enabled=True,
