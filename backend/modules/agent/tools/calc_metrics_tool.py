@@ -138,16 +138,25 @@ def calc_metrics_tool(
 
         # 4. 计算指标
         rr = tp_dist / sl_dist
+        tp_dist_pct = (tp_dist / entry_price) * 100
 
         # 5. 1R/2R 触发价位
         r1_price = entry_price + sign * sl_dist
         r2_price = entry_price + sign * (2.0 * sl_dist)
 
-        checks = {
-            "sl_distance_pct": round(sl_dist_pct, 2),
-        }
+        # 6. 构建易读的摘要（纯计算结果，不含建议）
+        side_cn = "做多" if side_norm == "long" else "做空"
+        
+        summary = f"""风险回报率计算结果
+交易对: {symbol} | 方向: {side_cn}
+入场价: ${entry_price:.4f}
+止盈价: ${tp:.4f} (+{tp_dist_pct:.2f}%) | 距离: {tp_dist:.4f} 点
+止损价: ${sl:.4f} (-{sl_dist_pct:.2f}%) | 距离: {sl_dist:.4f} 点
+风险回报率 (R:R): {rr:.2f}:1"""
 
         result = {
+            "summary": summary,
+            "rr": round(rr, 2),
             "inputs": {
                 "symbol": symbol,
                 "side": side_norm,
@@ -159,20 +168,21 @@ def calc_metrics_tool(
             "metrics": {
                 "entry_price": round(entry_price, 8),
                 "sl_distance": round(sl_dist, 8),
+                "sl_distance_pct": round(sl_dist_pct, 2),
                 "tp_distance": round(tp_dist, 8),
+                "tp_distance_pct": round(tp_dist_pct, 2),
                 "rr": round(rr, 6),
                 "r1_price": round(r1_price, 8),
                 "r2_price": round(r2_price, 8),
             },
-            "checks": checks,
             "feedback": feedback,
         }
 
         logger.info(
-            "calc_metrics_tool: 计算完成 -> symbol=%s, entry=%.8f, rr=%.3f",
+            "calc_metrics_tool: 计算完成 -> symbol=%s, entry=%.8f, rr=%.2f",
             symbol,
             entry_price,
-            result["metrics"]["rr"],
+            rr,
         )
         return result
 

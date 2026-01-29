@@ -38,15 +38,15 @@ class LimitOrderManager:
         self.lock = lock
 
         self.max_leverage = self.cfg.max_leverage
+        self._disable_persistence = config.get('agent', {}).get('disable_persistence', False)
 
-        # 限价单字典：order_id -> PendingOrder
         self.orders: Dict[str, PendingOrder] = {}
 
-        # 持久化文件路径
-        state_path = Path(config['agent']['state_path'])
-        self.orders_file = state_path.parent / 'pending_orders.json'
-
-        logger.info(f"LimitOrderManager 初始化，持久化文件: {self.orders_file}")
+        state_path = config.get('agent', {}).get('state_path')
+        if state_path:
+            self.orders_file = Path(state_path).parent / 'pending_orders.json'
+        else:
+            self.orders_file = None
 
     def create_limit_order(
         self,
@@ -357,13 +357,13 @@ class LimitOrderManager:
 
     def persist(self) -> None:
         """持久化所有待成交的限价单到文件"""
+        if self._disable_persistence or not self.orders_file:
+            return
         try:
             from modules.agent.trade_simulator.utils.file_utils import TaskType
 
-            # 只保留 pending 状态的订单
             pending_orders = [self._order_to_dict(o) for o in self.orders.values() if o.status == 'pending']
 
-            # 使用写入队列异步写入
             write_queue = WriteQueue.get_instance()
             write_queue.enqueue(TaskType.STATE, str(self.orders_file), pending_orders)
 
@@ -373,6 +373,8 @@ class LimitOrderManager:
 
     def restore(self) -> None:
         """从文件恢复待成交订单"""
+        if self._disable_persistence or not self.orders_file:
+            return
         try:
             if not self.orders_file.exists():
                 logger.warning(f"restore: 未找到挂单文件 {self.orders_file}，跳过恢复")
@@ -381,7 +383,6 @@ class LimitOrderManager:
             with open(self.orders_file, 'r', encoding='utf-8') as f:
                 orders_data = json.load(f)
 
-            # 直接加载列表
             if isinstance(orders_data, list):
                 restored_orders = [PendingOrder(**data) for data in orders_data]
                 for order in restored_orders:

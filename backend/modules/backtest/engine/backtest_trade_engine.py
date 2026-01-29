@@ -50,33 +50,30 @@ class BacktestTradeEngine(TradeSimulatorEngine):
     ) -> Dict:
         """创建回测专用配置
         
+        回测步骤使用内存状态，不创建独立目录，避免产生大量临时目录。
+        交易结果通过 PositionLogger 统一记录到主回测目录的 all_positions.jsonl。
+        
         Args:
             config: 基础配置
             backtest_id: 回测ID
             initial_balance: 初始资金
         
         Returns:
-            修改后的配置，使用独立的状态文件路径
+            修改后的配置，禁用文件持久化
         """
         bt_config = copy.deepcopy(config)
-        
-        base_dir = config.get('agent', {}).get('data_dir', 'modules/data')
-        backtest_dir = os.path.join(base_dir, 'backtest', backtest_id)
-        
-        os.makedirs(backtest_dir, exist_ok=True)
         
         if 'agent' not in bt_config:
             bt_config['agent'] = {}
         
-        bt_config['agent']['trade_state_path'] = os.path.join(backtest_dir, 'trade_state.json')
-        bt_config['agent']['position_history_path'] = os.path.join(backtest_dir, 'position_history.jsonl')
-        bt_config['agent']['state_path'] = os.path.join(backtest_dir, 'agent_state.json')
+        bt_config['agent']['trade_state_path'] = None
+        bt_config['agent']['position_history_path'] = None
+        bt_config['agent']['state_path'] = None
+        bt_config['agent']['disable_persistence'] = True
         
         if 'simulator' not in bt_config['agent']:
             bt_config['agent']['simulator'] = {}
         bt_config['agent']['simulator']['initial_balance'] = initial_balance
-        
-        logger.info(f"回测状态文件目录: {backtest_dir}")
         
         return bt_config
     

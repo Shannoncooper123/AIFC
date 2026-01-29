@@ -13,12 +13,13 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from modules.agent.engine import get_engine
 from modules.agent.tools.tool_utils import get_kline_provider, set_kline_provider
 from modules.backtest.context import set_backtest_mode
 from modules.backtest.engine.dynamic_semaphore import DynamicSemaphore
+from modules.backtest.engine.position_logger import PositionLogger
 from modules.backtest.engine.position_simulator import PositionSimulator
 from modules.backtest.engine.result_collector import ResultCollector
 from modules.backtest.engine.stats_collector import BacktestStatsCollector, StepMetrics
@@ -101,8 +102,10 @@ class BacktestEngine:
         self._executor: Optional[WorkflowExecutor] = None
         self._stats: Optional[BacktestStatsCollector] = None
         self._result_collector: Optional[ResultCollector] = None
+        self._position_logger: Optional[PositionLogger] = None
         self._semaphore: Optional[DynamicSemaphore] = None
         
+        self._base_dir = get_config().get("agent", {}).get("data_dir", "modules/data")
         self._total_steps = 0
         
         self.result = BacktestResult(
@@ -172,10 +175,16 @@ class BacktestEngine:
         except Exception as e:
             logger.warning(f"预热图表渲染进程池失败: {e}")
         
+        self._position_logger = PositionLogger(
+            backtest_id=self.backtest_id,
+            base_dir=self._base_dir,
+        )
+        
         self._position_simulator = PositionSimulator(
             config=self.config,
             kline_provider=self.kline_provider,
             backtest_id=self.backtest_id,
+            position_logger=self._position_logger,
         )
         
         self._executor = WorkflowExecutor(
@@ -189,7 +198,7 @@ class BacktestEngine:
         self._stats = BacktestStatsCollector(self._total_steps)
         self._result_collector = ResultCollector(self.result)
         
-        logger.info("回测环境初始化完成")
+        logger.info(f"回测环境初始化完成, 仓位记录文件: {self._position_logger.positions_file_path}")
     
     def _cleanup(self) -> None:
         """清理回测环境"""
@@ -199,6 +208,9 @@ class BacktestEngine:
         
         if self._original_provider:
             set_kline_provider(self._original_provider)
+        
+        if self._position_logger:
+            self._position_logger.write_summary()
         
         self.kline_provider = None
         self._executor = None
@@ -401,9 +413,7 @@ class BacktestEngine:
     def _save_result(self) -> None:
         """保存回测结果到文件"""
         try:
-            agent_config = get_config("agent")
-            base_dir = agent_config.get("data_dir", "modules/data")
-            result_dir = os.path.join(base_dir, "backtest", self.backtest_id)
+            result_dir = os.path.join(self._base_dir, "backtest", self.backtest_id)
             os.makedirs(result_dir, exist_ok=True)
             
             result_path = os.path.join(result_dir, "result.json")
@@ -457,6 +467,21 @@ class BacktestEngine:
             "throughput_per_min": 0,
             "timeout_count": 0,
             "error_count": 0,
+        }
+    
+    def get_side_stats(self) -> Dict[str, Dict[str, Any]]:
+        """获取做多/做空实时统计数据"""
+        if self._result_collector:
+            return self._result_collector.get_realtime_side_stats()
+        return {
+            "long_stats": {
+                "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+                "total_pnl": 0.0, "win_rate": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
+            },
+            "short_stats": {
+                "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+                "total_pnl": 0.0, "win_rate": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
+            },
         }
     
     @property

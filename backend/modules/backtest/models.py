@@ -180,6 +180,29 @@ class BacktestTradeResult:
 
 
 @dataclass
+class SideStats:
+    """做多/做空方向统计"""
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    total_pnl: float = 0.0
+    win_rate: float = 0.0
+    avg_win: float = 0.0
+    avg_loss: float = 0.0
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "total_trades": self.total_trades,
+            "winning_trades": self.winning_trades,
+            "losing_trades": self.losing_trades,
+            "total_pnl": round(self.total_pnl, 4),
+            "win_rate": round(self.win_rate, 4),
+            "avg_win": round(self.avg_win, 4),
+            "avg_loss": round(self.avg_loss, 4),
+        }
+
+
+@dataclass
 class BacktestResult:
     """回测结果"""
     backtest_id: str
@@ -200,6 +223,9 @@ class BacktestResult:
     total_klines_analyzed: int = 0
     completed_batches: int = 0
     total_batches: int = 0
+    
+    long_stats: SideStats = field(default_factory=SideStats)
+    short_stats: SideStats = field(default_factory=SideStats)
     
     trades: List[BacktestTradeResult] = field(default_factory=list)
     workflow_runs: List[str] = field(default_factory=list)
@@ -244,6 +270,8 @@ class BacktestResult:
             "total_klines_analyzed": self.total_klines_analyzed,
             "completed_batches": self.completed_batches,
             "total_batches": self.total_batches,
+            "long_stats": self.long_stats.to_dict(),
+            "short_stats": self.short_stats.to_dict(),
             "trades": [t.to_dict() for t in self.trades],
             "workflow_runs": self.workflow_runs,
             "error_message": self.error_message,

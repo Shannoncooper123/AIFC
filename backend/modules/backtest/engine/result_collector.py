@@ -10,6 +10,7 @@ from modules.backtest.models import (
     BacktestResult,
     BacktestStatus,
     BacktestTradeResult,
+    SideStats,
 )
 from modules.monitor.utils.logger import get_logger
 
@@ -48,6 +49,46 @@ class ResultCollector:
         with self._lock:
             return len(self.result.trades)
     
+    def get_realtime_side_stats(self) -> Dict[str, Dict[str, Any]]:
+        """获取实时的做多/做空统计数据（用于进度更新）"""
+        with self._lock:
+            trades = self.result.trades
+            
+            def calc_stats(side: str) -> Dict[str, Any]:
+                side_trades = [t for t in trades if t.side.lower() == side.lower()]
+                if not side_trades:
+                    return {
+                        "total_trades": 0,
+                        "winning_trades": 0,
+                        "losing_trades": 0,
+                        "total_pnl": 0.0,
+                        "win_rate": 0.0,
+                        "avg_win": 0.0,
+                        "avg_loss": 0.0,
+                    }
+                
+                winning = [t for t in side_trades if t.realized_pnl > 0]
+                losing = [t for t in side_trades if t.realized_pnl < 0]
+                total_pnl = sum(t.realized_pnl for t in side_trades)
+                win_rate = len(winning) / len(side_trades) if side_trades else 0
+                avg_win = sum(t.realized_pnl for t in winning) / len(winning) if winning else 0
+                avg_loss = abs(sum(t.realized_pnl for t in losing) / len(losing)) if losing else 0
+                
+                return {
+                    "total_trades": len(side_trades),
+                    "winning_trades": len(winning),
+                    "losing_trades": len(losing),
+                    "total_pnl": round(total_pnl, 4),
+                    "win_rate": round(win_rate, 4),
+                    "avg_win": round(avg_win, 4),
+                    "avg_loss": round(avg_loss, 4),
+                }
+            
+            return {
+                "long_stats": calc_stats("long"),
+                "short_stats": calc_stats("short"),
+            }
+    
     def compile_results(self) -> None:
         """编译最终结果统计"""
         with self._lock:
@@ -78,6 +119,9 @@ class ResultCollector:
             if trades:
                 self.result.avg_trade_duration = sum(t.holding_bars for t in trades) / len(trades)
             
+            self.result.long_stats = self._calculate_side_stats(trades, "long")
+            self.result.short_stats = self._calculate_side_stats(trades, "short")
+            
             self._log_summary()
     
     def _calculate_max_drawdown(self, trades: List[BacktestTradeResult]) -> float:
@@ -98,6 +142,32 @@ class ResultCollector:
             max_drawdown = max(max_drawdown, drawdown)
         
         return max_drawdown
+    
+    def _calculate_side_stats(self, trades: List[BacktestTradeResult], side: str) -> SideStats:
+        """计算指定方向（做多/做空）的统计数据"""
+        side_trades = [t for t in trades if t.side.lower() == side.lower()]
+        
+        if not side_trades:
+            return SideStats()
+        
+        winning = [t for t in side_trades if t.realized_pnl > 0]
+        losing = [t for t in side_trades if t.realized_pnl < 0]
+        
+        total_pnl = sum(t.realized_pnl for t in side_trades)
+        win_rate = len(winning) / len(side_trades) if side_trades else 0
+        
+        avg_win = sum(t.realized_pnl for t in winning) / len(winning) if winning else 0
+        avg_loss = abs(sum(t.realized_pnl for t in losing) / len(losing)) if losing else 0
+        
+        return SideStats(
+            total_trades=len(side_trades),
+            winning_trades=len(winning),
+            losing_trades=len(losing),
+            total_pnl=total_pnl,
+            win_rate=win_rate,
+            avg_win=avg_win,
+            avg_loss=avg_loss,
+        )
     
     def _log_summary(self) -> None:
         """输出结果摘要日志"""

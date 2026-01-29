@@ -81,6 +81,11 @@ class BacktestKlineProvider:
             interval: K线周期，默认15m
         """
         self.symbols = [s.upper() for s in symbols]
+        
+        if 'BTCUSDT' not in self.symbols:
+            self.symbols.append('BTCUSDT')
+            logger.info("自动添加 BTCUSDT 用于趋势对比分析")
+        
         self.start_time = start_time
         self.end_time = end_time
         self.interval = interval

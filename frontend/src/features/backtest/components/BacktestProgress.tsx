@@ -1,4 +1,4 @@
-import { Loader2, Square, CheckCircle, XCircle, Clock, TrendingUp, TrendingDown, Target, BarChart3, Activity, Zap, AlertTriangle } from 'lucide-react';
+import { Loader2, Square, CheckCircle, XCircle, Clock, TrendingUp, TrendingDown, Target, BarChart3, Activity, Zap, AlertTriangle, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 import { Card, Button } from '../../../components/ui';
 
 interface RuntimeStats {
@@ -12,6 +12,16 @@ interface RuntimeStats {
   throughput_per_min: number;
   timeout_count: number;
   error_count: number;
+}
+
+interface SideStats {
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  total_pnl: number;
+  win_rate: number;
+  avg_win: number;
+  avg_loss: number;
 }
 
 interface BacktestProgressProps {
@@ -31,6 +41,8 @@ interface BacktestProgressProps {
     total_pnl?: number;
     win_rate?: number;
     runtime_stats?: RuntimeStats;
+    long_stats?: SideStats;
+    short_stats?: SideStats;
   };
   onStop?: () => void;
 }
@@ -170,6 +182,70 @@ export function BacktestProgress({ backtestId, status, progress, onStop }: Backt
                   <div className="text-sm text-neutral-400">Cumulative P&L</div>
                   <div className={`text-xl font-bold ${isProfitable ? 'text-emerald-400' : 'text-rose-400'}`}>
                     {isProfitable ? '+' : ''}{formatCurrency(totalPnl)}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isRunning && (progress.long_stats || progress.short_stats) && (
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ArrowUpCircle className="h-4 w-4 text-emerald-400" />
+                    <span className="text-emerald-400 text-sm font-medium">Long</span>
+                    <span className="text-neutral-500 text-xs">({progress.long_stats?.total_trades ?? 0})</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <div className="text-neutral-500">P&L</div>
+                      <div className={`font-semibold ${(progress.long_stats?.total_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {formatCurrency(progress.long_stats?.total_pnl ?? 0)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500">Win Rate</div>
+                      <div className="font-semibold text-white">
+                        {formatPercent(progress.long_stats?.win_rate ?? 0)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500">W/L</div>
+                      <div className="font-semibold">
+                        <span className="text-emerald-400">{progress.long_stats?.winning_trades ?? 0}</span>
+                        <span className="text-neutral-500">/</span>
+                        <span className="text-rose-400">{progress.long_stats?.losing_trades ?? 0}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ArrowDownCircle className="h-4 w-4 text-rose-400" />
+                    <span className="text-rose-400 text-sm font-medium">Short</span>
+                    <span className="text-neutral-500 text-xs">({progress.short_stats?.total_trades ?? 0})</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <div className="text-neutral-500">P&L</div>
+                      <div className={`font-semibold ${(progress.short_stats?.total_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {formatCurrency(progress.short_stats?.total_pnl ?? 0)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500">Win Rate</div>
+                      <div className="font-semibold text-white">
+                        {formatPercent(progress.short_stats?.win_rate ?? 0)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-neutral-500">W/L</div>
+                      <div className="font-semibold">
+                        <span className="text-emerald-400">{progress.short_stats?.winning_trades ?? 0}</span>
+                        <span className="text-neutral-500">/</span>
+                        <span className="text-rose-400">{progress.short_stats?.losing_trades ?? 0}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
