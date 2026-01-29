@@ -22,9 +22,12 @@ class StateManager:
         self.history_path = self.cfg.position_history_path
         self.account = account
         self.positions = positions
+        self._disable_persistence = config.get('agent', {}).get('disable_persistence', False)
 
     def restore(self) -> None:
         """恢复账户与持仓状态"""
+        if self._disable_persistence or not self.state_path:
+            return
         try:
             st = load_trade_state(self.state_path)
             acc = st.get('account', {})
@@ -35,7 +38,7 @@ class StateManager:
                 self.account.unrealized_pnl = float(acc.get('unrealized_pnl', 0.0))
                 self.account.reserved_margin_sum = float(acc.get('reserved_margin_sum', 0.0))
                 self.account.positions_count = int(acc.get('positions_count', 0))
-                self.account.total_fees = float(acc.get('total_fees', 0.0))  # 恢复累计手续费
+                self.account.total_fees = float(acc.get('total_fees', 0.0))
             for p in st.get('positions', []):
                 pos = Position(**p)
                 self.positions[pos.symbol] = pos
@@ -45,6 +48,8 @@ class StateManager:
 
     def persist(self) -> None:
         """持久化当前状态（异步非阻塞）"""
+        if self._disable_persistence or not self.state_path:
+            return
         st = {
             'account': self.account.to_dict(),
             'positions': [self.pos_to_dict(p) for p in self.positions.values() if p.status == 'open'],
@@ -59,12 +64,13 @@ class StateManager:
         - persist(): 异步写入，立即返回，数据进入队列
         - persist_sync(): 同步写入，使用文件锁直接写入磁盘
         """
+        if self._disable_persistence or not self.state_path:
+            return
         st = {
             'account': self.account.to_dict(),
             'positions': [self.pos_to_dict(p) for p in self.positions.values() if p.status == 'open'],
             'ts': datetime.now(timezone.utc).isoformat(),
         }
-        # 使用文件锁同步写入
         locked_write_json(self.state_path, st)
         logger.info(f"同步持久化完成: balance={self.account.balance}, positions={len([p for p in self.positions.values() if p.status == 'open'])}")
 
