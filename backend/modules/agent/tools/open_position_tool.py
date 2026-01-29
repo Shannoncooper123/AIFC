@@ -35,13 +35,17 @@ def _format_position_result(res: Dict[str, Any], margin_usdt: float, leverage: i
     side_cn = '做多' if side == 'long' else '做空'
     
     if side == 'long':
-        tp_pct = ((tp_price - entry_price) / entry_price * 100) if entry_price else 0
-        sl_pct = ((entry_price - sl_price) / entry_price * 100) if entry_price else 0
+        tp_dist = tp_price - entry_price
+        sl_dist = entry_price - sl_price
+        tp_pct = (tp_dist / entry_price * 100) if entry_price else 0
+        sl_pct = (sl_dist / entry_price * 100) if entry_price else 0
     else:
-        tp_pct = ((entry_price - tp_price) / entry_price * 100) if entry_price else 0
-        sl_pct = ((sl_price - entry_price) / entry_price * 100) if entry_price else 0
+        tp_dist = entry_price - tp_price
+        sl_dist = sl_price - entry_price
+        tp_pct = (tp_dist / entry_price * 100) if entry_price else 0
+        sl_pct = (sl_dist / entry_price * 100) if entry_price else 0
     
-    rr_ratio = tp_pct / sl_pct if sl_pct > 0 else 0
+    rr_ratio = tp_dist / sl_dist if sl_dist > 0 else 0
     
     return f"""✅ 开仓成功
 
@@ -49,9 +53,9 @@ def _format_position_result(res: Dict[str, Any], margin_usdt: float, leverage: i
   入场价: ${entry_price:.6g}
   数量: {qty:.4f}
   保证金: ${margin_usdt:.2f} | 名义价值: ${notional:.2f}
-  止盈: ${tp_price:.6g} (+{tp_pct:.1f}%)
-  止损: ${sl_price:.6g} (-{sl_pct:.1f}%)
-  风险回报比: {rr_ratio:.1f}:1"""
+  止盈: ${tp_price:.6g} (+{tp_pct:.2f}%) | 距离: {tp_dist:.4f} 点
+  止损: ${sl_price:.6g} (-{sl_pct:.2f}%) | 距离: {sl_dist:.4f} 点
+  风险回报比 (R:R): {rr_ratio:.2f}:1"""
 
 
 
@@ -88,17 +92,21 @@ def _send_position_open_email(symbol: str, side: str, margin_usdt: float, levera
         
         notifier.alert_email = target_email
         
-        # 计算止盈止损比例
+        # 计算止盈止损比例和距离
         side_abbr = "LONG" if side == "long" else "SHORT"
         if side == "long":
-            tp_rate = ((tp_price - entry_price) / entry_price) * 100 if entry_price else 0
-            sl_rate = ((entry_price - sl_price) / entry_price) * 100 if entry_price else 0
+            tp_dist = tp_price - entry_price
+            sl_dist = entry_price - sl_price
+            tp_rate = (tp_dist / entry_price) * 100 if entry_price else 0
+            sl_rate = (sl_dist / entry_price) * 100 if entry_price else 0
         else:
-            tp_rate = ((entry_price - tp_price) / entry_price) * 100 if entry_price else 0
-            sl_rate = ((sl_price - entry_price) / entry_price) * 100 if entry_price else 0
+            tp_dist = entry_price - tp_price
+            sl_dist = sl_price - entry_price
+            tp_rate = (tp_dist / entry_price) * 100 if entry_price else 0
+            sl_rate = (sl_dist / entry_price) * 100 if entry_price else 0
         
-        # 计算风险回报比
-        risk_reward_ratio = tp_rate / sl_rate if sl_rate > 0 else 0
+        # 计算风险回报比（基于距离，而非百分比）
+        risk_reward_ratio = tp_dist / sl_dist if sl_dist > 0 else 0
         
         # 构建HTML邮件
         subject = f"{symbol} {side_abbr}"
