@@ -19,6 +19,7 @@ from modules.agent.engine import get_engine
 from modules.agent.tools.tool_utils import get_kline_provider, set_kline_provider
 from modules.backtest.context import set_backtest_mode
 from modules.backtest.engine.dynamic_semaphore import DynamicSemaphore
+from modules.backtest.engine.position_logger import PositionLogger
 from modules.backtest.engine.position_simulator import PositionSimulator
 from modules.backtest.engine.result_collector import ResultCollector
 from modules.backtest.engine.stats_collector import BacktestStatsCollector, StepMetrics
@@ -101,6 +102,7 @@ class BacktestEngine:
         self._executor: Optional[WorkflowExecutor] = None
         self._stats: Optional[BacktestStatsCollector] = None
         self._result_collector: Optional[ResultCollector] = None
+        self._position_logger: Optional[PositionLogger] = None
         self._semaphore: Optional[DynamicSemaphore] = None
         
         self._total_steps = 0
@@ -172,10 +174,19 @@ class BacktestEngine:
         except Exception as e:
             logger.warning(f"预热图表渲染进程池失败: {e}")
         
+        agent_config = get_config("agent")
+        base_dir = agent_config.get("data_dir", "modules/data")
+        
+        self._position_logger = PositionLogger(
+            backtest_id=self.backtest_id,
+            base_dir=base_dir,
+        )
+        
         self._position_simulator = PositionSimulator(
             config=self.config,
             kline_provider=self.kline_provider,
             backtest_id=self.backtest_id,
+            position_logger=self._position_logger,
         )
         
         self._executor = WorkflowExecutor(
@@ -189,7 +200,7 @@ class BacktestEngine:
         self._stats = BacktestStatsCollector(self._total_steps)
         self._result_collector = ResultCollector(self.result)
         
-        logger.info("回测环境初始化完成")
+        logger.info(f"回测环境初始化完成, 仓位记录文件: {self._position_logger.positions_file_path}")
     
     def _cleanup(self) -> None:
         """清理回测环境"""
@@ -199,6 +210,9 @@ class BacktestEngine:
         
         if self._original_provider:
             set_kline_provider(self._original_provider)
+        
+        if self._position_logger:
+            self._position_logger.write_summary()
         
         self.kline_provider = None
         self._executor = None

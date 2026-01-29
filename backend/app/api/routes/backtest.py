@@ -375,12 +375,15 @@ async def get_backtest_history(
     backtest_id: str,
     limit: int = Query(default=50, ge=1, le=500),
 ):
-    """获取回测的历史交易记录"""
+    """获取回测的历史交易记录
+    
+    从 all_positions.jsonl 文件读取，该文件在回测过程中实时更新。
+    """
     agent_config = get_config("agent")
     base_dir = BASE_DIR / agent_config.get("data_dir", "modules/data")
-    history_path = base_dir / "backtest" / backtest_id / "position_history.jsonl"
+    positions_file = base_dir / "backtest" / backtest_id / "all_positions.jsonl"
     
-    if not history_path.exists():
+    if not positions_file.exists():
         return {
             "backtest_id": backtest_id,
             "positions": [],
@@ -392,15 +395,35 @@ async def get_backtest_history(
         positions = []
         total_pnl = 0.0
         
-        with open(history_path, 'r', encoding='utf-8') as f:
+        with open(positions_file, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     record = json.loads(line)
-                    positions.append(record)
-                    total_pnl += record.get("realized_pnl", 0)
+                    if record.get("type") == "trade":
+                        positions.append({
+                            "symbol": record.get("symbol", ""),
+                            "side": record.get("side", ""),
+                            "entry_price": record.get("entry_price", 0),
+                            "close_price": record.get("exit_price", 0),
+                            "size": record.get("qty", 0),
+                            "open_time": record.get("entry_time", ""),
+                            "close_time": record.get("exit_time", ""),
+                            "realized_pnl": record.get("realized_pnl", 0),
+                            "close_reason": record.get("close_reason", ""),
+                            "exit_type": record.get("exit_type", ""),
+                            "tp_price": record.get("tp_price"),
+                            "sl_price": record.get("sl_price"),
+                            "margin_usdt": record.get("margin_usdt", 0),
+                            "leverage": record.get("leverage", 1),
+                            "pnl_percent": record.get("pnl_percent", 0),
+                            "is_win": record.get("is_win", False),
+                            "r_multiple": record.get("r_multiple"),
+                            "holding_bars": record.get("holding_bars", 0),
+                        })
+                        total_pnl += record.get("realized_pnl", 0)
                 except json.JSONDecodeError:
                     continue
         

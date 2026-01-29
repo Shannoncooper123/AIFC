@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from modules.backtest.engine.backtest_trade_engine import BacktestTradeEngine
 from modules.backtest.models import BacktestConfig, BacktestTradeResult
 from modules.backtest.providers.kline_provider import BacktestKlineProvider
 from modules.monitor.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from modules.backtest.engine.position_logger import PositionLogger
 
 logger = get_logger('backtest.position_simulator')
 
@@ -41,10 +44,12 @@ class PositionSimulator:
         config: BacktestConfig,
         kline_provider: BacktestKlineProvider,
         backtest_id: str,
+        position_logger: Optional["PositionLogger"] = None,
     ):
         self.config = config
         self.kline_provider = kline_provider
         self.backtest_id = backtest_id
+        self._position_logger = position_logger
         self._interval_minutes = get_interval_minutes(config.interval)
         self._step_delta = timedelta(minutes=self._interval_minutes)
     
@@ -259,7 +264,7 @@ class PositionSimulator:
         
         fees_total = saved_data["fees_open"] + result.get('fees_close', 0)
         
-        return BacktestTradeResult(
+        trade_result = BacktestTradeResult(
             trade_id=f"{self.backtest_id}_{uuid.uuid4().hex[:8]}",
             kline_time=entry_time,
             symbol=saved_data.get("symbol", ""),
@@ -289,6 +294,11 @@ class PositionSimulator:
             close_reason=close_reason,
             order_created_time=order_created_time,
         )
+        
+        if self._position_logger:
+            self._position_logger.log_trade_from_result(trade_result)
+        
+        return trade_result
     
     def _handle_timeout_close(
         self,
@@ -337,7 +347,7 @@ class PositionSimulator:
         
         fees_total = saved_data["fees_open"] + close_result.get('fees_close', 0)
         
-        return BacktestTradeResult(
+        trade_result = BacktestTradeResult(
             trade_id=f"{self.backtest_id}_{uuid.uuid4().hex[:8]}",
             kline_time=entry_time,
             symbol=symbol,
@@ -367,6 +377,11 @@ class PositionSimulator:
             close_reason=close_reason,
             order_created_time=order_created_time,
         )
+        
+        if self._position_logger:
+            self._position_logger.log_trade_from_result(trade_result)
+        
+        return trade_result
     
     def _calculate_r_multiple(
         self,
