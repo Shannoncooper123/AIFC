@@ -284,7 +284,19 @@ def open_position_tool(
             return make_input_error("sl_price必须为正数价格")
         
         # 获取当前价格用于验证 TP/SL 合理性
-        current_price = eng.position_manager.get_latest_close_price(symbol)
+        current_price = None
+        
+        # 1. 优先尝试从回测引擎获取模拟价格（如果是回测模式）
+        # 使用 getattr 避免类型检查依赖，兼容 BacktestTradeEngine
+        get_simulated_price = getattr(eng, 'get_simulated_price', None)
+        if callable(get_simulated_price):
+            current_price = get_simulated_price(symbol)
+            logger.info(f"open_position_tool: 从回测引擎获取模拟价格 {symbol}={current_price}")
+            
+        # 2. 如果不是回测模式或未获取到模拟价格，则从 PositionManager 获取（实盘/模拟盘逻辑）
+        if current_price is None:
+            current_price = eng.position_manager.get_latest_close_price(symbol)
+            
         if current_price is None:
             logger.error(f"open_position_tool: 无法获取 {symbol} 当前价格")
             return make_input_error(f"无法获取 {symbol} 当前价格，请稍后重试")
