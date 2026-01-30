@@ -82,3 +82,4 @@ logs/
 # 数据文件（排除代码模块）
 /backend/modules/data/*.jsonl
 *.pid
+analysis/all_positions.jsonl
