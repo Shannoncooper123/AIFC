@@ -161,18 +161,54 @@ def create_limit_order_tool(
                 return make_input_error(f"做空限价单错误: 止盈价({tp_price}) 必须低于 挂单价({limit_price})")
             if sl_price <= limit_price:
                 return make_input_error(f"做空限价单错误: 止损价({sl_price}) 必须高于 挂单价({limit_price})")
-            
+        
         config = get_config()
+        
+        # 获取引擎用于价格验证
+        eng = get_engine()
+        if eng is None:
+            logger.error("create_limit_order_tool: 引擎未初始化")
+            return {"error": "TOOL_RUNTIME_ERROR: 交易引擎未初始化"}
+        
+        # 获取当前价格用于验证挂单价格合理性
+        current_price = None
+        
+        # 1. 优先尝试从回测引擎获取模拟价格（如果是回测模式）
+        get_simulated_price = getattr(eng, 'get_simulated_price', None)
+        if callable(get_simulated_price):
+            current_price = get_simulated_price(symbol)
+            logger.info(f"create_limit_order_tool: 从回测引擎获取模拟价格 {symbol}={current_price}")
+        
+        # 2. 如果不是回测模式或未获取到模拟价格，则从 PositionManager 获取
+        if current_price is None:
+            current_price = eng.position_manager.get_latest_close_price(symbol)
+        
+        if current_price is None:
+            logger.error(f"create_limit_order_tool: 无法获取 {symbol} 当前价格")
+            return make_input_error(f"无法获取 {symbol} 当前价格，请稍后重试")
+        
+        # 验证挂单价格与当前价格的关系
+        # 做多限价单：挂单价应低于当前价（等待价格回落后买入）
+        # 做空限价单：挂单价应高于当前价（等待价格上涨后卖出）
+        if side_lower == "long":
+            if limit_price >= current_price:
+                logger.error(f"create_limit_order_tool: 做多挂单价({limit_price})应低于当前价格({current_price})")
+                return make_input_error(
+                    f"做多限价单错误: 挂单价({limit_price})必须低于当前价格({current_price})。"
+                    f"限价单用于在更低价格买入，如需立即成交请使用市价单。"
+                )
+        else:
+            if limit_price <= current_price:
+                logger.error(f"create_limit_order_tool: 做空挂单价({limit_price})应高于当前价格({current_price})")
+                return make_input_error(
+                    f"做空限价单错误: 挂单价({limit_price})必须高于当前价格({current_price})。"
+                    f"限价单用于在更高价格卖出，如需立即成交请使用市价单。"
+                )
         trading_mode = config.get('trading', {}).get('mode', 'simulator')
         if trading_mode == 'live':
             leverage = int(config.get('trading', {}).get('max_leverage', DEFAULT_LEVERAGE))
         else:
             leverage = int(config.get('agent', {}).get('simulator', {}).get('max_leverage', DEFAULT_LEVERAGE))
-        
-        eng = get_engine()
-        if eng is None:
-            logger.error("create_limit_order_tool: 引擎未初始化")
-            return {"error": "TOOL_RUNTIME_ERROR: 交易引擎未初始化"}
 
         try:
             account_summary = eng.get_account_summary()

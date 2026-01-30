@@ -6,7 +6,6 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from modules.agent.state import SymbolAnalysisState
-from modules.agent.tools.open_position_tool import open_position_tool
 from modules.agent.tools.create_limit_order_tool import create_limit_order_tool
 from modules.agent.tools.tool_utils import fetch_klines
 from modules.agent.utils.model_factory import get_model_factory, with_retry
@@ -16,7 +15,7 @@ from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.opening_decision')
 
-REVIEW_INTERVALS = ["1d", "4h", "1h", "15m"]
+REVIEW_INTERVALS = ["4h", "1h", "15m"]
 
 
 def _format_account_summary(account: Dict[str, Any]) -> str:
@@ -151,7 +150,6 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
 
     try:
         tools = [
-            open_position_tool,
             create_limit_order_tool,
         ]
 
