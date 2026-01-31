@@ -1,12 +1,16 @@
-"""回测K线数据提供者 - 从Binance API预加载历史数据并按时间切片返回"""
+"""回测K线数据提供者 - 支持本地缓存和按时间切片返回"""
 import contextvars
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from modules.config.settings import get_config
-from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.data.models import Kline
 from modules.monitor.utils.logger import get_logger
+
+from .kline_storage import KlineStorage
+from .kline_fetcher import KlineFetcher, get_interval_minutes
 
 logger = get_logger('backtest.providers.kline')
 
@@ -60,6 +64,8 @@ class BacktestKlineProvider:
     """回测K线数据提供者
     
     预加载指定时间范围内的历史K线数据，并根据模拟时间返回对应的数据切片。
+    支持本地缓存，避免重复从API获取数据。
+    
     实现 KlineProviderProtocol 接口，可注入到 tool_utils 中替换实盘数据源。
     
     注意：使用 contextvars 来支持并发执行和 asyncio 上下文传播。
@@ -70,7 +76,8 @@ class BacktestKlineProvider:
         symbols: List[str],
         start_time: datetime,
         end_time: datetime,
-        interval: str = "15m"
+        interval: str = "15m",
+        use_cache: bool = True
     ):
         """初始化回测K线提供者
         
@@ -79,6 +86,7 @@ class BacktestKlineProvider:
             start_time: 回测开始时间
             end_time: 回测结束时间
             interval: K线周期，默认15m
+            use_cache: 是否使用本地缓存，默认True
         """
         self.symbols = [s.upper() for s in symbols]
         
@@ -89,37 +97,114 @@ class BacktestKlineProvider:
         self.start_time = start_time
         self.end_time = end_time
         self.interval = interval
+        self.use_cache = use_cache
         
         self._default_time = start_time
         
         self._kline_cache: Dict[str, Dict[str, List[Kline]]] = {}
         
+        cfg = get_config()
+        cache_dir = cfg.get('backtest', {}).get('kline_cache_dir', 'modules/data/kline_cache')
+        
+        if not os.path.isabs(cache_dir):
+            backend_dir = Path(__file__).parent.parent.parent.parent
+            cache_dir = str(backend_dir / cache_dir)
+        
+        self._storage = KlineStorage(cache_dir) if use_cache else None
+        self._fetcher: Optional[KlineFetcher] = None
+        
         self._load_historical_data()
     
     def _get_interval_minutes(self, interval: str) -> int:
         """将K线周期转换为分钟数"""
-        mapping = {
-            "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-            "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720, "1d": 1440,
-        }
-        return mapping.get(interval, 15)
+        return get_interval_minutes(interval)
+    
+    def _ensure_fetcher(self) -> KlineFetcher:
+        """确保fetcher已初始化"""
+        if self._fetcher is None:
+            self._fetcher = KlineFetcher()
+        return self._fetcher
+    
+    def _load_klines_with_cache(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+        buffer_bars: int = 100
+    ) -> List[Kline]:
+        """加载K线数据（优先使用本地缓存）
+        
+        Args:
+            symbol: 交易对
+            interval: K线周期
+            start_time: 开始时间
+            end_time: 结束时间
+            buffer_bars: 缓冲K线数量
+        
+        Returns:
+            K线数据列表
+        """
+        interval_minutes = self._get_interval_minutes(interval)
+        buffer_td = timedelta(minutes=buffer_bars * interval_minutes)
+        actual_start = start_time - buffer_td
+        
+        if not self.use_cache or self._storage is None:
+            fetcher = self._ensure_fetcher()
+            return fetcher.fetch_klines(
+                symbol=symbol,
+                interval=interval,
+                start_time=actual_start,
+                end_time=end_time,
+                include_buffer=False
+            )
+        
+        missing_ranges = self._storage.get_missing_ranges(
+            symbol=symbol,
+            interval=interval,
+            start_time=actual_start,
+            end_time=end_time,
+            interval_minutes=interval_minutes
+        )
+        
+        if missing_ranges:
+            logger.info(f"  {symbol} {interval}: 需要从API获取 {len(missing_ranges)} 个时间段")
+            fetcher = self._ensure_fetcher()
+            
+            for range_start, range_end in missing_ranges:
+                logger.info(f"    获取: {range_start} -> {range_end}")
+                new_klines = fetcher.fetch_klines(
+                    symbol=symbol,
+                    interval=interval,
+                    start_time=range_start,
+                    end_time=range_end,
+                    include_buffer=False
+                )
+                
+                if new_klines:
+                    self._storage.save_klines(symbol, interval, new_klines)
+        
+        klines = self._storage.load_klines(symbol, interval, actual_start, end_time)
+        logger.info(f"  {symbol} {interval}: 从缓存加载 {len(klines)} 根K线")
+        
+        return klines
     
     def _load_historical_data(self) -> None:
-        """从Binance API预加载历史K线数据
+        """预加载历史K线数据（支持本地缓存）
         
-        支持长时间范围（最多2年）的数据加载，通过分批请求实现。
+        支持长时间范围（最多2年）的数据加载。
+        优先从本地缓存读取，缺失部分从API获取并保存。
         """
         total_days = (self.end_time - self.start_time).days
         logger.info(f"开始加载历史K线数据: symbols={self.symbols}, "
                    f"start={self.start_time}, end={self.end_time}, 共 {total_days} 天")
         
-        cfg = get_config()
-        client = BinanceRestClient(cfg)
+        if self.use_cache:
+            logger.info(f"本地缓存已启用: {self._storage.cache_dir if self._storage else 'N/A'}")
+        else:
+            logger.info("本地缓存已禁用，将从API获取所有数据")
         
-        start_ms = int(self.start_time.timestamp() * 1000)
-        end_ms = int(self.end_time.timestamp() * 1000)
-        
-        intervals_to_load = ["15m", "1h", "4h", "1d"]
+        intervals_to_load = ["1m", "15m", "1h", "4h", "1d"]
         if self.interval not in intervals_to_load:
             intervals_to_load.append(self.interval)
         
@@ -129,58 +214,25 @@ class BacktestKlineProvider:
             
             for interval in intervals_to_load:
                 try:
-                    all_klines: List[Kline] = []
-                    current_start = start_ms
-                    interval_minutes = self._get_interval_minutes(interval)
-                    buffer_bars = 100
-                    buffer_ms = buffer_bars * interval_minutes * 60 * 1000
-                    actual_start = current_start - buffer_ms
+                    klines = self._load_klines_with_cache(
+                        symbol=symbol,
+                        interval=interval,
+                        start_time=self.start_time,
+                        end_time=self.end_time,
+                        buffer_bars=100
+                    )
                     
-                    batch_count = 0
-                    while current_start < end_ms:
-                        raw = client.get_klines(
-                            symbol=symbol,
-                            interval=interval,
-                            limit=1500,
-                            start_time=actual_start if current_start == start_ms else current_start,
-                            end_time=end_ms
-                        )
-                        
-                        if not raw:
-                            break
-                        
-                        klines = [Kline.from_rest_api(k) for k in raw]
-                        all_klines.extend(klines)
-                        batch_count += 1
-                        
-                        if len(raw) < 1500:
-                            break
-                        
-                        last_kline = klines[-1]
-                        last_close_time = _get_kline_close_time(last_kline, interval_minutes)
-                        current_start = int(last_close_time.timestamp() * 1000) + 1
-                        
-                        if batch_count % 10 == 0:
-                            progress = (current_start - start_ms) / (end_ms - start_ms) * 100
-                            logger.info(f"  {symbol} {interval}: 已加载 {len(all_klines)} 根K线 ({progress:.1f}%)")
-                    
-                    seen_times = set()
-                    unique_klines = []
-                    for k in all_klines:
-                        if k.timestamp not in seen_times:
-                            seen_times.add(k.timestamp)
-                            unique_klines.append(k)
-                    
-                    unique_klines.sort(key=lambda k: k.timestamp)
-                    self._kline_cache[symbol][interval] = unique_klines
-                    
-                    logger.info(f"  {symbol} {interval}: 加载完成 - {len(unique_klines)} 根K线 (共 {batch_count} 批)")
+                    self._kline_cache[symbol][interval] = klines
+                    logger.info(f"  {symbol} {interval}: 加载完成 - {len(klines)} 根K线")
                     
                 except Exception as e:
                     logger.error(f"加载K线数据失败: {symbol} {interval} - {e}")
                     self._kline_cache[symbol][interval] = []
         
-        client.close()
+        if self._fetcher:
+            self._fetcher.close()
+            self._fetcher = None
+        
         logger.info("历史K线数据加载完成")
     
     def set_current_time(self, t: datetime) -> None:
@@ -290,3 +342,38 @@ class BacktestKlineProvider:
                 return k
         
         return None
+    
+    def get_klines_in_range(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime
+    ) -> List[Kline]:
+        """获取指定时间范围内的K线数据
+        
+        用于精确判断TP/SL触发顺序时获取1分钟K线。
+        
+        Args:
+            symbol: 交易对
+            interval: K线周期
+            start_time: 开始时间
+            end_time: 结束时间
+        
+        Returns:
+            时间范围内的K线数据列表，按时间升序排列
+        """
+        symbol = symbol.upper()
+        
+        if symbol not in self._kline_cache or interval not in self._kline_cache[symbol]:
+            logger.warning(f"未找到 {symbol} {interval} 的缓存数据")
+            return []
+        
+        all_klines = self._kline_cache[symbol][interval]
+        
+        start_ms = int(start_time.timestamp() * 1000)
+        end_ms = int(end_time.timestamp() * 1000)
+        
+        filtered = [k for k in all_klines if start_ms <= k.timestamp < end_ms]
+        
+        return filtered

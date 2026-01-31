@@ -3,11 +3,16 @@ from __future__ import annotations
 
 import copy
 import os
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine
 from modules.agent.trade_simulator.models import Account
+from modules.monitor.data.models import Kline
 from modules.monitor.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from modules.backtest.providers.kline_provider import BacktestKlineProvider
 
 logger = get_logger('backtest.engine.trade')
 
@@ -207,18 +212,22 @@ class BacktestTradeEngine(TradeSimulatorEngine):
         symbol: str, 
         current_price: float,
         high_price: Optional[float] = None,
-        low_price: Optional[float] = None
+        low_price: Optional[float] = None,
+        kline_open_time: Optional[datetime] = None,
+        kline_provider: Optional["BacktestKlineProvider"] = None,
     ) -> Optional[Dict[str, Any]]:
         """检查止盈止损是否触发
         
         使用K线的最高价和最低价进行检测，更准确地模拟真实交易中的止盈止损触发。
-        如果同一根K线同时触发止盈和止损，按止损处理（保守原则）。
+        如果同一根K线同时触发止盈和止损，使用1分钟K线精确判断哪个先触发。
         
         Args:
             symbol: 交易对
             current_price: 当前价格（K线收盘价，用于平仓价格计算）
             high_price: K线最高价（用于检测止盈/止损触发）
             low_price: K线最低价（用于检测止盈/止损触发）
+            kline_open_time: K线开盘时间（用于1分钟精确判断）
+            kline_provider: K线数据提供者（用于获取1分钟K线）
         
         Returns:
             如果触发了止盈止损，返回平仓结果；否则返回None
@@ -252,9 +261,23 @@ class BacktestTradeEngine(TradeSimulatorEngine):
                 sl_triggered = True
         
         if sl_triggered and tp_triggered:
-            close_reason = f"止损触发 (K线高低点同时触及TP/SL，按止损处理)"
-            close_price = pos.sl_price
-            logger.info(f"回测止盈止损同时触发: {symbol} - 按止损处理 (SL={pos.sl_price})")
+            first_trigger = self._determine_first_trigger_1m(
+                symbol=symbol,
+                side=pos.side,
+                tp_price=pos.tp_price,
+                sl_price=pos.sl_price,
+                kline_open_time=kline_open_time,
+                kline_provider=kline_provider,
+            )
+            
+            if first_trigger == "tp":
+                close_reason = f"止盈触发 (1分钟K线精确判断: TP先触发)"
+                close_price = pos.tp_price
+                logger.info(f"回测止盈止损同时触发: {symbol} - 1分钟精确判断: TP先触发 (TP={pos.tp_price})")
+            else:
+                close_reason = f"止损触发 (1分钟K线精确判断: SL先触发)"
+                close_price = pos.sl_price
+                logger.info(f"回测止盈止损同时触发: {symbol} - 1分钟精确判断: SL先触发 (SL={pos.sl_price})")
         elif sl_triggered:
             close_reason = f"止损触发 (价格触及 SL {pos.sl_price})"
             close_price = pos.sl_price
@@ -266,6 +289,77 @@ class BacktestTradeEngine(TradeSimulatorEngine):
         
         logger.info(f"回测止盈止损触发: {symbol} - {close_reason}")
         return self.close_position(symbol=symbol, close_reason=close_reason, close_price=close_price)
+    
+    def _determine_first_trigger_1m(
+        self,
+        symbol: str,
+        side: str,
+        tp_price: Optional[float],
+        sl_price: Optional[float],
+        kline_open_time: Optional[datetime],
+        kline_provider: Optional["BacktestKlineProvider"],
+    ) -> str:
+        """使用1分钟K线精确判断TP/SL哪个先触发
+        
+        Args:
+            symbol: 交易对
+            side: 持仓方向 (long/short)
+            tp_price: 止盈价
+            sl_price: 止损价
+            kline_open_time: 15分钟K线开盘时间
+            kline_provider: K线数据提供者
+        
+        Returns:
+            "tp" 或 "sl"，表示哪个先触发。如果无法判断，默认返回 "sl"（保守原则）
+        """
+        if kline_open_time is None or kline_provider is None:
+            logger.debug(f"{symbol}: 无法获取1分钟K线数据，按止损处理")
+            return "sl"
+        
+        if tp_price is None or sl_price is None:
+            return "sl"
+        
+        kline_close_time = kline_open_time + timedelta(minutes=15)
+        
+        klines_1m = kline_provider.get_klines_in_range(
+            symbol=symbol,
+            interval="1m",
+            start_time=kline_open_time,
+            end_time=kline_close_time,
+        )
+        
+        if not klines_1m:
+            logger.debug(f"{symbol}: 1分钟K线数据为空，按止损处理")
+            return "sl"
+        
+        for k in klines_1m:
+            tp_hit = False
+            sl_hit = False
+            
+            if side == 'long':
+                if k.high >= tp_price:
+                    tp_hit = True
+                if k.low <= sl_price:
+                    sl_hit = True
+            else:
+                if k.low <= tp_price:
+                    tp_hit = True
+                if k.high >= sl_price:
+                    sl_hit = True
+            
+            if tp_hit and not sl_hit:
+                kline_time = datetime.fromtimestamp(k.timestamp / 1000, tz=timezone.utc)
+                logger.debug(f"{symbol}: 1分钟K线 {kline_time} 先触发TP")
+                return "tp"
+            elif sl_hit and not tp_hit:
+                kline_time = datetime.fromtimestamp(k.timestamp / 1000, tz=timezone.utc)
+                logger.debug(f"{symbol}: 1分钟K线 {kline_time} 先触发SL")
+                return "sl"
+            elif tp_hit and sl_hit:
+                continue
+        
+        logger.debug(f"{symbol}: 1分钟K线无法区分TP/SL触发顺序，按止损处理")
+        return "sl"
     
     def check_limit_orders(
         self, 

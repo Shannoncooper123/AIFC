@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from modules.backtest.engine.backtest_trade_engine import BacktestTradeEngine
@@ -101,11 +101,15 @@ class PositionSimulator:
             if kline:
                 holding_bars += 1
                 
+                kline_open_time = datetime.fromtimestamp(kline.timestamp / 1000, tz=timezone.utc)
+                
                 result = trade_engine.check_tp_sl(
                     symbol,
                     current_price=kline.close,
                     high_price=kline.high,
-                    low_price=kline.low
+                    low_price=kline.low,
+                    kline_open_time=kline_open_time,
+                    kline_provider=self.kline_provider,
                 )
                 
                 if result and 'error' not in result:
