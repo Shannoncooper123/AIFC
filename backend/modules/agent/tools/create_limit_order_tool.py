@@ -122,7 +122,7 @@ def create_limit_order_tool(
         symbol: 交易对 (e.g. "BTCUSDT")
         side: 方向 "BUY" (做多) 或 "SELL" (做空)
         limit_price: 挂单价格（必须大于0）
-        margin_usdt: 保证金金额（USDT，必须大于0）
+        margin_usdt: 保证金金额（USDT，必须大于0），但是不能超过当前可用保证金的5%！
         tp_price: 止盈价格（必须大于0，且符合方向逻辑）
         sl_price: 止损价格（必须大于0，且符合方向逻辑）
     """
