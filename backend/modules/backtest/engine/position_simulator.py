@@ -1,7 +1,7 @@
 """仓位模拟器 - 负责模拟止盈止损和限价单成交
 
 职责：
-- 模拟市价单开仓后的止盈止损
+- 模拟市价单开仓后的止盈止损（使用1分钟K线精确判断）
 - 模拟限价单成交及后续止盈止损
 - 生成交易结果记录
 """
@@ -37,6 +37,7 @@ class PositionSimulator:
     """仓位模拟器
     
     负责模拟仓位的止盈止损触发和限价单成交。
+    使用1分钟K线进行精确的TP/SL判断。
     """
     
     def __init__(
@@ -52,6 +53,7 @@ class PositionSimulator:
         self._position_logger = position_logger
         self._interval_minutes = get_interval_minutes(config.interval)
         self._step_delta = timedelta(minutes=self._interval_minutes)
+        self._1m_delta = timedelta(minutes=1)
     
     def simulate_position_outcome(
         self,
@@ -63,7 +65,7 @@ class PositionSimulator:
         limit_price: Optional[float] = None,
         filled_time: Optional[datetime] = None,
     ) -> Optional[BacktestTradeResult]:
-        """模拟仓位的止盈止损结果
+        """模拟仓位的止盈止损结果（使用1分钟K线精确判断）
         
         Args:
             trade_engine: 回测交易引擎
@@ -89,30 +91,27 @@ class PositionSimulator:
         actual_entry_time = filled_time if filled_time else entry_time
         order_created_time = entry_time if filled_time else None
         
-        current_time = actual_entry_time + self._step_delta
-        holding_bars = 0
-        max_bars = 1000
+        current_time = actual_entry_time + self._1m_delta
+        holding_minutes = 0
+        max_minutes = self._interval_minutes * 1000
         
-        while current_time <= self.config.end_time and holding_bars < max_bars:
-            kline = self.kline_provider.get_kline_at_time(
-                symbol, self.config.interval, current_time
-            )
+        while current_time <= self.config.end_time and holding_minutes < max_minutes:
+            kline = self.kline_provider.get_kline_at_time(symbol, "1m", current_time)
             
             if kline:
-                holding_bars += 1
+                holding_minutes += 1
                 
-                kline_open_time = datetime.fromtimestamp(kline.timestamp / 1000, tz=timezone.utc)
-                
-                result = trade_engine.check_tp_sl(
+                result = trade_engine.check_tp_sl_simple(
                     symbol,
-                    current_price=kline.close,
                     high_price=kline.high,
-                    low_price=kline.low,
-                    kline_open_time=kline_open_time,
-                    kline_provider=self.kline_provider,
+                    low_price=kline.low
                 )
                 
                 if result and 'error' not in result:
+                    holding_bars = holding_minutes // self._interval_minutes
+                    if holding_bars == 0:
+                        holding_bars = 1
+                    
                     return self._create_trade_result(
                         result=result,
                         saved_data=saved_pos_data,
@@ -125,7 +124,11 @@ class PositionSimulator:
                         order_created_time=order_created_time,
                     )
             
-            current_time += self._step_delta
+            current_time += self._1m_delta
+        
+        holding_bars = holding_minutes // self._interval_minutes
+        if holding_bars == 0:
+            holding_bars = 1
         
         return self._handle_timeout_close(
             trade_engine=trade_engine,
@@ -163,17 +166,15 @@ class PositionSimulator:
         symbol = order['symbol']
         limit_price = order.get('limit_price', 0)
         
-        current_time = entry_time + self._step_delta
-        max_bars = 1000
-        bars_checked = 0
+        current_time = entry_time + self._1m_delta
+        max_minutes = self._interval_minutes * 1000
+        minutes_checked = 0
         
-        while current_time <= self.config.end_time and bars_checked < max_bars:
-            kline = self.kline_provider.get_kline_at_time(
-                symbol, self.config.interval, current_time
-            )
+        while current_time <= self.config.end_time and minutes_checked < max_minutes:
+            kline = self.kline_provider.get_kline_at_time(symbol, "1m", current_time)
             
             if kline:
-                bars_checked += 1
+                minutes_checked += 1
                 
                 filled_orders = trade_engine.check_limit_orders(
                     symbol,
@@ -199,7 +200,7 @@ class PositionSimulator:
                                     filled_time=current_time,
                                 )
             
-            current_time += self._step_delta
+            current_time += self._1m_delta
         
         pending = trade_engine.get_pending_limit_orders(symbol)
         if pending:
@@ -327,8 +328,12 @@ class PositionSimulator:
             return None
         
         final_kline = self.kline_provider.get_kline_at_time(
-            symbol, self.config.interval, self.config.end_time
+            symbol, "1m", self.config.end_time
         )
+        if not final_kline:
+            final_kline = self.kline_provider.get_kline_at_time(
+                symbol, self.config.interval, self.config.end_time
+            )
         if not final_kline:
             return None
         

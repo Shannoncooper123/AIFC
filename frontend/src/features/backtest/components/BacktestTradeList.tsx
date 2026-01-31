@@ -71,6 +71,32 @@ export function BacktestTradeList({ trades, isLoading }: BacktestTradeListProps)
     return `${year}-${month}-${day} ${hours}:${minutes}`;
   };
 
+  const formatDuration = (entryTime: string, exitTime: string) => {
+    const entry = new Date(entryTime);
+    const exit = new Date(exitTime);
+    const diffMs = exit.getTime() - entry.getTime();
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    
+    if (diffMinutes < 60) {
+      return `${diffMinutes}m`;
+    }
+    
+    const hours = Math.floor(diffMinutes / 60);
+    const mins = diffMinutes % 60;
+    
+    if (hours < 24) {
+      return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    }
+    
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    
+    if (remainingHours > 0) {
+      return `${days}d ${remainingHours}h`;
+    }
+    return `${days}d`;
+  };
+
   const sortedTrades = [...trades].sort((a, b) => {
     if (sortBy === 'time') {
       const timeA = new Date(a.kline_time).getTime();
@@ -252,7 +278,7 @@ export function BacktestTradeList({ trades, isLoading }: BacktestTradeListProps)
                           <div className="flex items-center gap-1">
                             <Clock className="h-3 w-3" />
                             {trade.order_created_time ? (
-                              <span title="Order Created → Filled">
+                              <span title="Order Created → Filled → Exit">
                                 <span className="text-purple-400">{formatTime(trade.order_created_time)}</span>
                                 <span className="mx-1">→</span>
                                 <span>{formatTime(trade.kline_time)}</span>
@@ -262,7 +288,9 @@ export function BacktestTradeList({ trades, isLoading }: BacktestTradeListProps)
                             )}
                           </div>
                           <div>→ {formatTime(trade.exit_time)}</div>
-                          <div>{trade.holding_bars} bars</div>
+                          <div title={`${trade.holding_bars} bars`} className="text-amber-400/70">
+                            {formatDuration(trade.kline_time, trade.exit_time)}
+                          </div>
                           {trade.leverage && trade.leverage > 1 && (
                             <div className="text-blue-400">{trade.leverage}x</div>
                           )}
