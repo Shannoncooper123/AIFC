@@ -139,12 +139,13 @@ export function BacktestPage() {
             />
           )}
 
-          {isCompleted && result && <BacktestResults result={result} trades={tradesData ?? []} />}
+          {isCompleted && result && <BacktestResults result={result} trades={tradesData?.trades ?? []} />}
 
           {/* 显示交易列表：运行中或已完成时都显示 */}
           {selectedBacktestId && (isRunning || isCompleted) && (
             <BacktestTradeList 
-              trades={tradesData ?? []} 
+              trades={tradesData?.trades ?? []} 
+              cancelledOrders={tradesData?.cancelledOrders ?? []}
               isLoading={tradesLoading} 
             />
           )}

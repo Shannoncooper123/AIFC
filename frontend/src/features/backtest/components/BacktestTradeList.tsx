@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { List, TrendingUp, TrendingDown, Clock, ChevronDown, ChevronUp, Info, DollarSign, Percent, Target, ExternalLink } from 'lucide-react';
+import { List, TrendingUp, TrendingDown, Clock, ChevronDown, ChevronUp, Info, DollarSign, Percent, Target, ExternalLink, XCircle, AlertTriangle } from 'lucide-react';
 import { Card } from '../../../components/ui';
 
 interface BacktestTrade {
@@ -34,16 +34,34 @@ interface BacktestTrade {
   order_created_time?: string | null;
 }
 
+interface CancelledOrder {
+  order_id: string;
+  symbol: string;
+  side: string;
+  limit_price: number;
+  tp_price: number;
+  sl_price: number;
+  margin_usdt: number;
+  leverage: number;
+  created_time: string;
+  cancelled_time: string;
+  cancel_reason: string;
+  workflow_run_id: string;
+}
+
 interface BacktestTradeListProps {
   trades: BacktestTrade[];
+  cancelledOrders?: CancelledOrder[];
   isLoading?: boolean;
 }
 
-export function BacktestTradeList({ trades, isLoading }: BacktestTradeListProps) {
+export function BacktestTradeList({ trades, cancelledOrders = [], isLoading }: BacktestTradeListProps) {
   const [expanded, setExpanded] = useState(true);
+  const [cancelledExpanded, setCancelledExpanded] = useState(true);
   const [sortBy, setSortBy] = useState<'time' | 'pnl'>('time');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
+  const [expandedCancelledId, setExpandedCancelledId] = useState<string | null>(null);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -413,6 +431,165 @@ export function BacktestTradeList({ trades, isLoading }: BacktestTradeListProps)
               </div>
             )}
           </>
+        )}
+
+        {cancelledOrders.length > 0 && (
+          <div className="mt-6 pt-4 border-t border-neutral-700/50">
+            <div
+              className="flex items-center justify-between cursor-pointer"
+              onClick={() => setCancelledExpanded(!cancelledExpanded)}
+            >
+              <div className="flex items-center gap-2 text-white font-medium">
+                <XCircle className="h-5 w-5 text-amber-400" />
+                Unfilled Orders ({cancelledOrders.length})
+              </div>
+              {cancelledExpanded ? (
+                <ChevronUp className="h-5 w-5 text-neutral-400" />
+              ) : (
+                <ChevronDown className="h-5 w-5 text-neutral-400" />
+              )}
+            </div>
+
+            {cancelledExpanded && (
+              <div className="mt-4 space-y-2 max-h-[400px] overflow-y-auto">
+                {cancelledOrders.map((order) => {
+                  const isExpanded = expandedCancelledId === order.order_id;
+                  
+                  return (
+                    <div
+                      key={order.order_id}
+                      className="rounded-lg bg-amber-900/10 border border-amber-700/30 hover:border-amber-600/50 transition-colors"
+                    >
+                      <div
+                        className="p-3 cursor-pointer"
+                        onClick={() => setExpandedCancelledId(isExpanded ? null : order.order_id)}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-white">{order.symbol}</span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                order.side === 'long'
+                                  ? 'bg-emerald-400/10 text-emerald-400'
+                                  : 'bg-rose-400/10 text-rose-400'
+                              }`}
+                            >
+                              {order.side.toUpperCase()}
+                            </span>
+                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-400/10 text-amber-400">
+                              UNFILLED
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="h-4 w-4 text-amber-400" />
+                            <span className="text-amber-400 text-sm">{order.cancel_reason}</span>
+                            {isExpanded ? (
+                              <ChevronUp className="h-4 w-4 text-neutral-400" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4 text-neutral-400" />
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                          <div>
+                            <span className="text-neutral-500">Limit:</span>{' '}
+                            <span className="text-blue-400">{formatPrice(order.limit_price)}</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-500">TP:</span>{' '}
+                            <span className="text-emerald-400/70">{formatPrice(order.tp_price)}</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-500">SL:</span>{' '}
+                            <span className="text-rose-400/70">{formatPrice(order.sl_price)}</span>
+                          </div>
+                          <div>
+                            <span className="text-neutral-500">Margin:</span>{' '}
+                            <span className="text-neutral-300">{formatCurrency(order.margin_usdt)}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4 mt-2 text-xs text-neutral-500">
+                          <div className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            <span className="text-purple-400">{formatTime(order.created_time)}</span>
+                            <span className="mx-1">→</span>
+                            <span className="text-amber-400">{formatTime(order.cancelled_time)}</span>
+                          </div>
+                          <div title="Wait duration" className="text-amber-400/70">
+                            {formatDuration(order.created_time, order.cancelled_time)}
+                          </div>
+                          {order.leverage > 1 && (
+                            <div className="text-blue-400">{order.leverage}x</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="px-3 pb-3 border-t border-amber-700/30 mt-2 pt-3">
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="flex items-center gap-1 text-neutral-500 text-xs mb-1">
+                                <DollarSign className="h-3 w-3" />
+                                Margin
+                              </div>
+                              <div className="text-white font-medium">
+                                {formatCurrency(order.margin_usdt)}
+                              </div>
+                            </div>
+                            
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="flex items-center gap-1 text-neutral-500 text-xs mb-1">
+                                <Percent className="h-3 w-3" />
+                                Leverage
+                              </div>
+                              <div className="text-blue-400 font-medium">
+                                {order.leverage}x
+                              </div>
+                            </div>
+                            
+                            <div className="p-2 rounded bg-neutral-900/50">
+                              <div className="flex items-center gap-1 text-neutral-500 text-xs mb-1">
+                                <Target className="h-3 w-3" />
+                                Limit Price
+                              </div>
+                              <div className="text-blue-400 font-medium">
+                                {formatPrice(order.limit_price)}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="mt-3 p-2 rounded bg-amber-900/20">
+                            <div className="flex items-center gap-1 text-amber-500 text-xs mb-1">
+                              <Info className="h-3 w-3" />
+                              Cancel Reason
+                            </div>
+                            <div className="text-amber-300 text-sm">{order.cancel_reason}</div>
+                          </div>
+                          
+                          <div className="mt-3 flex items-center justify-between">
+                            <div className="text-xs text-neutral-500">
+                              <span>Workflow: </span>
+                              <span className="font-mono text-neutral-400">{order.workflow_run_id}</span>
+                            </div>
+                            <Link
+                              to={`/workflow?run_id=${order.workflow_run_id}`}
+                              className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-purple-400/10 text-purple-400 hover:bg-purple-400/20 transition-colors"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              View Trace
+                            </Link>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </Card>

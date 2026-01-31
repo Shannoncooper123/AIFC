@@ -59,6 +59,21 @@ export interface BacktestTradeResult {
   order_created_time?: string;
 }
 
+export interface CancelledLimitOrder {
+  order_id: string;
+  symbol: string;
+  side: string;
+  limit_price: number;
+  tp_price: number;
+  sl_price: number;
+  margin_usdt: number;
+  leverage: number;
+  created_time: string;
+  cancelled_time: string;
+  cancel_reason: string;
+  workflow_run_id: string;
+}
+
 export interface BacktestResult {
   backtest_id: string;
   config: {
@@ -87,6 +102,7 @@ export interface BacktestResult {
   completed_batches: number;
   total_batches: number;
   trades: BacktestTradeResult[];
+  cancelled_orders: CancelledLimitOrder[];
   workflow_runs: string[];
   error_message?: string;
 }
@@ -166,6 +182,7 @@ export async function deleteBacktest(backtestId: string): Promise<{ message: str
 export interface BacktestTradesResponse {
   backtest_id: string;
   trades: BacktestTradeResult[];
+  cancelled_orders: CancelledLimitOrder[];
   total: number;
   stats: {
     total_trades: number;
@@ -179,12 +196,20 @@ export interface BacktestTradesResponse {
   };
 }
 
+export interface BacktestTradesData {
+  trades: BacktestTradeResult[];
+  cancelledOrders: CancelledLimitOrder[];
+}
+
 export async function getBacktestTrades(
   backtestId: string,
   limit = 100
-): Promise<BacktestTradeResult[]> {
+): Promise<BacktestTradesData> {
   const { data } = await apiClient.get<BacktestTradesResponse>(`/backtest/${backtestId}/trades`, { params: { limit } });
-  return data.trades;
+  return {
+    trades: data.trades,
+    cancelledOrders: data.cancelled_orders ?? [],
+  };
 }
 
 export interface ConcurrencyInfo {

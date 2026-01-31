@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union
 
 from modules.backtest.engine.backtest_trade_engine import BacktestTradeEngine
-from modules.backtest.models import BacktestConfig, BacktestTradeResult
+from modules.backtest.models import BacktestConfig, BacktestTradeResult, CancelledLimitOrder
 from modules.backtest.providers.kline_provider import BacktestKlineProvider
 from modules.monitor.utils.logger import get_logger
 
@@ -148,7 +148,7 @@ class PositionSimulator:
         order: Dict[str, Any],
         entry_time: datetime,
         workflow_run_id: str
-    ) -> Optional[BacktestTradeResult]:
+    ) -> Tuple[Optional[BacktestTradeResult], Optional[CancelledLimitOrder]]:
         """模拟限价单的成交和后续止盈止损
         
         限价单成交后，会继续模拟仓位的止盈止损结果，
@@ -161,7 +161,9 @@ class PositionSimulator:
             workflow_run_id: workflow运行ID
         
         Returns:
-            交易结果，如果限价单未成交则返回 None
+            元组 (交易结果, 取消订单记录)
+            - 如果成交: (BacktestTradeResult, None)
+            - 如果未成交: (None, CancelledLimitOrder)
         """
         symbol = order['symbol']
         limit_price = order.get('limit_price', 0)
@@ -190,7 +192,7 @@ class PositionSimulator:
                             
                             if symbol in trade_engine.positions and \
                                trade_engine.positions[symbol].status == 'open':
-                                return self.simulate_position_outcome(
+                                trade_result = self.simulate_position_outcome(
                                     trade_engine, 
                                     symbol, 
                                     entry_time,
@@ -199,17 +201,36 @@ class PositionSimulator:
                                     limit_price=limit_price,
                                     filled_time=current_time,
                                 )
+                                return (trade_result, None)
             
             current_time += self._1m_delta
+        
+        cancelled_order = None
+        cancel_reason = "回测结束未成交" if current_time > self.config.end_time else "超时未成交"
         
         pending = trade_engine.get_pending_limit_orders(symbol)
         if pending:
             for p in pending:
                 if p['id'] == order['id']:
                     trade_engine.cancel_limit_order(order['id'])
-                    logger.debug(f"限价单超时取消: {symbol} order_id={order['id']}")
+                    logger.debug(f"限价单取消: {symbol} order_id={order['id']} 原因={cancel_reason}")
+                    
+                    cancelled_order = CancelledLimitOrder(
+                        order_id=order['id'],
+                        symbol=symbol,
+                        side=order.get('side', ''),
+                        limit_price=limit_price,
+                        tp_price=order.get('tp_price', 0),
+                        sl_price=order.get('sl_price', 0),
+                        margin_usdt=order.get('margin_usdt', 0),
+                        leverage=order.get('leverage', 10),
+                        created_time=entry_time,
+                        cancelled_time=current_time,
+                        cancel_reason=cancel_reason,
+                        workflow_run_id=workflow_run_id,
+                    )
         
-        return None
+        return (None, cancelled_order)
     
     def _save_position_data(self, pos) -> Dict[str, Any]:
         """保存仓位数据用于后续生成交易记录"""

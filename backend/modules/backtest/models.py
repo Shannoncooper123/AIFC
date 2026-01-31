@@ -105,6 +105,42 @@ class BacktestTradeRecord:
 
 
 @dataclass
+class CancelledLimitOrder:
+    """未成交的限价单记录
+    
+    记录在回测期间创建但未能成交的限价单，用于分析挂单策略的有效性。
+    """
+    order_id: str
+    symbol: str
+    side: str
+    limit_price: float
+    tp_price: float
+    sl_price: float
+    margin_usdt: float
+    leverage: int
+    created_time: datetime
+    cancelled_time: datetime
+    cancel_reason: str
+    workflow_run_id: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "order_id": self.order_id,
+            "symbol": self.symbol,
+            "side": self.side,
+            "limit_price": self.limit_price,
+            "tp_price": self.tp_price,
+            "sl_price": self.sl_price,
+            "margin_usdt": round(self.margin_usdt, 4),
+            "leverage": self.leverage,
+            "created_time": self.created_time.isoformat(),
+            "cancelled_time": self.cancelled_time.isoformat(),
+            "cancel_reason": self.cancel_reason,
+            "workflow_run_id": self.workflow_run_id,
+        }
+
+
+@dataclass
 class BacktestTradeResult:
     """单次回测交易结果（独立执行）
     
@@ -228,6 +264,7 @@ class BacktestResult:
     short_stats: SideStats = field(default_factory=SideStats)
     
     trades: List[BacktestTradeResult] = field(default_factory=list)
+    cancelled_orders: List[CancelledLimitOrder] = field(default_factory=list)
     workflow_runs: List[str] = field(default_factory=list)
     error_message: Optional[str] = None
     
@@ -273,6 +310,7 @@ class BacktestResult:
             "long_stats": self.long_stats.to_dict(),
             "short_stats": self.short_stats.to_dict(),
             "trades": [t.to_dict() for t in self.trades],
+            "cancelled_orders": [o.to_dict() for o in self.cancelled_orders],
             "workflow_runs": self.workflow_runs,
             "error_message": self.error_message,
         }

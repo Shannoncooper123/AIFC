@@ -256,7 +256,7 @@ class WorkflowExecutor:
         if pending_orders:
             logger.debug(f"步骤 {step_index} 检测到 {len(pending_orders)} 个限价单")
             for order in pending_orders:
-                limit_trade_result = self._position_simulator.simulate_limit_order_outcome(
+                limit_trade_result, cancelled_order = self._position_simulator.simulate_limit_order_outcome(
                     trade_engine, order, current_time, workflow_run_id
                 )
                 if limit_trade_result:
@@ -264,6 +264,12 @@ class WorkflowExecutor:
                     logger.info(
                         f"步骤 {step_index} 限价单交易完成: {order['symbol']} {limit_trade_result.side} "
                         f"exit_type={limit_trade_result.exit_type} pnl={limit_trade_result.realized_pnl:.2f}"
+                    )
+                elif cancelled_order:
+                    self._result_collector.add_cancelled_orders([cancelled_order])
+                    logger.info(
+                        f"步骤 {step_index} 限价单未成交: {order['symbol']} {cancelled_order.side} "
+                        f"limit_price={cancelled_order.limit_price} 原因={cancelled_order.cancel_reason}"
                     )
         
         return trade_results

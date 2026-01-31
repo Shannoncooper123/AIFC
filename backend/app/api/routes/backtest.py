@@ -451,9 +451,11 @@ async def get_backtest_trades(
     if engine:
         result = engine.get_result()
         trades = [t.to_dict() for t in result.trades[-limit:]]
+        cancelled_orders = [o.to_dict() for o in result.cancelled_orders]
         return {
             "backtest_id": backtest_id,
             "trades": trades,
+            "cancelled_orders": cancelled_orders,
             "total": len(result.trades),
             "stats": {
                 "total_trades": result.total_trades,
@@ -477,9 +479,11 @@ async def get_backtest_trades(
                 result_data = json.load(f)
             
             trades = result_data.get("trades", [])[-limit:]
+            cancelled_orders = result_data.get("cancelled_orders", [])
             return {
                 "backtest_id": backtest_id,
                 "trades": trades,
+                "cancelled_orders": cancelled_orders,
                 "total": len(result_data.get("trades", [])),
                 "stats": {
                     "total_trades": result_data.get("total_trades", 0),

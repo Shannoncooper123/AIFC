@@ -77,7 +77,7 @@ export function useDeleteBacktest() {
 export function useBacktestTrades(backtestId: string | null, limit = 100, isRunning = false) {
   return useQuery({
     queryKey: ['backtest', backtestId, 'trades', limit],
-    queryFn: () => (backtestId ? getBacktestTrades(backtestId, limit) : []),
+    queryFn: () => (backtestId ? getBacktestTrades(backtestId, limit) : { trades: [], cancelledOrders: [] }),
     enabled: !!backtestId,
     refetchInterval: isRunning ? 5000 : false,
   });

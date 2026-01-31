@@ -10,6 +10,7 @@ from modules.backtest.models import (
     BacktestResult,
     BacktestStatus,
     BacktestTradeResult,
+    CancelledLimitOrder,
     SideStats,
 )
 from modules.monitor.utils.logger import get_logger
@@ -38,6 +39,12 @@ class ResultCollector:
         if trades:
             with self._lock:
                 self.result.trades.extend(trades)
+    
+    def add_cancelled_orders(self, orders: List[CancelledLimitOrder]) -> None:
+        """添加未成交的限价单记录"""
+        if orders:
+            with self._lock:
+                self.result.cancelled_orders.extend(orders)
     
     def get_trades_copy(self) -> List[BacktestTradeResult]:
         """获取交易结果的副本"""
