@@ -17,6 +17,8 @@ export interface BacktestConfigData {
   concurrency: number;
 }
 
+const AVAILABLE_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'DOGEUSDT', 'LTCUSDT', 'SOLUSDT', 'XRPUSDT'];
+
 export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigProps) {
   const [config, setConfig] = useState<BacktestConfigData>({
     symbols: ['BTCUSDT', 'ETHUSDT'],
@@ -73,8 +75,8 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm text-neutral-400 mb-2">Symbols</label>
-            <div className="flex gap-2">
-              {['BTCUSDT', 'ETHUSDT'].map((symbol) => (
+            <div className="flex flex-wrap gap-2">
+              {AVAILABLE_SYMBOLS.map((symbol) => (
                 <button
                   key={symbol}
                   type="button"

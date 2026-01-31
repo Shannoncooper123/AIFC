@@ -35,7 +35,7 @@ def get_kline_image_tool(
         return [{"type": "text", "text": f"TOOL_RUNTIME_ERROR: {msg}"}]
     
     try:
-        limit = 200
+        limit = 100
         
         import threading
         from modules.agent.tools.tool_utils import get_kline_provider

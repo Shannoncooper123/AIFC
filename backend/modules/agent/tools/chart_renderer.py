@@ -204,10 +204,10 @@ def _render_chart_in_process(
     plot_hist = slice_data(histogram, visible_count)
     plot_rsi = slice_data(rsi, visible_count)
     
-    fig = plt.figure(figsize=(14, 16))
-    gs = gridspec.GridSpec(4, 1, height_ratios=[4, 1, 1, 1], hspace=0.12)
+    fig = plt.figure(figsize=(18, 14))
+    gs = gridspec.GridSpec(4, 1, height_ratios=[4, 1, 1, 1], hspace=0.08)
     
-    fig.suptitle(f"{symbol} {interval} Technical Analysis", fontsize=16, fontweight='bold', y=0.96)
+    fig.suptitle(f"{symbol} {interval} Technical Analysis", fontsize=16, fontweight='bold', y=0.98)
     
     indices = list(range(len(plot_klines)))
     
@@ -260,10 +260,10 @@ def _render_chart_in_process(
     lows = [k['low'] for k in plot_klines]
     if highs and lows:
         p_min, p_max = min(lows), max(highs)
-        pad = (p_max - p_min) * 0.05
+        pad = (p_max - p_min) * 0.02
         ax_main.set_ylim(p_min - pad, p_max + pad)
-        ax_main.yaxis.set_major_locator(MaxNLocator(nbins=15))
-        ax_main.tick_params(axis='y', labelright=True)
+        ax_main.yaxis.set_major_locator(MaxNLocator(nbins=25))
+        ax_main.tick_params(axis='y', labelright=True, labelsize=9)
     
     ax_main.set_xlim(-1, len(indices))
     ax_main.set_ylabel('Price', fontsize=10)
@@ -324,10 +324,10 @@ def _render_chart_in_process(
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        plt.tight_layout(rect=[0, 0.01, 1, 0.97])
+        plt.tight_layout(rect=[0.02, 0.02, 0.98, 0.96])
     
     buffer = io.BytesIO()
-    fig.savefig(buffer, format='png', dpi=90)
+    fig.savefig(buffer, format='png', dpi=100, bbox_inches='tight', pad_inches=0.1)
     plt.close(fig)
     buffer.seek(0)
     
@@ -338,7 +338,7 @@ def render_kline_chart(
     klines: List[Any],
     symbol: str,
     interval: str,
-    visible_count: int = 200,
+    visible_count: int = 100,
     timeout: float = 120.0,
     pool_size_hint: Optional[int] = None,
 ) -> str:
