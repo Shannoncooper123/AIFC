@@ -75,7 +75,7 @@ def format_volume(volume: float) -> str:
 
 
 def retry_on_exception(max_retries: int = 5, delay: float = 1.0, exceptions: tuple = (Exception,)):
-    """异常重试装饰器（使用指数退避法）
+    """异常重试装饰器（使用指数退避法，支持429限流特殊处理）
     
     Args:
         max_retries: 最大重试次数（默认5次）
@@ -92,6 +92,8 @@ def retry_on_exception(max_retries: int = 5, delay: float = 1.0, exceptions: tup
         - 第3次重试：delay * 2^2 = delay * 4 秒
         - 第4次重试：delay * 2^3 = delay * 8 秒
         - 第5次重试：delay * 2^4 = delay * 16 秒
+        
+        对于429限流错误，会使用更长的等待时间（基础30秒 + 指数退避）
     """
     def decorator(func: Callable) -> Callable:
         @wraps(func)
@@ -103,13 +105,54 @@ def retry_on_exception(max_retries: int = 5, delay: float = 1.0, exceptions: tup
                 except exceptions as e:
                     last_exception = e
                     if attempt < max_retries - 1:
-                        # 指数退避：delay * (2 ** attempt)
-                        backoff_time = delay * (2 ** attempt)
+                        backoff_time = _calculate_backoff(e, attempt, delay)
                         time.sleep(backoff_time)
                     continue
             raise last_exception
         return wrapper
     return decorator
+
+
+def _calculate_backoff(exception: Exception, attempt: int, base_delay: float) -> float:
+    """计算退避时间
+    
+    对于429限流错误使用更长的等待时间。
+    
+    Args:
+        exception: 异常对象
+        attempt: 当前重试次数（从0开始）
+        base_delay: 基础延迟时间
+    
+    Returns:
+        退避等待时间（秒）
+    """
+    is_rate_limit = False
+    retry_after = None
+    
+    error_str = str(exception).lower()
+    if '429' in error_str or 'too many requests' in error_str or 'rate limit' in error_str:
+        is_rate_limit = True
+    
+    if hasattr(exception, 'response') and exception.response is not None:
+        response = exception.response
+        if hasattr(response, 'status_code') and response.status_code == 429:
+            is_rate_limit = True
+        if hasattr(response, 'headers'):
+            retry_after_header = response.headers.get('Retry-After')
+            if retry_after_header:
+                try:
+                    retry_after = int(retry_after_header)
+                except ValueError:
+                    pass
+    
+    if is_rate_limit:
+        if retry_after:
+            backoff_time = retry_after + (attempt * 5)
+        else:
+            backoff_time = 30 + (attempt * 15)
+        return backoff_time
+    
+    return base_delay * (2 ** attempt)
 
 
 def get_binance_kline_url(symbol: str, interval: str = '1m') -> str:

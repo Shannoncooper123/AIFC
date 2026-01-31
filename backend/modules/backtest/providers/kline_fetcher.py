@@ -1,9 +1,13 @@
 """K线数据获取器 - 负责从Binance API获取K线数据
 
-支持批量获取、自动分页、速率限制处理等功能。
+封装 BinanceRestClient 的 K线获取功能，提供：
+- 批量获取（自动分页处理）
+- 多时间范围获取
+- 进度日志
+
+注意：重试和429限流处理由 BinanceRestClient 的 @retry_on_exception 装饰器统一处理。
 """
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 from modules.config.settings import get_config
@@ -37,8 +41,10 @@ class KlineFetcher:
     
     从Binance API获取K线数据，支持：
     - 批量获取（自动分页处理）
-    - 速率限制处理
-    - 自动重试
+    - 多时间范围获取
+    
+    重试机制由底层 BinanceRestClient 的 @retry_on_exception 装饰器处理，
+    包括429限流的指数退避重试。
     """
     
     def __init__(self, client: Optional[BinanceRestClient] = None):
@@ -56,8 +62,6 @@ class KlineFetcher:
             self._own_client = True
         
         self._request_count = 0
-        self._last_request_time = 0.0
-        self._min_request_interval = 0.05
     
     def close(self) -> None:
         """关闭获取器（释放资源）"""
@@ -69,17 +73,6 @@ class KlineFetcher:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-    
-    def _rate_limit(self) -> None:
-        """速率限制控制"""
-        current_time = time.time()
-        elapsed = current_time - self._last_request_time
-        
-        if elapsed < self._min_request_interval:
-            time.sleep(self._min_request_interval - elapsed)
-        
-        self._last_request_time = time.time()
-        self._request_count += 1
     
     def fetch_klines(
         self,
@@ -124,38 +117,32 @@ class KlineFetcher:
         batch_count = 0
         
         while current_start < end_ms:
-            self._rate_limit()
+            raw = self._client.get_klines(
+                symbol=symbol,
+                interval=interval,
+                limit=1500,
+                start_time=current_start,
+                end_time=end_ms
+            )
+            self._request_count += 1
             
-            try:
-                raw = self._client.get_klines(
-                    symbol=symbol,
-                    interval=interval,
-                    limit=1500,
-                    start_time=current_start,
-                    end_time=end_ms
-                )
-                
-                if not raw:
-                    break
-                
-                klines = [Kline.from_rest_api(k) for k in raw]
-                all_klines.extend(klines)
-                batch_count += 1
-                
-                if len(raw) < 1500:
-                    break
-                
-                last_kline = klines[-1]
-                last_close_time_ms = last_kline.timestamp + interval_minutes * 60 * 1000
-                current_start = last_close_time_ms + 1
-                
-                if batch_count % 10 == 0:
-                    progress = (current_start - actual_start_ms) / (end_ms - actual_start_ms) * 100
-                    logger.info(f"  {symbol} {interval}: 已获取 {len(all_klines)} 根K线 ({progress:.1f}%)")
-                    
-            except Exception as e:
-                logger.error(f"获取K线失败: {symbol} {interval} - {e}")
-                raise
+            if not raw:
+                break
+            
+            klines = [Kline.from_rest_api(k) for k in raw]
+            all_klines.extend(klines)
+            batch_count += 1
+            
+            if len(raw) < 1500:
+                break
+            
+            last_kline = klines[-1]
+            last_close_time_ms = last_kline.timestamp + interval_minutes * 60 * 1000
+            current_start = last_close_time_ms + 1
+            
+            if batch_count % 10 == 0:
+                progress = (current_start - actual_start_ms) / (end_ms - actual_start_ms) * 100
+                logger.info(f"  {symbol} {interval}: 已获取 {len(all_klines)} 根K线 ({progress:.1f}%)")
         
         seen_times = set()
         unique_klines = []
@@ -234,23 +221,17 @@ class KlineFetcher:
         target_ms = int(target_time.timestamp() * 1000)
         kline_start_ms = (target_ms // (interval_minutes * 60 * 1000)) * (interval_minutes * 60 * 1000)
         
-        self._rate_limit()
+        raw = self._client.get_klines(
+            symbol=symbol,
+            interval=interval,
+            limit=1,
+            start_time=kline_start_ms
+        )
+        self._request_count += 1
         
-        try:
-            raw = self._client.get_klines(
-                symbol=symbol,
-                interval=interval,
-                limit=1,
-                start_time=kline_start_ms
-            )
-            
-            if raw:
-                return Kline.from_rest_api(raw[0])
-            return None
-            
-        except Exception as e:
-            logger.error(f"获取单根K线失败: {symbol} {interval} {target_time} - {e}")
-            return None
+        if raw:
+            return Kline.from_rest_api(raw[0])
+        return None
     
     @property
     def request_count(self) -> int:
