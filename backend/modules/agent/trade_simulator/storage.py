@@ -79,6 +79,10 @@ def append_position_history(path: str, record: Dict[str, Any]) -> None:
     try:
         logger.info(f"append_position_history: 写入历史记录, symbol={record.get('symbol')}, id={record.get('id')}, path={path}")
 
+        if not path:
+            logger.warning("append_position_history: path为空，跳过写入")
+            return
+
         dir_name = os.path.dirname(path)
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
