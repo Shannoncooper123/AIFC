@@ -9,6 +9,7 @@ from langchain_core.runnables import RunnableConfig
 from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.trend_comparison_tool import trend_comparison_tool
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
+from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
 from modules.agent.utils.kline_utils import fetch_klines, get_current_price, format_price
 from modules.agent.utils.model_factory import get_model_factory, with_async_retry
 from modules.agent.utils.trace_utils import create_trace_agent, traced_node
