@@ -17,7 +17,7 @@ export interface BacktestConfigData {
   concurrency: number;
 }
 
-const AVAILABLE_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'DOGEUSDT', 'LTCUSDT', 'SOLUSDT', 'XRPUSDT','PEPEUSDT'];
+const AVAILABLE_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'DOGEUSDT', 'LTCUSDT', 'SOLUSDT', 'XRPUSDT','1000PEPEUSDT'];
 
 export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigProps) {
   const [config, setConfig] = useState<BacktestConfigData>({

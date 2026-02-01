@@ -34,6 +34,33 @@ def _format_account_summary(account: Dict[str, Any]) -> str:
     )
 
 
+def _get_max_margin_for_new_position() -> float:
+    """获取当前可用于新开仓的最大保证金（单仓上限为可用余额的5%）
+    
+    Returns:
+        最大可用保证金金额（USDT），获取失败返回0
+    """
+    from modules.agent.engine import get_engine
+    
+    try:
+        eng = get_engine()
+        if eng is None:
+            logger.warning("_get_max_margin_for_new_position: 引擎未初始化")
+            return 0
+        
+        account_summary = eng.get_account_summary()
+        account_balance = float(account_summary.get('balance', 0))
+        reserved_margin = float(account_summary.get('reserved_margin_sum', 0))
+        available_balance = account_balance - reserved_margin
+        max_margin = available_balance * 0.05
+        
+        logger.info(f"可用保证金计算: 余额={account_balance:.2f}, 已占用={reserved_margin:.2f}, 可用={available_balance:.2f}, 单仓上限(5%)={max_margin:.2f}")
+        return max_margin
+    except Exception as e:
+        logger.error(f"_get_max_margin_for_new_position 失败: {e}")
+        return 0
+
+
 def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
     """获取多周期K线图像用于复核
     
@@ -80,14 +107,17 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
     return images, image_metas
 
 
-def _build_multimodal_content(symbol: str, account_info: str, analysis_result: str, images: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _build_multimodal_content(symbol: str, account_info: str, analysis_result: str, images: List[Dict[str, Any]], max_margin: float) -> List[Dict[str, Any]]:
     """构建多模态消息内容"""
     content = []
+    
+    margin_info = f"本次开仓可用最大保证金: ${max_margin:.2f} USDT" if max_margin > 0 else "保证金信息不可用"
     
     text_part = f"""【待决策币种】{symbol}
 
 【账户状态】
 {account_info}
+{margin_info}
 
 【前序分析结论】
 {analysis_result}
@@ -164,6 +194,9 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
             node_name="opening_decision",
         )
         
+        max_margin = _get_max_margin_for_new_position()
+        margin_info = f"本次开仓可用最大保证金: ${max_margin:.2f} USDT" if max_margin > 0 else "保证金信息不可用"
+        
         if not images:
             logger.warning(f"{symbol} 无法生成复核图像，使用纯文本模式")
             account_info = _format_account_summary(state.account_summary)
@@ -171,6 +204,7 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
 
 【账户状态】
 {account_info}
+{margin_info}
 
 【前序分析结论】
 {analysis_result}
@@ -180,7 +214,7 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
         else:
             logger.info(f"{symbol} 生成 {len(images)} 个周期的复核图像")
             account_info = _format_account_summary(state.account_summary)
-            multimodal_content = _build_multimodal_content(symbol, account_info, analysis_result, images)
+            multimodal_content = _build_multimodal_content(symbol, account_info, analysis_result, images, max_margin)
             subagent_messages = [HumanMessage(
                 content=multimodal_content,
                 additional_kwargs={"_image_metas": image_metas}
