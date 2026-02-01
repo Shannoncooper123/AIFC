@@ -322,15 +322,6 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
         return {"analysis_results": {symbol: "分析失败: 缺少上下文"}}
 
     try:
-        logger.info(f"开始为 {symbol} 预生成K线图像...")
-        images, image_metas = _generate_kline_images(symbol, ANALYSIS_INTERVALS)
-        
-        if not images:
-            logger.error(f"{symbol} 无法生成K线图像，分析中止")
-            return {"analysis_results": {symbol: "分析失败: 无法生成K线图像"}}
-        
-        logger.info(f"{symbol} 成功生成 {len(images)} 个周期的K线图像")
-        
         current_price = get_current_price(symbol)
         if current_price:
             logger.info(f"{symbol} 当前价格: ${format_price(current_price)}")
@@ -358,8 +349,6 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
                 symbol,
                 market_context,
                 supplemental_context_str,
-                images,
-                image_metas,
                 position_status_hint,
                 current_price,
                 config
