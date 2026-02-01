@@ -333,10 +333,10 @@ class PillowChartRenderer:
         img_rgb = Image.new('RGB', img.size, BG_COLOR)
         img_rgb.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
         
-        final_img = img_rgb.resize((self.width, self.height), Image.LANCZOS)
+        final_img = img_rgb.resize((self.width, self.height), Image.BILINEAR)
         
         buffer = io.BytesIO()
-        final_img.save(buffer, format='PNG', optimize=True)
+        final_img.save(buffer, format='PNG', optimize=False, compress_level=1)
         buffer.seek(0)
         return base64.b64encode(buffer.read()).decode('utf-8')
     
