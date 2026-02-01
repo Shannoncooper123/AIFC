@@ -7,13 +7,16 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from modules.agent.state import SymbolAnalysisState
-from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
 from modules.agent.tools.trend_comparison_tool import trend_comparison_tool
+from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
+from modules.agent.utils.kline_utils import fetch_klines, get_current_price, format_price
 from modules.agent.utils.model_factory import get_model_factory, with_async_retry
 from modules.agent.utils.trace_utils import create_trace_agent, traced_node
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.single_symbol_analysis')
+
+ANALYSIS_INTERVALS = ["4h", "1h", "15m"]
 
 
 def _format_account_summary(account: Dict[str, Any]) -> str:
@@ -109,6 +112,111 @@ def _build_supplemental_context(
     return context
 
 
+def _generate_kline_images(symbol: str, intervals: List[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    """预生成多周期K线图像
+    
+    Args:
+        symbol: 交易对
+        intervals: 时间周期列表
+        
+    Returns:
+        (images, image_metas): images 用于构建消息，image_metas 用于 trace 匹配
+    """
+    from modules.agent.tools.chart_renderer import render_kline_chart
+    
+    images = []
+    image_metas = []
+    
+    logger.info(f"为 {symbol} 预生成 {len(intervals)} 个周期的K线图像: {intervals}")
+    
+    for interval in intervals:
+        try:
+            fetch_limit = 200
+            display_limit = 100
+            
+            logger.info(f"{symbol} {interval} 获取K线用于分析图像")
+            
+            klines, error = fetch_klines(symbol, interval, fetch_limit)
+            
+            if error or not klines:
+                logger.warning(f"未获取到 {symbol} {interval} K线数据: {error}")
+                continue
+            
+            image_base64 = render_kline_chart(klines, symbol, interval, display_limit)
+            
+            images.append({
+                "interval": interval,
+                "image_base64": image_base64,
+            })
+            image_metas.append({"symbol": symbol, "interval": interval})
+            
+            logger.info(f"生成 {symbol} {interval} 分析图像成功")
+            
+        except Exception as e:
+            logger.error(f"生成 {symbol} {interval} 图像失败: {e}")
+            continue
+    
+    return images, image_metas
+
+
+def _build_multimodal_content(
+    symbol: str,
+    market_context: str,
+    supplemental_context: str,
+    images: List[Dict[str, Any]],
+    position_status_hint: str,
+    direction: str,
+    current_price: Optional[float],
+) -> List[Dict[str, Any]]:
+    """构建多模态消息内容（含K线图像）
+    
+    Args:
+        symbol: 交易对
+        market_context: 市场上下文
+        supplemental_context: 补充上下文（账户、持仓等）
+        images: K线图像列表
+        position_status_hint: 持仓状态提示
+        direction: 分析方向 "long" 或 "short"
+        current_price: 当前价格
+        
+    Returns:
+        多模态内容列表
+    """
+    content = []
+    
+    direction_cn = "做多" if direction == "long" else "做空"
+    price_str = f"${format_price(current_price)}" if current_price else "获取失败"
+    
+    text_part = f"""【待分析币种】{symbol}
+【当前价格】{price_str}
+【分析方向】{direction_cn}
+
+{market_context}
+
+{supplemental_context}
+
+【多周期K线图像】
+以下是 {symbol} 的 4h/1h/15m 三个周期的K线图（含技术指标：EMA、MACD、RSI、Bollinger Bands），请直接基于图像进行{direction_cn}方向的技术分析：
+"""
+    content.append({"type": "text", "text": text_part})
+    
+    for img_data in images:
+        interval = img_data["interval"]
+        content.append({"type": "text", "text": f"\n--- {interval} 周期 ---"})
+        content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{img_data['image_base64']}",
+                "detail": "high"
+            }
+        })
+    
+    task_prompt = f"\n请基于以上K线图像，对 {symbol} 进行{direction_cn}方向的多周期技术分析，输出结构化的分析结论。{position_status_hint}"
+    content.append({"type": "text", "text": task_prompt})
+    
+    return content
+
+
 def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
     """
     创建方向性分析 subagent
@@ -120,8 +228,8 @@ def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
         (subagent, node_name) 元组
     """
     tools = [
-        get_kline_image_tool,
         trend_comparison_tool,
+        calc_metrics_tool,
     ]
     
     prompt_filename = f"single_symbol_analysis_{direction}_prompt.md"
@@ -146,7 +254,8 @@ def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
 async def _run_directional_analysis_async(
     direction: str,
     symbol: str,
-    combined_message: str,
+    multimodal_content: List[Dict[str, Any]],
+    image_metas: List[Dict[str, str]],
     config: RunnableConfig,
 ) -> Tuple[str, str, Optional[str]]:
     """
@@ -155,7 +264,8 @@ async def _run_directional_analysis_async(
     Args:
         direction: "long" 或 "short"
         symbol: 交易对
-        combined_message: 输入消息
+        multimodal_content: 多模态消息内容（含图像）
+        image_metas: 图像元数据
         config: RunnableConfig（包含 trace context）
         
     Returns:
@@ -166,7 +276,10 @@ async def _run_directional_analysis_async(
     @with_async_retry(max_retries=5, retryable_exceptions=(Exception,))
     async def _invoke_with_retry():
         subagent, _ = _create_directional_subagent(direction)
-        subagent_messages = [HumanMessage(content=combined_message)]
+        subagent_messages = [HumanMessage(
+            content=multimodal_content,
+            additional_kwargs={"_image_metas": image_metas}
+        )]
         return await subagent.ainvoke({"messages": subagent_messages}, config=config)
     
     try:
@@ -187,7 +300,12 @@ async def _run_directional_analysis_async(
 
 async def _run_parallel_analysis(
     symbol: str,
-    combined_message: str,
+    market_context: str,
+    supplemental_context: str,
+    images: List[Dict[str, Any]],
+    image_metas: List[Dict[str, str]],
+    position_status_hint: str,
+    current_price: Optional[float],
     config: RunnableConfig,
 ) -> Tuple[Optional[str], Optional[str], List[str]]:
     """
@@ -197,15 +315,27 @@ async def _run_parallel_analysis(
     
     Args:
         symbol: 交易对
-        combined_message: 输入消息
+        market_context: 市场上下文
+        supplemental_context: 补充上下文
+        images: K线图像列表
+        image_metas: 图像元数据
+        position_status_hint: 持仓状态提示
+        current_price: 当前价格
         config: RunnableConfig
         
     Returns:
         (long_result, short_result, errors) 元组
     """
+    long_content = _build_multimodal_content(
+        symbol, market_context, supplemental_context, images, position_status_hint, "long", current_price
+    )
+    short_content = _build_multimodal_content(
+        symbol, market_context, supplemental_context, images, position_status_hint, "short", current_price
+    )
+    
     tasks = [
-        _run_directional_analysis_async("long", symbol, combined_message, config),
-        _run_directional_analysis_async("short", symbol, combined_message, config),
+        _run_directional_analysis_async("long", symbol, long_content, image_metas, config),
+        _run_directional_analysis_async("short", symbol, short_content, image_metas, config),
     ]
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -236,9 +366,12 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
     """
     对当前状态中的单个币种进行双向深度技术分析（做多+做空）。
     
-    本节点并行执行两个 subagent（使用 asyncio 实现并行，contextvars 自动传播）：
-    - Long Subagent: 专注于识别做多机会
-    - Short Subagent: 专注于识别做空机会
+    本节点：
+    1. 预生成 4h/1h/15m 三个周期的K线图像
+    2. 将图像直接传入 HumanMessage，供 LLM 进行视觉分析
+    3. 并行执行两个 subagent（使用 asyncio 实现并行，contextvars 自动传播）：
+       - Long Subagent: 专注于识别做多机会
+       - Short Subagent: 专注于识别做空机会
     
     两个 subagent 的分析结论将合并后传递给下游的开仓决策节点。
     
@@ -258,6 +391,21 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
         return {"analysis_results": {symbol: "分析失败: 缺少上下文"}}
 
     try:
+        logger.info(f"开始为 {symbol} 预生成K线图像...")
+        images, image_metas = _generate_kline_images(symbol, ANALYSIS_INTERVALS)
+        
+        if not images:
+            logger.error(f"{symbol} 无法生成K线图像，分析中止")
+            return {"analysis_results": {symbol: "分析失败: 无法生成K线图像"}}
+        
+        logger.info(f"{symbol} 成功生成 {len(images)} 个周期的K线图像")
+        
+        current_price = get_current_price(symbol)
+        if current_price:
+            logger.info(f"{symbol} 当前价格: ${format_price(current_price)}")
+        else:
+            logger.warning(f"{symbol} 无法获取当前价格")
+        
         has_existing_position = bool(state.positions_summary)
         position_status_hint = ""
         if has_existing_position:
@@ -270,19 +418,21 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
             positions_summary=state.positions_summary,
             position_history=state.position_history,
         )
-
-        task_prompt = f"请基于以上市场信息，对 {symbol} 进行多周期技术分析，输出结构化的分析结论。{position_status_hint}"
-
-        combined_message = "\n\n".join([
-            market_context,
-            "\n".join(supplemental_context),
-            task_prompt,
-        ])
+        supplemental_context_str = "\n".join(supplemental_context)
 
         logger.info(f"开始为 {symbol} 执行双向技术分析（做多+做空并行，asyncio）...")
         
         long_result, short_result, errors = asyncio.run(
-            _run_parallel_analysis(symbol, combined_message, config)
+            _run_parallel_analysis(
+                symbol,
+                market_context,
+                supplemental_context_str,
+                images,
+                image_metas,
+                position_status_hint,
+                current_price,
+                config
+            )
         )
         
         combined_analysis_parts = []

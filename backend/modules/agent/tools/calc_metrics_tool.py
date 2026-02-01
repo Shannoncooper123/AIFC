@@ -2,34 +2,16 @@ from typing import Any, Dict, Optional
 from langchain.tools import tool
 from modules.monitor.utils.logger import get_logger
 from modules.agent.tools.tool_utils import make_input_error, make_runtime_error
-from modules.agent.utils.kline_utils import fetch_klines
+from modules.agent.utils.kline_utils import get_current_price
 
 logger = get_logger('agent.tool.calc_metrics')
-
-
-def _get_latest_price(symbol: str) -> float | None:
-    """获取指定交易对的最新价格
-    
-    统一使用 fetch_klines 获取价格，由 tool_utils 层自动路由到正确的数据源：
-    - 回测模式：从 BacktestKlineProvider 获取模拟价格
-    - 实盘/模拟盘模式：从 Binance REST API 获取实时价格
-    """
-    try:
-        klines, error = fetch_klines(symbol, "1m", 1)
-        if klines and len(klines) > 0:
-            return klines[-1].close
-        return None
-    except Exception as e:
-        logger.error(f"_get_latest_price: 获取 {symbol} 最新价格失败 -> {e}")
-        return None
 
 
 @tool(
     "calc_metrics",
     description=(
-        "交易指标计算器：计算 R:R、1R/2R 触发价位。"
+        "交易指标计算器：计算 R:R（风险回报率）。"
         "支持市价模式（自动获取最新价）和挂单模式（指定 limit_price）。"
-        "纯计算工具，不提供交易建议。"
     ),
     parse_docstring=True,
 )
@@ -41,17 +23,16 @@ def calc_metrics_tool(
     feedback: str,
     limit_price: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """交易指标计算器：计算R:R、1R/2R触发价位（支持市价/挂单模式）。
+    """交易指标计算器：计算R:R风险回报率（支持市价/挂单模式）。
 
     概要:
         - 市价模式：不传入 limit_price，自动获取 symbol 的最新价格作为入场价
         - 挂单模式：传入 limit_price，以此价格作为入场价计算
-        - 自动计算 R:R、1R/2R 触发价位
-        - 纯计算工具，不提供任何交易建议
+        - 自动计算 R:R（风险回报率）
 
     返回结构化字典，包含：
         - inputs: 原始入参回显（含使用的 entry_price）
-        - metrics: entry_price, sl_distance, tp_distance, rr, r1_price, r2_price
+        - metrics: entry_price, sl_distance, tp_distance, rr
         - checks: sl_distance_pct（止损距离百分比）
         - feedback: 原路返回的分析进度说明
     错误时返回 {"error": "...", "feedback": ...}
@@ -94,7 +75,7 @@ def calc_metrics_tool(
             entry_price = float(limit_price)
             logger.info(f"calc_metrics_tool: 挂单模式，使用指定价格 -> {entry_price}")
         else:
-            entry_price = _get_latest_price(symbol)
+            entry_price = get_current_price(symbol)
             if entry_price is None or entry_price <= 0:
                 return {
                     "error": f"TOOL_RUNTIME_ERROR: 无法获取 {symbol} 的最新价格，请检查 symbol 或稍后重试。",
@@ -115,7 +96,6 @@ def calc_metrics_tool(
                 )
             sl_dist = entry_price - sl
             tp_dist = tp - entry_price
-            sign = 1.0
             side_norm = "long"
         else:  # SELL
             if not (sl > entry_price > tp):
@@ -126,7 +106,6 @@ def calc_metrics_tool(
                 )
             sl_dist = sl - entry_price
             tp_dist = entry_price - tp
-            sign = -1.0
             side_norm = "short"
         
         sl_dist_pct = (sl_dist / entry_price) * 100
@@ -135,11 +114,7 @@ def calc_metrics_tool(
         rr = tp_dist / sl_dist
         tp_dist_pct = (tp_dist / entry_price) * 100
 
-        # 5. 1R/2R 触发价位
-        r1_price = entry_price + sign * sl_dist
-        r2_price = entry_price + sign * (2.0 * sl_dist)
-
-        # 6. 构建易读的摘要（纯计算结果，不含建议）
+        # 5. 构建易读的摘要（纯计算结果，不含建议）
         side_cn = "做多" if side_norm == "long" else "做空"
         
         summary = f"""风险回报率计算结果
@@ -167,8 +142,6 @@ def calc_metrics_tool(
                 "tp_distance": round(tp_dist, 8),
                 "tp_distance_pct": round(tp_dist_pct, 2),
                 "rr": round(rr, 6),
-                "r1_price": round(r1_price, 8),
-                "r2_price": round(r2_price, 8),
             },
             "feedback": feedback,
         }

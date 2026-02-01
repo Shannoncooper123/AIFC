@@ -6,9 +6,9 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from modules.agent.state import SymbolAnalysisState
-from modules.agent.tools.create_limit_order_tool import create_limit_order_tool
+from modules.agent.tools.open_position_tool import open_position_tool
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
-from modules.agent.utils.kline_utils import fetch_klines
+from modules.agent.utils.kline_utils import fetch_klines, get_current_price, format_price
 from modules.agent.utils.model_factory import get_model_factory, with_retry
 from modules.agent.utils.trace_utils import create_trace_agent, traced_node
 from modules.monitor.utils.logger import get_logger
@@ -107,13 +107,15 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
     return images, image_metas
 
 
-def _build_multimodal_content(symbol: str, account_info: str, analysis_result: str, images: List[Dict[str, Any]], max_margin: float) -> List[Dict[str, Any]]:
+def _build_multimodal_content(symbol: str, account_info: str, analysis_result: str, images: List[Dict[str, Any]], max_margin: float, current_price: float | None) -> List[Dict[str, Any]]:
     """构建多模态消息内容"""
     content = []
     
     margin_info = f"本次开仓可用最大保证金: ${max_margin:.2f} USDT" if max_margin > 0 else "保证金信息不可用"
+    price_str = f"${format_price(current_price)}" if current_price else "获取失败"
     
     text_part = f"""【待决策币种】{symbol}
+【当前价格】{price_str}
 
 【账户状态】
 {account_info}
@@ -174,7 +176,7 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
 
     try:
         tools = [
-            create_limit_order_tool,
+            open_position_tool,
             calc_metrics_tool,
         ]
 
@@ -184,6 +186,12 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
 
         logger.info(f"开始为 {symbol} 生成复核图像...")
         images, image_metas = _generate_kline_images(symbol, REVIEW_INTERVALS)
+
+        current_price = get_current_price(symbol)
+        if current_price:
+            logger.info(f"{symbol} 当前价格: ${format_price(current_price)}")
+        else:
+            logger.warning(f"{symbol} 无法获取当前价格")
 
         model = get_model_factory().get_decision_model()
 
@@ -196,11 +204,13 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
         
         max_margin = _get_max_margin_for_new_position()
         margin_info = f"本次开仓可用最大保证金: ${max_margin:.2f} USDT" if max_margin > 0 else "保证金信息不可用"
+        price_str = f"${format_price(current_price)}" if current_price else "获取失败"
         
         if not images:
             logger.warning(f"{symbol} 无法生成复核图像，使用纯文本模式")
             account_info = _format_account_summary(state.account_summary)
             combined_message = f"""【待决策币种】{symbol}
+【当前价格】{price_str}
 
 【账户状态】
 {account_info}
@@ -214,7 +224,7 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
         else:
             logger.info(f"{symbol} 生成 {len(images)} 个周期的复核图像")
             account_info = _format_account_summary(state.account_summary)
-            multimodal_content = _build_multimodal_content(symbol, account_info, analysis_result, images, max_margin)
+            multimodal_content = _build_multimodal_content(symbol, account_info, analysis_result, images, max_margin, current_price)
             subagent_messages = [HumanMessage(
                 content=multimodal_content,
                 additional_kwargs={"_image_metas": image_metas}

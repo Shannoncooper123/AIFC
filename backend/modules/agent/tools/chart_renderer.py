@@ -92,7 +92,27 @@ def _render_chart_in_process(
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches
     import matplotlib.gridspec as gridspec
-    from matplotlib.ticker import MaxNLocator
+    from matplotlib.ticker import MaxNLocator, FuncFormatter
+    
+    def _get_price_decimals(price: float) -> int:
+        """根据价格大小确定小数位数"""
+        if price >= 1000:
+            return 2
+        elif price >= 1:
+            return 4
+        elif price >= 0.01:
+            return 6
+        elif price >= 0.0001:
+            return 8
+        else:
+            return 10
+    
+    def _make_price_formatter(ref_price: float):
+        """创建价格格式化器"""
+        decimals = _get_price_decimals(ref_price)
+        def formatter(x, pos):
+            return f'{x:.{decimals}f}'
+        return FuncFormatter(formatter)
     
     if not kline_data:
         raise ValueError("没有K线数据可以绘制")
@@ -263,6 +283,7 @@ def _render_chart_in_process(
         pad = (p_max - p_min) * 0.02
         ax_main.set_ylim(p_min - pad, p_max + pad)
         ax_main.yaxis.set_major_locator(MaxNLocator(nbins=25))
+        ax_main.yaxis.set_major_formatter(_make_price_formatter(p_max))
         ax_main.tick_params(axis='y', labelright=True, labelsize=9)
     
     ax_main.set_xlim(-1, len(indices))

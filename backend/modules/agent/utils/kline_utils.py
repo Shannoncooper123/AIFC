@@ -186,3 +186,60 @@ def fetch_klines(
     except Exception as e:
         logger.error(f"获取K线数据失败: {e}")
         return None, f"获取K线数据失败 - {str(e)}"
+
+
+def get_current_price(symbol: str) -> Optional[float]:
+    """获取币种当前价格
+    
+    统一的价格获取入口，自动适配不同运行模式：
+    - 回测模式：使用 BacktestKlineProvider.get_current_price（返回回测周期的收盘价）
+    - 实盘/模拟盘模式：从 Binance REST API 获取 1m K线的收盘价
+    
+    注意：回测模式下返回的是回测周期（如15m）的收盘价，与交易引擎保持一致
+    
+    Args:
+        symbol: 交易对，如 "BTCUSDT"
+    
+    Returns:
+        当前价格，获取失败返回 None
+    """
+    try:
+        provider = get_kline_provider()
+        
+        if provider is not None and hasattr(provider, 'get_current_price'):
+            price = provider.get_current_price(symbol)
+            if price is not None:
+                return price
+        
+        klines, error = fetch_klines(symbol, "1m", 1)
+        if klines and len(klines) > 0:
+            return klines[-1].close
+        return None
+    except Exception as e:
+        logger.error(f"获取 {symbol} 当前价格失败: {e}")
+        return None
+
+
+def format_price(price: float) -> str:
+    """根据价格大小自动格式化小数位数
+    
+    适配不同价格范围的币种显示：
+    - 价格 >= 1000: 2位小数（如 BTC）
+    - 价格 >= 1: 4位小数（如 ETH）
+    - 价格 >= 0.01: 6位小数（如 DOGE）
+    - 价格 < 0.01: 8位小数（适配 meme 币）
+    
+    Args:
+        price: 价格
+    
+    Returns:
+        格式化后的价格字符串
+    """
+    if price >= 1000:
+        return f"{price:.2f}"
+    elif price >= 1:
+        return f"{price:.4f}"
+    elif price >= 0.01:
+        return f"{price:.6f}"
+    else:
+        return f"{price:.8f}"
