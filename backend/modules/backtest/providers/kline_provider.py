@@ -219,7 +219,7 @@ class BacktestKlineProvider:
                         interval=interval,
                         start_time=self.start_time,
                         end_time=self.end_time,
-                        buffer_bars=100
+                        buffer_bars=250
                     )
                     
                     self._kline_cache[symbol][interval] = klines
