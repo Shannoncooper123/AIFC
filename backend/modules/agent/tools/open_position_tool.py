@@ -2,6 +2,7 @@
 from langchain.tools import tool
 from typing import Optional, Dict, Any, List
 from modules.agent.engine import get_engine
+from modules.agent.utils.kline_utils import get_current_price
 from modules.constants import DEFAULT_LEVERAGE
 from modules.monitor.utils.logger import get_logger
 from modules.monitor.alerts.notifier import EmailNotifier
@@ -284,7 +285,8 @@ def open_position_tool(
             return make_input_error("sl_price必须为正数价格")
         
         # 获取当前价格用于验证 TP/SL 合理性
-        current_price = eng.position_manager.get_latest_close_price(symbol)
+        # 使用统一的价格获取方法，自动适配回测/实盘模式
+        current_price = get_current_price(symbol)
         if current_price is None:
             logger.error(f"open_position_tool: 无法获取 {symbol} 当前价格")
             return make_input_error(f"无法获取 {symbol} 当前价格，请稍后重试")
