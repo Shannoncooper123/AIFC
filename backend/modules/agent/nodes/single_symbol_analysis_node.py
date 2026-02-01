@@ -112,75 +112,27 @@ def _build_supplemental_context(
     return context
 
 
-def _generate_kline_images(symbol: str, intervals: List[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
-    """预生成多周期K线图像
-    
-    Args:
-        symbol: 交易对
-        intervals: 时间周期列表
-        
-    Returns:
-        (images, image_metas): images 用于构建消息，image_metas 用于 trace 匹配
-    """
-    from modules.agent.tools.chart_renderer_pillow import render_kline_chart_pillow
-    
-    images = []
-    image_metas = []
-    
-    logger.info(f"为 {symbol} 预生成 {len(intervals)} 个周期的K线图像: {intervals}")
-    
-    for interval in intervals:
-        try:
-            fetch_limit = 200
-            display_limit = 100
-            
-            logger.info(f"{symbol} {interval} 获取K线用于分析图像")
-            
-            klines, error = fetch_klines(symbol, interval, fetch_limit)
-            
-            if error or not klines:
-                logger.warning(f"未获取到 {symbol} {interval} K线数据: {error}")
-                continue
-            
-            image_base64 = render_kline_chart_pillow(klines, symbol, interval, display_limit)
-            
-            images.append({
-                "interval": interval,
-                "image_base64": image_base64,
-            })
-            image_metas.append({"symbol": symbol, "interval": interval})
-            
-            logger.info(f"生成 {symbol} {interval} 分析图像成功")
-            
-        except Exception as e:
-            logger.error(f"生成 {symbol} {interval} 图像失败: {e}")
-            continue
-    
-    return images, image_metas
-
 
 def _build_multimodal_content(
     symbol: str,
     market_context: str,
     supplemental_context: str,
-    images: List[Dict[str, Any]],
     position_status_hint: str,
     direction: str,
     current_price: Optional[float],
 ) -> List[Dict[str, Any]]:
-    """构建多模态消息内容（含K线图像）
+    """构建消息内容（不再预生成图像，由 agent 自行调用工具获取）
     
     Args:
         symbol: 交易对
         market_context: 市场上下文
         supplemental_context: 补充上下文（账户、持仓等）
-        images: K线图像列表
         position_status_hint: 持仓状态提示
         direction: 分析方向 "long" 或 "short"
         current_price: 当前价格
         
     Returns:
-        多模态内容列表
+        消息内容列表
     """
     content = []
     
@@ -195,24 +147,9 @@ def _build_multimodal_content(
 
 {supplemental_context}
 
-【多周期K线图像】
-以下是 {symbol} 的 4h/1h/15m 三个周期的K线图（含技术指标：EMA、MACD、RSI、Bollinger Bands），请直接基于图像进行{direction_cn}方向的技术分析：
-"""
+请利用 get_kline_image 工具，严格按照 4h -> 1h -> 15m 的顺序，逐个获取K线图像并进行分析。
+{position_status_hint}"""
     content.append({"type": "text", "text": text_part})
-    
-    for img_data in images:
-        interval = img_data["interval"]
-        content.append({"type": "text", "text": f"\n--- {interval} 周期 ---"})
-        content.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/png;base64,{img_data['image_base64']}",
-                "detail": "high"
-            }
-        })
-    
-    task_prompt = f"\n请基于以上K线图像，对 {symbol} 进行{direction_cn}方向的多周期技术分析，输出结构化的分析结论。{position_status_hint}"
-    content.append({"type": "text", "text": task_prompt})
     
     return content
 
@@ -228,6 +165,7 @@ def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
         (subagent, node_name) 元组
     """
     tools = [
+        get_kline_image_tool,  # 新增工具
         trend_comparison_tool,
         calc_metrics_tool,
     ]
@@ -255,7 +193,6 @@ async def _run_directional_analysis_async(
     direction: str,
     symbol: str,
     multimodal_content: List[Dict[str, Any]],
-    image_metas: List[Dict[str, str]],
     config: RunnableConfig,
 ) -> Tuple[str, str, Optional[str]]:
     """
@@ -264,8 +201,7 @@ async def _run_directional_analysis_async(
     Args:
         direction: "long" 或 "short"
         symbol: 交易对
-        multimodal_content: 多模态消息内容（含图像）
-        image_metas: 图像元数据
+        multimodal_content: 消息内容
         config: RunnableConfig（包含 trace context）
         
     Returns:
@@ -278,7 +214,6 @@ async def _run_directional_analysis_async(
         subagent, _ = _create_directional_subagent(direction)
         subagent_messages = [HumanMessage(
             content=multimodal_content,
-            additional_kwargs={"_image_metas": image_metas}
         )]
         return await subagent.ainvoke({"messages": subagent_messages}, config=config)
     
@@ -302,8 +237,6 @@ async def _run_parallel_analysis(
     symbol: str,
     market_context: str,
     supplemental_context: str,
-    images: List[Dict[str, Any]],
-    image_metas: List[Dict[str, str]],
     position_status_hint: str,
     current_price: Optional[float],
     config: RunnableConfig,
@@ -317,8 +250,6 @@ async def _run_parallel_analysis(
         symbol: 交易对
         market_context: 市场上下文
         supplemental_context: 补充上下文
-        images: K线图像列表
-        image_metas: 图像元数据
         position_status_hint: 持仓状态提示
         current_price: 当前价格
         config: RunnableConfig
@@ -327,15 +258,15 @@ async def _run_parallel_analysis(
         (long_result, short_result, errors) 元组
     """
     long_content = _build_multimodal_content(
-        symbol, market_context, supplemental_context, images, position_status_hint, "long", current_price
+        symbol, market_context, supplemental_context, position_status_hint, "long", current_price
     )
     short_content = _build_multimodal_content(
-        symbol, market_context, supplemental_context, images, position_status_hint, "short", current_price
+        symbol, market_context, supplemental_context, position_status_hint, "short", current_price
     )
     
     tasks = [
-        _run_directional_analysis_async("long", symbol, long_content, image_metas, config),
-        _run_directional_analysis_async("short", symbol, short_content, image_metas, config),
+        _run_directional_analysis_async("long", symbol, long_content, config),
+        _run_directional_analysis_async("short", symbol, short_content, config),
     ]
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
