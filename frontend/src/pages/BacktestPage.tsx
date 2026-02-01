@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FlaskConical, History } from 'lucide-react';
+import { FlaskConical } from 'lucide-react';
 import { Card } from '../components/ui';
 import {
   BacktestConfig,
@@ -11,15 +11,12 @@ import {
   ConcurrencyControl,
   useBacktestList,
   useBacktestStatus,
-  useBacktestHistory,
   useBacktestTrades,
   useStartBacktest,
   useStopBacktest,
   useDeleteBacktest,
 } from '../features/backtest';
-import { HistoryTable } from '../features/positions';
 import type { BacktestConfigData } from '../features/backtest/components/BacktestConfig';
-import type { PositionHistory } from '../types';
 
 export function BacktestPage() {
   const navigate = useNavigate();
@@ -27,7 +24,6 @@ export function BacktestPage() {
 
   const { data: listData } = useBacktestList(20);
   const { data: statusData } = useBacktestStatus(selectedBacktestId);
-  const { data: historyData } = useBacktestHistory(selectedBacktestId);
   const isBacktestRunning = statusData?.status === 'running';
   const { data: tradesData, isLoading: tradesLoading } = useBacktestTrades(selectedBacktestId, 100, isBacktestRunning);
 
@@ -85,20 +81,6 @@ export function BacktestPage() {
   const isCompleted = statusData?.status === 'completed';
   const result = statusData?.result;
 
-  const historyPositions: PositionHistory[] =
-    historyData?.positions?.map((p) => ({
-      symbol: p.symbol,
-      side: p.side.toUpperCase() as 'LONG' | 'SHORT',
-      size: p.size,
-      entry_price: p.entry_price,
-      exit_price: p.close_price,
-      realized_pnl: p.realized_pnl,
-      pnl_percent: p.entry_price > 0 ? ((p.close_price - p.entry_price) / p.entry_price) : 0,
-      opened_at: p.open_time,
-      closed_at: p.close_time,
-      close_reason: p.close_reason,
-    })) ?? [];
-
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -148,16 +130,6 @@ export function BacktestPage() {
               cancelledOrders={tradesData?.cancelledOrders ?? []}
               isLoading={tradesLoading} 
             />
-          )}
-
-          {selectedBacktestId && historyPositions.length > 0 && (
-            <Card>
-              <div className="flex items-center gap-2 text-white font-medium mb-4">
-                <History className="h-5 w-5 text-blue-400" />
-                Position History (Legacy)
-              </div>
-              <HistoryTable positions={historyPositions} />
-            </Card>
           )}
 
           {selectedBacktestId && result?.workflow_runs && result.workflow_runs.length > 0 && (
