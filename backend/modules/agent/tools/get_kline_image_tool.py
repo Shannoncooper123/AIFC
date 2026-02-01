@@ -1,13 +1,13 @@
 """获取K线图图像的工具（含技术指标）
 
-使用进程池渲染器实现高并发图表生成，解决 Matplotlib 线程安全问题。
+使用 Pillow 渲染器实现高并发图表生成，线程安全，无需子进程隔离。
 """
 from typing import Dict, Any, List
 from langchain.tools import tool
 
 from modules.agent.tools.tool_utils import validate_symbol, validate_interval
 from modules.agent.utils.kline_utils import fetch_klines
-from modules.agent.tools.chart_renderer import render_kline_chart
+from modules.agent.tools.chart_renderer_pillow import render_kline_chart_pillow
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.tool.get_kline_image')
@@ -61,8 +61,8 @@ def get_kline_image_tool(
         if error or not klines:
             return _make_runtime_error(error or f"未获取到 {symbol} {interval} 的K线数据")
         
-        logger.info(f"生成 {symbol} {interval} K线图（含技术指标）- 使用进程池渲染")
-        image_base64 = render_kline_chart(klines, symbol, interval, limit)
+        logger.info(f"生成 {symbol} {interval} K线图（含技术指标）- 使用 Pillow 渲染")
+        image_base64 = render_kline_chart_pillow(klines, symbol, interval, limit)
         
         return [
             {

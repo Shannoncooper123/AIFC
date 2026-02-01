@@ -167,14 +167,7 @@ class BacktestEngine:
         
         set_backtest_mode(True)
         
-        # 限制图表渲染进程池大小为 CPU 核心数，避免进程过多导致服务器负载过高
-        chart_pool_size = os.cpu_count() or 4
-        try:
-            from modules.agent.tools.chart_renderer import _get_process_pool
-            _get_process_pool(chart_pool_size)
-            logger.info(f"预热图表渲染进程池: size={chart_pool_size}")
-        except Exception as e:
-            logger.warning(f"预热图表渲染进程池失败: {e}")
+        # 注意：已切换到 Pillow 渲染器，线程安全，无需进程池预热
         
         self._position_logger = PositionLogger(
             backtest_id=self.backtest_id,
