@@ -1,6 +1,10 @@
 """
 Workflow Trace API - 提供 workflow 运行记录的查询接口
 
+优化后的存储结构：
+- workflow_index.jsonl: 索引文件，存储每个 workflow 的摘要信息（用于快速列表查询）
+- workflow_traces/: 目录，按 workflow_run_id 分文件存储详细 trace
+
 新的 trace 结构使用 trace_id 和 parent_trace_id 建立层级关系，
 每个 trace 记录包含 type 字段标识类型：
 - workflow: 顶层工作流
@@ -32,15 +36,201 @@ from app.models.schemas import (
     WorkflowTimeline,
     WorkflowTraceItem,
 )
-from modules.agent.utils.workflow_trace_storage import get_trace_path
+from modules.agent.utils.workflow_trace_storage import (
+    get_trace_path,
+    get_index_path,
+    get_traces_dir,
+    get_workflow_trace_path,
+)
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/workflow", tags=["workflow"])
 
 
-class TraceEventCache:
-    """Trace 事件缓存 - 避免重复读取文件"""
+class WorkflowIndexCache:
+    """Workflow 索引缓存 - 只缓存索引文件，用于快速列表查询"""
+    
+    def __init__(self, ttl_seconds: float = 2.0):
+        self._runs: Dict[str, WorkflowRunSummary] = {}
+        self._last_load_time: float = 0
+        self._last_file_mtime: float = 0
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+    
+    def _should_reload(self, index_path: str) -> bool:
+        """检查是否需要重新加载"""
+        if not os.path.exists(index_path):
+            return False
+        
+        current_time = time.time()
+        if current_time - self._last_load_time < self._ttl:
+            return False
+        
+        try:
+            file_mtime = os.path.getmtime(index_path)
+            if file_mtime > self._last_file_mtime:
+                return True
+        except OSError:
+            pass
+        
+        return False
+    
+    def _load_index(self, index_path: str) -> None:
+        """加载索引文件并合并同一 run_id 的记录"""
+        runs: Dict[str, WorkflowRunSummary] = {}
+        
+        if not os.path.exists(index_path):
+            self._runs = runs
+            return
+        
+        with open(index_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    run_id = record.get("run_id")
+                    if not run_id:
+                        continue
+                    
+                    if run_id not in runs:
+                        runs[run_id] = WorkflowRunSummary(
+                            run_id=run_id,
+                            start_time=record.get("start_time"),
+                            end_time=record.get("end_time"),
+                            duration_ms=record.get("duration_ms"),
+                            status=record.get("status"),
+                            symbols=record.get("symbols") or [],
+                            pending_count=record.get("pending_count") or 0,
+                            nodes_count=record.get("nodes_count") or 0,
+                            tool_calls_count=record.get("tool_calls_count") or 0,
+                            model_calls_count=record.get("model_calls_count") or 0,
+                            artifacts_count=record.get("artifacts_count") or 0,
+                        )
+                    else:
+                        existing = runs[run_id]
+                        status = record.get("status")
+                        if status and status != "running":
+                            existing.end_time = record.get("end_time")
+                            existing.duration_ms = record.get("duration_ms")
+                            existing.status = status
+                            existing.nodes_count = record.get("nodes_count") or existing.nodes_count
+                            existing.tool_calls_count = record.get("tool_calls_count") or existing.tool_calls_count
+                            existing.model_calls_count = record.get("model_calls_count") or existing.model_calls_count
+                            existing.artifacts_count = record.get("artifacts_count") or existing.artifacts_count
+                        if record.get("symbols"):
+                            existing.symbols = record.get("symbols")
+                        if record.get("pending_count"):
+                            existing.pending_count = record.get("pending_count")
+                            
+                except json.JSONDecodeError as e:
+                    logger.warning(f"解析索引JSON行失败: {e}")
+                    continue
+        
+        self._runs = runs
+        self._last_load_time = time.time()
+        try:
+            self._last_file_mtime = os.path.getmtime(index_path)
+        except OSError:
+            pass
+    
+    def get_runs(self, limit: int = 50) -> List[WorkflowRunSummary]:
+        """获取 workflow 运行列表（带缓存）"""
+        index_path = get_index_path()
+        with self._lock:
+            if self._should_reload(index_path):
+                self._load_index(index_path)
+            runs = list(self._runs.values())
+            runs_sorted = sorted(runs, key=lambda r: r.start_time or "", reverse=True)
+            return runs_sorted[:limit]
+    
+    def get_total_count(self) -> int:
+        """获取总运行数"""
+        index_path = get_index_path()
+        with self._lock:
+            if self._should_reload(index_path):
+                self._load_index(index_path)
+            return len(self._runs)
+
+
+class WorkflowTraceCache:
+    """单个 Workflow Trace 缓存 - 按需加载单个 workflow 的 trace"""
+    
+    def __init__(self, ttl_seconds: float = 5.0):
+        self._cache: Dict[str, tuple] = {}
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+    
+    def _should_reload(self, workflow_run_id: str, trace_path: str) -> bool:
+        """检查是否需要重新加载"""
+        if not os.path.exists(trace_path):
+            return False
+        
+        with self._lock:
+            if workflow_run_id not in self._cache:
+                return True
+            
+            _, last_load_time, last_file_mtime = self._cache[workflow_run_id]
+            
+            current_time = time.time()
+            if current_time - last_load_time < self._ttl:
+                return False
+            
+            try:
+                file_mtime = os.path.getmtime(trace_path)
+                if file_mtime > last_file_mtime:
+                    return True
+            except OSError:
+                pass
+            
+            return False
+    
+    def _load_trace(self, workflow_run_id: str, trace_path: str) -> List[Dict[str, Any]]:
+        """加载单个 workflow 的 trace 事件"""
+        events: List[Dict[str, Any]] = []
+        
+        if not os.path.exists(trace_path):
+            return events
+        
+        with open(trace_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    events.append(event)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"解析trace JSON行失败: {e}")
+                    continue
+        
+        with self._lock:
+            try:
+                file_mtime = os.path.getmtime(trace_path)
+            except OSError:
+                file_mtime = 0
+            self._cache[workflow_run_id] = (events, time.time(), file_mtime)
+        
+        return events
+    
+    def get_events(self, workflow_run_id: str) -> List[Dict[str, Any]]:
+        """获取单个 workflow 的 trace 事件（带缓存）"""
+        trace_path = get_workflow_trace_path(workflow_run_id)
+        
+        if self._should_reload(workflow_run_id, trace_path):
+            return self._load_trace(workflow_run_id, trace_path)
+        
+        with self._lock:
+            if workflow_run_id in self._cache:
+                return self._cache[workflow_run_id][0]
+        
+        return self._load_trace(workflow_run_id, trace_path)
+
+
+class LegacyTraceCache:
+    """旧版 Trace 缓存 - 兼容旧的单文件存储格式"""
     
     def __init__(self, ttl_seconds: float = 2.0):
         self._events: List[Dict[str, Any]] = []
@@ -120,22 +310,25 @@ class TraceEventCache:
             return self._events_by_workflow_run_id.get(workflow_run_id, [])
 
 
-_trace_cache = TraceEventCache(ttl_seconds=2.0)
+_index_cache = WorkflowIndexCache(ttl_seconds=2.0)
+_trace_cache = WorkflowTraceCache(ttl_seconds=5.0)
+_legacy_cache = LegacyTraceCache(ttl_seconds=2.0)
 
 
-def _read_events_sync() -> List[Dict[str, Any]]:
-    """同步读取所有 trace 事件（带缓存）"""
-    return _trace_cache.get_all_events()
+def _is_new_storage_available() -> bool:
+    """检查是否使用新的存储格式"""
+    index_path = get_index_path()
+    traces_dir = get_traces_dir()
+    return os.path.exists(index_path) or os.path.exists(traces_dir)
 
 
 def _read_events_for_run_sync(workflow_run_id: str) -> List[Dict[str, Any]]:
-    """同步读取指定 workflow_run_id 的事件（O(1) 查找）"""
-    return _trace_cache.get_events_by_workflow_run_id(workflow_run_id)
-
-
-async def _read_events() -> List[Dict[str, Any]]:
-    """异步读取所有 trace 事件（在线程池中执行）"""
-    return await asyncio.to_thread(_read_events_sync)
+    """同步读取指定 workflow_run_id 的事件"""
+    trace_path = get_workflow_trace_path(workflow_run_id)
+    if os.path.exists(trace_path):
+        return _trace_cache.get_events(workflow_run_id)
+    
+    return _legacy_cache.get_events_by_workflow_run_id(workflow_run_id)
 
 
 async def _read_events_for_run(workflow_run_id: str) -> List[Dict[str, Any]]:
@@ -143,8 +336,8 @@ async def _read_events_for_run(workflow_run_id: str) -> List[Dict[str, Any]]:
     return await asyncio.to_thread(_read_events_for_run_sync, workflow_run_id)
 
 
-def _summarize_runs(events: List[Dict[str, Any]]) -> List[WorkflowRunSummary]:
-    """汇总运行记录"""
+def _summarize_runs_from_legacy(events: List[Dict[str, Any]]) -> List[WorkflowRunSummary]:
+    """从旧版事件列表汇总运行记录"""
     runs: Dict[str, WorkflowRunSummary] = {}
     
     for event in events:
@@ -318,10 +511,15 @@ def _build_timeline(workflow_run_id: str, run_events: List[Dict[str, Any]]) -> W
 @router.get("/runs", response_model=WorkflowRunsResponse)
 async def list_runs(limit: int = Query(default=50, ge=1, le=500)):
     """获取 workflow 运行列表"""
-    events = await _read_events()
-    runs = _summarize_runs(events)
-    runs_sorted = sorted(runs, key=lambda r: r.start_time or "", reverse=True)[:limit]
-    return WorkflowRunsResponse(runs=runs_sorted, total=len(runs_sorted))
+    if _is_new_storage_available():
+        runs = await asyncio.to_thread(_index_cache.get_runs, limit)
+        total = await asyncio.to_thread(_index_cache.get_total_count)
+        return WorkflowRunsResponse(runs=runs, total=total)
+    else:
+        events = await asyncio.to_thread(_legacy_cache.get_all_events)
+        runs = _summarize_runs_from_legacy(events)
+        runs_sorted = sorted(runs, key=lambda r: r.start_time or "", reverse=True)[:limit]
+        return WorkflowRunsResponse(runs=runs_sorted, total=len(runs_sorted))
 
 
 @router.get("/runs/{run_id}", response_model=WorkflowRunDetailResponse)
@@ -373,7 +571,33 @@ async def list_run_artifacts(run_id: str):
 @router.get("/artifacts/{artifact_id}")
 async def get_artifact(artifact_id: str):
     """获取 artifact 文件"""
-    events = await _read_events()
+    traces_dir = get_traces_dir()
+    if os.path.exists(traces_dir):
+        for filename in os.listdir(traces_dir):
+            if not filename.endswith(".jsonl"):
+                continue
+            trace_path = os.path.join(traces_dir, filename)
+            try:
+                with open(trace_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                            if event.get("type") == "artifact":
+                                payload = event.get("payload") or {}
+                                if payload.get("artifact_id") == artifact_id:
+                                    file_path = payload.get("file_path")
+                                    if file_path and os.path.exists(file_path):
+                                        return FileResponse(file_path)
+                        except json.JSONDecodeError:
+                            continue
+            except Exception as e:
+                logger.warning(f"读取 trace 文件失败 {trace_path}: {e}")
+                continue
+    
+    events = await asyncio.to_thread(_legacy_cache.get_all_events)
     for e in events:
         if e.get("type") == "artifact":
             payload = e.get("payload") or {}
@@ -382,4 +606,5 @@ async def get_artifact(artifact_id: str):
                 if not file_path or not os.path.exists(file_path):
                     raise HTTPException(status_code=404, detail="文件不存在")
                 return FileResponse(file_path)
+    
     raise HTTPException(status_code=404, detail="Artifact 不存在")
