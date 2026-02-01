@@ -16,7 +16,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from modules.agent.engine import get_engine
-from modules.agent.tools.tool_utils import get_kline_provider, set_kline_provider
 from modules.backtest.context import set_backtest_mode
 from modules.backtest.engine.dynamic_semaphore import DynamicSemaphore
 from modules.backtest.engine.position_logger import PositionLogger
@@ -29,6 +28,7 @@ from modules.backtest.models import (
     BacktestProgress,
     BacktestResult,
     BacktestStatus,
+    CancelledLimitOrder,
 )
 from modules.backtest.providers.kline_provider import BacktestKlineProvider
 from modules.config.settings import get_config
@@ -95,7 +95,6 @@ class BacktestEngine:
         self._thread: Optional[threading.Thread] = None
         
         self._original_engine = None
-        self._original_provider = None
         
         self.kline_provider: Optional[BacktestKlineProvider] = None
         self._position_simulator: Optional[PositionSimulator] = None
@@ -149,11 +148,14 @@ class BacktestEngine:
         return int(total_minutes / interval_minutes)
     
     def _initialize(self) -> None:
-        """初始化回测环境"""
+        """初始化回测环境
+        
+        注意：不再设置全局 KlineProvider，每个回测步骤通过 WorkflowExecutor
+        使用 context-local provider 实现隔离。这样支持并发回测且避免全局状态污染。
+        """
         logger.info("初始化回测环境...")
         
         self._original_engine = get_engine()
-        self._original_provider = get_kline_provider()
         
         logger.info("加载历史K线数据...")
         self.kline_provider = BacktestKlineProvider(
@@ -163,7 +165,6 @@ class BacktestEngine:
             interval=self.config.interval,
         )
         
-        set_kline_provider(self.kline_provider)
         set_backtest_mode(True)
         
         # 限制图表渲染进程池大小为 CPU 核心数，避免进程过多导致服务器负载过高
@@ -206,9 +207,6 @@ class BacktestEngine:
         
         set_backtest_mode(False)
         
-        if self._original_provider:
-            set_kline_provider(self._original_provider)
-        
         if self._position_logger:
             self._position_logger.write_summary()
         
@@ -221,8 +219,12 @@ class BacktestEngine:
         self,
         current_time: datetime,
         step_index: int,
-    ) -> Tuple[str, List[BacktestTradeResult], bool]:
-        """执行步骤并在完成后释放信号量"""
+    ) -> Tuple[str, List[BacktestTradeResult], List["CancelledLimitOrder"], bool]:
+        """执行步骤并在完成后释放信号量
+        
+        Returns:
+            (workflow_run_id, 交易结果列表, 取消订单列表, 是否超时)
+        """
         try:
             return self._executor.execute_step(current_time, step_index)
         finally:
@@ -311,7 +313,7 @@ class BacktestEngine:
                     step_duration = time.time() - step_start_times.pop(future, time.time())
                     
                     try:
-                        workflow_run_id, trade_results, is_timeout = future.result(timeout=1)
+                        workflow_run_id, trade_results, cancelled_orders, is_timeout = future.result(timeout=1)
                         
                         self._stats.record_step(StepMetrics(
                             step_index=step_index,
@@ -323,6 +325,8 @@ class BacktestEngine:
                         
                         self._result_collector.add_workflow_run(workflow_run_id)
                         self._result_collector.add_trades(trade_results)
+                        if cancelled_orders:
+                            self._result_collector.add_cancelled_orders(cancelled_orders)
                         
                         if self._stats.should_log():
                             self._stats.log_stats(len(pending_futures))

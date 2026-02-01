@@ -12,15 +12,15 @@ from langchain_core.runnables import RunnableConfig
 from modules.agent.builder import create_workflow
 from modules.agent.engine import set_engine, clear_thread_local_engine
 from modules.agent.state import AgentState
-from modules.agent.tools.tool_utils import set_kline_provider, clear_context_kline_provider
-from modules.agent.utils.trace_context import workflow_trace_context
+from modules.agent.utils.kline_utils import set_kline_provider, clear_context_kline_provider
+from modules.agent.utils.trace_utils import workflow_trace_context
 from modules.agent.utils.workflow_trace_storage import (
     generate_trace_id,
     record_workflow_start,
     record_workflow_end,
 )
 from modules.backtest.engine.backtest_trade_engine import BacktestTradeEngine
-from modules.backtest.models import BacktestConfig, BacktestTradeResult
+from modules.backtest.models import BacktestConfig, BacktestTradeResult, CancelledLimitOrder
 from modules.backtest.providers.kline_provider import BacktestKlineProvider, set_backtest_time
 from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
@@ -57,7 +57,7 @@ class WorkflowExecutor:
         self,
         current_time: datetime,
         step_index: int,
-    ) -> Tuple[str, List[BacktestTradeResult], bool]:
+    ) -> Tuple[str, List[BacktestTradeResult], List[CancelledLimitOrder], bool]:
         """执行单个回测步骤
         
         Args:
@@ -65,7 +65,7 @@ class WorkflowExecutor:
             step_index: 步骤索引
         
         Returns:
-            (workflow_run_id, 交易结果列表, 是否超时)
+            (workflow_run_id, 交易结果列表, 取消订单列表, 是否超时)
         """
         ctx = contextvars.copy_context()
         return ctx.run(self._execute_step_isolated, current_time, step_index)
@@ -74,7 +74,7 @@ class WorkflowExecutor:
         self,
         current_time: datetime,
         step_index: int,
-    ) -> Tuple[str, List[BacktestTradeResult], bool]:
+    ) -> Tuple[str, List[BacktestTradeResult], List[CancelledLimitOrder], bool]:
         """在隔离上下文中执行步骤"""
         step_id = f"step_{step_index}_{int(time.time() * 1000)}"
         trade_results = []
@@ -108,16 +108,16 @@ class WorkflowExecutor:
             elif error_msg and "超时" in error_msg:
                 is_timeout = True
                 record_workflow_end(workflow_run_id, start_iso, "timeout", error=error_msg, cfg=cfg)
-                return workflow_run_id, [], is_timeout
+                return workflow_run_id, [], [], is_timeout
             else:
                 record_workflow_end(workflow_run_id, start_iso, "error", error=error_msg, cfg=cfg)
-                return workflow_run_id, [], is_timeout
+                return workflow_run_id, [], [], is_timeout
             
-            trade_results = self._collect_trade_results(
+            trade_results, cancelled_orders = self._collect_trade_results(
                 trade_engine, current_time, workflow_run_id, step_index
             )
             
-            return workflow_run_id, trade_results, is_timeout
+            return workflow_run_id, trade_results, cancelled_orders, is_timeout
             
         finally:
             clear_thread_local_engine()
@@ -235,9 +235,14 @@ class WorkflowExecutor:
         current_time: datetime,
         workflow_run_id: str,
         step_index: int,
-    ) -> List[BacktestTradeResult]:
-        """收集交易结果"""
+    ) -> Tuple[List[BacktestTradeResult], List[CancelledLimitOrder]]:
+        """收集交易结果和取消订单
+        
+        Returns:
+            (交易结果列表, 取消订单列表)
+        """
         trade_results = []
+        cancelled_orders = []
         
         for symbol in self.config.symbols:
             if symbol in trade_engine.positions and trade_engine.positions[symbol].status == 'open':
@@ -266,10 +271,10 @@ class WorkflowExecutor:
                         f"exit_type={limit_trade_result.exit_type} pnl={limit_trade_result.realized_pnl:.2f}"
                     )
                 elif cancelled_order:
-                    self._result_collector.add_cancelled_orders([cancelled_order])
+                    cancelled_orders.append(cancelled_order)
                     logger.info(
                         f"步骤 {step_index} 限价单未成交: {order['symbol']} {cancelled_order.side} "
                         f"limit_price={cancelled_order.limit_price} 原因={cancelled_order.cancel_reason}"
                     )
         
-        return trade_results
+        return trade_results, cancelled_orders

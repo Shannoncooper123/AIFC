@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from modules.agent.trade_simulator.models import PendingOrder
 from modules.agent.trade_simulator.storage import ConfigFacade
 from modules.agent.trade_simulator.utils.file_utils import WriteQueue
-from modules.agent.utils.trace_context import get_current_workflow_run_id
+from modules.agent.utils.trace_utils import get_current_workflow_run_id
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.trade_engine.limit_order_manager')

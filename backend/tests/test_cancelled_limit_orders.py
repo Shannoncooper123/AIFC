@@ -319,6 +319,68 @@ class TestResultCollectorCancelledOrders:
         print("✅ test_add_cancelled_orders 通过")
 
 
+class TestPositionLoggerCancelledOrders:
+    """测试 PositionLogger 记录未成交订单"""
+    
+    def test_log_cancelled_order_method_exists(self):
+        """测试 PositionLogger 有 log_cancelled_order 方法"""
+        from modules.backtest.engine.position_logger import PositionLogger
+        
+        assert hasattr(PositionLogger, 'log_cancelled_order')
+        assert hasattr(PositionLogger, 'log_cancelled_order_from_model')
+        print("✅ test_log_cancelled_order_method_exists 通过")
+    
+    def test_log_cancelled_order_writes_to_file(self):
+        """测试 log_cancelled_order 写入文件"""
+        import tempfile
+        import os
+        from modules.backtest.engine.position_logger import PositionLogger
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logger_instance = PositionLogger(
+                backtest_id="bt_log_test",
+                base_dir=tmpdir
+            )
+            
+            cancelled_order = CancelledLimitOrder(
+                order_id="log_test_order",
+                symbol="BTCUSDT",
+                side="long",
+                limit_price=40000.0,
+                tp_price=42000.0,
+                sl_price=38000.0,
+                margin_usdt=100.0,
+                leverage=10,
+                created_time=datetime(2024, 1, 10, tzinfo=timezone.utc),
+                cancelled_time=datetime(2024, 1, 11, tzinfo=timezone.utc),
+                cancel_reason="测试取消原因",
+                workflow_run_id="wf_log_test",
+            )
+            
+            logger_instance.log_cancelled_order_from_model(cancelled_order)
+            
+            positions_file = logger_instance.positions_file_path
+            assert os.path.exists(positions_file)
+            
+            with open(positions_file, 'r') as f:
+                lines = f.readlines()
+            
+            found_cancelled = False
+            for line in lines:
+                record = json.loads(line.strip())
+                if record.get("type") == "cancelled_order":
+                    found_cancelled = True
+                    assert record["order_id"] == "log_test_order"
+                    assert record["symbol"] == "BTCUSDT"
+                    assert record["side"] == "long"
+                    assert record["limit_price"] == 40000.0
+                    assert record["cancel_reason"] == "测试取消原因"
+                    break
+            
+            assert found_cancelled, "未找到 cancelled_order 记录"
+            print("✅ test_log_cancelled_order_writes_to_file 通过")
+
+
 class TestAPIResponseCancelledOrders:
     """测试 API 响应包含 cancelled_orders"""
     
@@ -393,6 +455,7 @@ def run_all_tests():
         TestPositionSimulatorCancelledOrders,
         TestPositionSimulatorIntegration,
         TestResultCollectorCancelledOrders,
+        TestPositionLoggerCancelledOrders,
         TestAPIResponseCancelledOrders,
     ]
     

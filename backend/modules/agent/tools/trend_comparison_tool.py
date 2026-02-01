@@ -4,7 +4,7 @@ from langchain.tools import tool
 
 from modules.monitor.data.models import Kline
 from modules.monitor.utils.logger import get_logger
-from modules.agent.tools.tool_utils import fetch_klines
+from modules.agent.utils.kline_utils import fetch_klines
 
 logger = get_logger('agent.tool.trend_comparison')
 

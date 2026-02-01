@@ -7,8 +7,7 @@ from langchain_core.runnables import RunnableConfig
 from modules.agent.state import AgentState
 from modules.agent.tools.write_report_tool import write_report_tool
 from modules.agent.utils.model_factory import get_model_factory, with_retry
-from modules.agent.utils.trace_agent import create_trace_agent
-from modules.agent.utils.trace_utils import traced_node
+from modules.agent.utils.trace_utils import create_trace_agent, traced_node
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.reporting')

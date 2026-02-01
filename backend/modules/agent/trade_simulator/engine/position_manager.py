@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from modules.agent.trade_simulator.models import Account, Position
 from modules.agent.trade_simulator.storage import ConfigFacade
-from modules.agent.utils.trace_context import get_current_workflow_run_id
+from modules.agent.utils.trace_utils import get_current_workflow_run_id
 from modules.monitor.clients.binance_rest import BinanceRestClient
 from modules.monitor.utils.logger import get_logger
 

@@ -6,10 +6,9 @@ from modules.agent.tools.tool_utils import (
     make_input_error_list,
     make_runtime_error_list,
     validate_common_params,
-    fetch_klines,
-    get_binance_client,
-    get_kline_provider,
 )
+from modules.agent.utils.kline_utils import fetch_klines, get_binance_client
+from modules.backtest.context import is_backtest_mode
 from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
 
@@ -144,8 +143,7 @@ def get_indicators_tool(symbol: str, interval: str, indicator_type: str, feedbac
                 all_points.append(point)
         
         elif indicator_type == 'oi':
-            provider = get_kline_provider()
-            if provider is not None:
+            if is_backtest_mode():
                 logger.warning("回测模式下不支持持仓量(oi)指标，返回空数据")
                 for i in range(len(klines)):
                     all_points.append({"oi": None, "oi_value": None})

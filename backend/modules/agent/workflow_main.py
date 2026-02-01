@@ -25,7 +25,7 @@ from modules.agent.utils.workflow_trace_storage import (
     record_workflow_start,
     record_workflow_end,
 )
-from modules.agent.utils.trace_context import workflow_trace_context
+from modules.agent.utils.trace_utils import workflow_trace_context
 
 _shutdown_requested = False
 

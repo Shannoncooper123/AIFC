@@ -229,6 +229,9 @@ class PositionSimulator:
                         cancel_reason=cancel_reason,
                         workflow_run_id=workflow_run_id,
                     )
+                    
+                    if self._position_logger:
+                        self._position_logger.log_cancelled_order_from_model(cancelled_order)
         
         return (None, cancelled_order)
     

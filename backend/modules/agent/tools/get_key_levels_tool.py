@@ -6,7 +6,8 @@ from modules.monitor.data.models import Kline
 from modules.monitor.utils.logger import get_logger
 from modules.monitor.indicators.atr import calculate_atr_list
 
-from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, fetch_klines
+from modules.agent.tools.tool_utils import make_input_error, make_runtime_error
+from modules.agent.utils.kline_utils import fetch_klines
 
 logger = get_logger('agent.tool.get_key_levels')
 

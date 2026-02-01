@@ -8,10 +8,9 @@ from langchain_core.runnables import RunnableConfig
 from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.create_limit_order_tool import create_limit_order_tool
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
-from modules.agent.tools.tool_utils import fetch_klines
+from modules.agent.utils.kline_utils import fetch_klines
 from modules.agent.utils.model_factory import get_model_factory, with_retry
-from modules.agent.utils.trace_agent import create_trace_agent
-from modules.agent.utils.trace_utils import traced_node
+from modules.agent.utils.trace_utils import create_trace_agent, traced_node
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.opening_decision')
@@ -56,13 +55,7 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
             fetch_limit = 300
             display_limit = 200
             
-            from modules.agent.tools.tool_utils import get_kline_provider
-            import threading
-            provider = get_kline_provider()
-            if provider:
-                current_time = provider.get_current_time()
-                thread_name = threading.current_thread().name
-                logger.info(f"[{thread_name}] {symbol} {interval} 获取K线: provider_time={current_time}")
+            logger.info(f"{symbol} {interval} 获取K线用于复核图像")
             
             klines, error = fetch_klines(symbol, interval, fetch_limit)
             

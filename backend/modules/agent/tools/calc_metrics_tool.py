@@ -1,7 +1,8 @@
 from typing import Any, Dict, Optional
 from langchain.tools import tool
 from modules.monitor.utils.logger import get_logger
-from modules.agent.tools.tool_utils import make_input_error, make_runtime_error, fetch_klines, get_kline_provider
+from modules.agent.tools.tool_utils import make_input_error, make_runtime_error
+from modules.agent.utils.kline_utils import fetch_klines
 
 logger = get_logger('agent.tool.calc_metrics')
 
@@ -9,17 +10,11 @@ logger = get_logger('agent.tool.calc_metrics')
 def _get_latest_price(symbol: str) -> float | None:
     """获取指定交易对的最新价格
     
-    回测模式下使用 KlineProvider 的当前模拟价格，
-    实盘模式下使用1m K线的收盘价。
+    统一使用 fetch_klines 获取价格，由 tool_utils 层自动路由到正确的数据源：
+    - 回测模式：从 BacktestKlineProvider 获取模拟价格
+    - 实盘/模拟盘模式：从 Binance REST API 获取实时价格
     """
     try:
-        provider = get_kline_provider()
-        if provider is not None:
-            klines = provider.get_klines(symbol, "15m", 1)
-            if klines:
-                return klines[-1].close
-            return None
-        
         klines, error = fetch_klines(symbol, "1m", 1)
         if klines and len(klines) > 0:
             return klines[-1].close

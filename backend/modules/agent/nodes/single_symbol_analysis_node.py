@@ -10,8 +10,7 @@ from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
 from modules.agent.tools.trend_comparison_tool import trend_comparison_tool
 from modules.agent.utils.model_factory import get_model_factory, with_async_retry
-from modules.agent.utils.trace_agent import create_trace_agent
-from modules.agent.utils.trace_utils import traced_node
+from modules.agent.utils.trace_utils import create_trace_agent, traced_node
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.single_symbol_analysis')

@@ -5,7 +5,8 @@
 from typing import Dict, Any, List
 from langchain.tools import tool
 
-from modules.agent.tools.tool_utils import validate_symbol, validate_interval, fetch_klines
+from modules.agent.tools.tool_utils import validate_symbol, validate_interval
+from modules.agent.utils.kline_utils import fetch_klines
 from modules.agent.tools.chart_renderer import render_kline_chart
 from modules.monitor.utils.logger import get_logger
 
@@ -37,12 +38,7 @@ def get_kline_image_tool(
     try:
         limit = 100
         
-        import threading
-        from modules.agent.tools.tool_utils import get_kline_provider
-        thread_name = threading.current_thread().name
-        provider = get_kline_provider()
-        provider_time = provider.get_current_time() if provider else "N/A"
-        logger.info(f"[{thread_name}] get_kline_image_tool 被调用 - symbol={symbol}, interval={interval}, provider_time={provider_time}")
+        logger.info(f"get_kline_image_tool 被调用 - symbol={symbol}, interval={interval}")
         
         error = validate_symbol(symbol)
         if error:

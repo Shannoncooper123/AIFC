@@ -5,8 +5,8 @@ from modules.agent.tools.tool_utils import (
     make_input_error_list,
     make_runtime_error_list,
     validate_common_params,
-    fetch_klines,
 )
+from modules.agent.utils.kline_utils import fetch_klines
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.tool.get_kline')

@@ -217,6 +217,89 @@ class PositionLogger:
             order_created_time=trade_result.order_created_time,
         )
     
+    def log_cancelled_order(
+        self,
+        order_id: str,
+        symbol: str,
+        side: str,
+        limit_price: float,
+        tp_price: float,
+        sl_price: float,
+        margin_usdt: float,
+        leverage: int,
+        created_time: datetime,
+        cancelled_time: datetime,
+        cancel_reason: str,
+        workflow_run_id: str,
+        step_index: Optional[int] = None,
+    ) -> None:
+        """记录未成交的限价单
+        
+        Args:
+            order_id: 订单ID
+            symbol: 交易对
+            side: 方向 (long/short)
+            limit_price: 限价单价格
+            tp_price: 止盈价
+            sl_price: 止损价
+            margin_usdt: 保证金
+            leverage: 杠杆
+            created_time: 创建时间
+            cancelled_time: 取消时间
+            cancel_reason: 取消原因
+            workflow_run_id: workflow运行ID
+            step_index: 步骤索引
+        """
+        record = {
+            "type": "cancelled_order",
+            "order_id": order_id,
+            "symbol": symbol,
+            "side": side,
+            "limit_price": limit_price,
+            "tp_price": tp_price,
+            "sl_price": sl_price,
+            "margin_usdt": round(margin_usdt, 4),
+            "leverage": leverage,
+            "notional_usdt": round(margin_usdt * leverage, 4),
+            "created_time": created_time.isoformat() if isinstance(created_time, datetime) else created_time,
+            "cancelled_time": cancelled_time.isoformat() if isinstance(cancelled_time, datetime) else cancelled_time,
+            "cancel_reason": cancel_reason,
+            "workflow_run_id": workflow_run_id,
+            "step_index": step_index,
+            "logged_at": datetime.now(timezone.utc).isoformat(),
+        }
+        
+        locked_append_jsonl(self._positions_file, record, fsync=False)
+        
+        logger.info(
+            f"[PositionLog] CANCELLED {symbol} {side.upper()} | "
+            f"Limit: {limit_price:.6g} | TP: {tp_price:.6g} SL: {sl_price:.6g} | "
+            f"Margin: {margin_usdt:.2f} | Reason: {cancel_reason}"
+        )
+    
+    def log_cancelled_order_from_model(self, cancelled_order, step_index: Optional[int] = None) -> None:
+        """从 CancelledLimitOrder 对象记录未成交订单
+        
+        Args:
+            cancelled_order: CancelledLimitOrder 对象
+            step_index: 步骤索引
+        """
+        self.log_cancelled_order(
+            order_id=cancelled_order.order_id,
+            symbol=cancelled_order.symbol,
+            side=cancelled_order.side,
+            limit_price=cancelled_order.limit_price,
+            tp_price=cancelled_order.tp_price,
+            sl_price=cancelled_order.sl_price,
+            margin_usdt=cancelled_order.margin_usdt,
+            leverage=cancelled_order.leverage,
+            created_time=cancelled_order.created_time,
+            cancelled_time=cancelled_order.cancelled_time,
+            cancel_reason=cancelled_order.cancel_reason,
+            workflow_run_id=cancelled_order.workflow_run_id,
+            step_index=step_index,
+        )
+    
     def write_summary(self) -> None:
         """写入汇总信息"""
         with self._lock:
