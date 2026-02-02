@@ -1,4 +1,14 @@
-"""反向交易持仓服务"""
+"""反向交易持仓服务
+
+职责说明（重构后）：
+- 管理反向交易的 TP/SL 订单（止盈止损单）
+- 跟踪反向交易特有的持仓状态（algo_order_id, agent_order_id 等）
+- 持仓的实际数据由币安 API 提供，live_engine.PositionService 也会跟踪
+
+注意：
+- 反向交易的持仓会同时出现在 live_engine 和 reverse_engine 中
+- 本服务主要用于管理反向交易特有的元数据和 TP/SL 订单
+"""
 
 import json
 import os
@@ -15,7 +25,15 @@ logger = get_logger('reverse_engine.position_service')
 class ReversePositionService:
     """反向交易持仓服务
     
-    管理反向交易的持仓跟踪、TP/SL 订单等
+    职责：
+    - 为条件单触发后的持仓下 TP/SL 订单
+    - 跟踪反向交易的 TP/SL 订单 ID
+    - 管理反向交易特有的元数据（algo_order_id, agent_order_id）
+    
+    注意：
+    - 持仓的实际数据由币安 API 提供
+    - live_engine.PositionService 也会跟踪这些持仓
+    - 本服务主要用于反向交易特有的功能
     """
     
     STATE_FILE = 'agent/reverse_trade_state.json'

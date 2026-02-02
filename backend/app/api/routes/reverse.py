@@ -75,12 +75,34 @@ class ReverseHistoryEntry(BaseModel):
     agent_order_id: Optional[str] = None
 
 
+def _ensure_live_engine_initialized():
+    """确保 live_engine 已初始化
+    
+    反向交易引擎强制依赖 live_engine，必须先初始化 live_engine。
+    
+    Returns:
+        BinanceLiveEngine 实例
+    """
+    from modules.agent.engine import get_engine, set_engine
+    from modules.config.settings import get_config
+    
+    live_engine = get_engine()
+    if live_engine is None:
+        cfg = get_config()
+        from modules.agent.live_engine import BinanceLiveEngine
+        live_engine = BinanceLiveEngine(cfg)
+        set_engine(live_engine)
+        live_engine.start()
+        logger.info("[反向API] 已自动初始化 live_engine")
+    return live_engine
+
+
 def _get_reverse_engine():
     """获取反向交易引擎实例"""
     from modules.agent.engine import get_reverse_engine
     engine = get_reverse_engine()
     if engine is None:
-        raise HTTPException(status_code=503, detail="反向交易引擎未初始化")
+        raise HTTPException(status_code=503, detail="反向交易引擎未初始化，请先调用 /api/reverse/start 或启动 workflow")
     return engine
 
 
@@ -215,16 +237,16 @@ async def start_reverse_engine_api() -> Dict[str, Any]:
         from modules.agent.engine import get_reverse_engine, init_reverse_engine, start_reverse_engine
         from modules.config.settings import get_config
         
+        # 确保 live_engine 先初始化
+        live_engine = _ensure_live_engine_initialized()
+        
         engine = get_reverse_engine()
         if engine is None:
             config = get_config()
-            engine = init_reverse_engine(config)
+            engine = init_reverse_engine(live_engine, config)
         
-        if engine:
-            start_reverse_engine()
-            return {"success": True, "message": "反向交易引擎已启动"}
-        else:
-            raise HTTPException(status_code=400, detail="反向交易引擎未启用")
+        start_reverse_engine()
+        return {"success": True, "message": "反向交易引擎已启动"}
     except HTTPException:
         raise
     except Exception as e:
@@ -245,14 +267,19 @@ async def stop_reverse_engine_api() -> Dict[str, Any]:
 
 
 def _get_or_init_reverse_engine():
-    """获取或初始化反向交易引擎实例"""
+    """获取或初始化反向交易引擎实例
+    
+    自动初始化 live_engine（如果未初始化），然后初始化 reverse_engine。
+    """
     from modules.agent.engine import get_reverse_engine, init_reverse_engine
     from modules.config.settings import get_config
     
     engine = get_reverse_engine()
     if engine is None:
+        # 确保 live_engine 先初始化
+        live_engine = _ensure_live_engine_initialized()
         config = get_config()
-        engine = init_reverse_engine(config)
+        engine = init_reverse_engine(live_engine, config)
     return engine
 
 

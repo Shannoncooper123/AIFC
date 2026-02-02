@@ -108,20 +108,30 @@ _reverse_engine: Optional['ReverseEngine'] = None
 _reverse_engine_lock = threading.RLock()
 
 
-def init_reverse_engine(config: Dict[str, Any]) -> Optional['ReverseEngine']:
+def init_reverse_engine(
+    live_engine: 'BinanceLiveEngine',
+    config: Dict[str, Any]
+) -> 'ReverseEngine':
     """初始化反向交易引擎
     
     Args:
+        live_engine: 实盘引擎实例（必需），用于复用 REST/WS 连接
         config: 配置字典
         
     Returns:
         ReverseEngine 实例
+        
+    Raises:
+        ValueError: 如果 live_engine 为 None
     """
+    if live_engine is None:
+        raise ValueError("init_reverse_engine 必须传入 live_engine 参数")
+    
     global _reverse_engine
     with _reverse_engine_lock:
         if _reverse_engine is None:
             from modules.agent.reverse_engine.engine import ReverseEngine
-            _reverse_engine = ReverseEngine(config)
+            _reverse_engine = ReverseEngine(live_engine, config)
         return _reverse_engine
 
 

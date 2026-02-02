@@ -2,13 +2,17 @@
 
 当 Agent 下限价单时，自动创建反向条件单进行对冲交易。
 使用固定保证金和杠杆，与 Agent 的参数无关。
+
+架构说明：
+- 强制复用 live_engine 的 REST 客户端（不创建独立连接）
+- 复用 live_engine 的 WebSocket 连接
+- 复用 live_engine 的 HistoryWriter（添加 is_reverse 标记）
+- 只独立管理：条件单状态 (AlgoOrderService)、反向交易统计
 """
 
 import threading
 import time
-from typing import Dict, Any, Optional, List
-from modules.monitor.clients.binance_rest import BinanceRestClient
-from modules.monitor.clients.binance_ws import BinanceUserDataWSClient
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 from modules.monitor.utils.logger import get_logger
 
 from .config import ConfigManager
@@ -17,6 +21,9 @@ from .services.position_service import ReversePositionService
 from .services.history_writer import ReverseHistoryWriter
 from .events.order_handler import ReverseOrderHandler
 from .workflow_runner import ReverseWorkflowManager
+
+if TYPE_CHECKING:
+    from modules.agent.live_engine.engine import BinanceLiveEngine
 
 logger = get_logger('reverse_engine')
 
@@ -27,40 +34,60 @@ class ReverseEngine:
     职责：
     - 监听 Agent 限价单创建事件
     - 创建反向条件单
-    - 管理反向交易持仓
-    - 处理 TP/SL 触发
+    - 管理反向交易持仓的 TP/SL 订单
+    - 处理 TP/SL 触发并记录历史
+    
+    架构：
+    - 强制依赖 live_engine，复用其 REST/WS 连接
+    - 减少资源消耗，保持状态一致性
     """
     
-    def __init__(self, config: Dict):
+    def __init__(self, live_engine: 'BinanceLiveEngine', config: Dict):
         """初始化
         
         Args:
+            live_engine: 实盘引擎实例（必需），用于复用 REST/WS 连接
             config: 配置字典
+            
+        Raises:
+            ValueError: 如果 live_engine 为 None
         """
+        if live_engine is None:
+            raise ValueError("ReverseEngine 必须传入 live_engine 参数，不支持独立运行")
+        
         self.config = config
         self._lock = threading.RLock()
         self._running = False
         self._sync_thread = None
         
-        self.rest_client = BinanceRestClient(config)
+        # 强制复用 live_engine
+        self.live_engine = live_engine
+        self.rest_client = live_engine.rest_client
         
         self.config_manager = ConfigManager()
         
+        # 条件单服务 - 反向交易独有
         self.algo_order_service = AlgoOrderService(self.rest_client, self.config_manager)
-        self.position_service = ReversePositionService(self.rest_client)
-        self.history_writer = ReverseHistoryWriter(config)
         
+        # 持仓服务 - 管理反向交易的 TP/SL 订单
+        self.position_service = ReversePositionService(self.rest_client)
+        
+        # 历史记录 - 复用 live_engine 的 HistoryWriter，同时保留反向交易专用统计
+        self.history_writer = ReverseHistoryWriter(
+            config, 
+            live_history_writer=live_engine.history_writer
+        )
+        
+        # 订单事件处理器
         self.order_handler = ReverseOrderHandler(
             self.algo_order_service,
             self.position_service,
             self.history_writer
         )
         
-        self.user_data_ws: Optional[BinanceUserDataWSClient] = None
-        
         self.workflow_manager = ReverseWorkflowManager()
         
-        logger.info("反向交易引擎已初始化")
+        logger.info("[反向] 反向交易引擎已初始化（复用 live_engine）")
     
     def is_enabled(self) -> bool:
         """是否启用"""
@@ -86,16 +113,16 @@ class ReverseEngine:
             logger.info("=" * 60)
             
             try:
+                # 同步条件单和持仓状态
                 self.algo_order_service.sync_from_api()
                 self.position_service.sync_from_api()
                 
-                self.user_data_ws = BinanceUserDataWSClient(
-                    self.config,
-                    self.rest_client,
-                    self.order_handler.handle_event
-                )
-                self.user_data_ws.start()
+                # 复用 live_engine 的 WebSocket，不创建独立连接
+                # live_engine 的 event_dispatcher 会处理所有事件
+                # 反向交易相关的事件通过定时同步来检测
+                logger.info("[反向] 复用 live_engine 的 User Data WebSocket")
                 
+                # 启动定时同步线程
                 self._sync_thread = threading.Thread(target=self._periodic_sync_loop, daemon=True)
                 self._sync_thread.start()
                 
@@ -118,16 +145,14 @@ class ReverseEngine:
             self._running = False
             
             try:
+                # 停止所有 workflow
                 self.workflow_manager.stop_all()
                 
+                # 等待同步线程退出
                 if self._sync_thread and self._sync_thread.is_alive():
                     time.sleep(0.5)
                 
-                if self.user_data_ws:
-                    self.user_data_ws.stop()
-                
-                if self.rest_client:
-                    self.rest_client.close()
+                # 不需要关闭 REST 客户端和 WebSocket，因为它们属于 live_engine
                 
                 logger.info("[反向] 反向交易引擎已停止")
                 

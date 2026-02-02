@@ -1,4 +1,19 @@
-"""反向交易订单事件处理器"""
+"""反向交易订单事件处理器
+
+职责说明（重构后）：
+- 处理来自 Binance User Data Stream 的订单更新事件
+- 监听条件单 (Conditional/Algo Order) 的状态变化
+- 监听 TP/SL 订单的成交事件
+
+工作流程：
+1. 条件单触发 -> 创建持仓 -> 下 TP/SL 订单
+2. TP/SL 成交 -> 记录历史 -> 移除持仓
+
+注意：
+- 如果 reverse_engine 复用 live_engine 的 WebSocket，
+  需要确保事件能正确路由到此处理器
+- 目前通过 reverse_engine 独立的 WebSocket 接收事件
+"""
 
 from typing import Dict, Any, Optional
 from modules.monitor.utils.logger import get_logger
@@ -13,7 +28,14 @@ logger = get_logger('reverse_engine.order_handler')
 class ReverseOrderHandler:
     """反向交易订单事件处理器
     
-    处理来自 Binance User Data Stream 的订单更新事件
+    职责：
+    - 处理条件单 (Conditional) 状态变化
+    - 处理 TP/SL 订单成交事件
+    - 协调 AlgoOrderService、PositionService、HistoryWriter
+    
+    事件类型：
+    - ORDER_TRADE_UPDATE: 订单状态更新
+    - ACCOUNT_UPDATE: 账户状态更新（用于检测持仓变化）
     """
     
     def __init__(self, algo_order_service: AlgoOrderService,

@@ -1,35 +1,66 @@
-"""反向交易历史记录写入器"""
+"""反向交易历史记录写入器
+
+架构说明：
+- 强制复用 live_engine 的 HistoryWriter（双写模式）
+- 同时保留反向交易专用的历史文件用于统计
+- 平仓时同时写入两个地方：
+  1. 反向交易专用历史（用于统计胜率、盈亏等）
+  2. live_engine 的通用历史（用于前端统一展示）
+"""
 
 import json
 import os
 import threading
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, TYPE_CHECKING
 from modules.monitor.utils.logger import get_logger
 from ..models import ReversePosition, ReverseTradeHistory
+
+if TYPE_CHECKING:
+    from modules.agent.live_engine.persistence.history_writer import HistoryWriter as LiveHistoryWriter
 
 logger = get_logger('reverse_engine.history_writer')
 
 
 class ReverseHistoryWriter:
-    """反向交易历史记录写入器"""
+    """反向交易历史记录写入器
+    
+    职责：
+    - 记录反向交易的平仓历史到独立文件（用于统计）
+    - 同时写入 live_engine 的历史文件（用于前端展示）
+    - 计算反向交易的统计信息
+    
+    架构：
+    - 强制依赖 live_history_writer
+    - 双写模式确保数据一致性
+    """
     
     HISTORY_FILE = 'agent/reverse_history.json'
     MAX_HISTORY_RECORDS = 1000
     
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, live_history_writer: 'LiveHistoryWriter'):
         """初始化
         
         Args:
             config: 配置字典
+            live_history_writer: live_engine 的历史写入器（必需）
+            
+        Raises:
+            ValueError: 如果 live_history_writer 为 None
         """
+        if live_history_writer is None:
+            raise ValueError("ReverseHistoryWriter 必须传入 live_history_writer 参数")
+        
         self.config = config
+        self.live_history_writer = live_history_writer
         self._lock = threading.RLock()
         
         self.history: List[ReverseTradeHistory] = []
         
         self._ensure_history_dir()
         self._load_history()
+        
+        logger.info("[反向] 历史记录写入器已初始化（双写模式）")
     
     def _ensure_history_dir(self):
         """确保历史目录存在"""
@@ -64,8 +95,12 @@ class ReverseHistoryWriter:
     def record_closed_position(self, position: ReversePosition,
                                 close_reason: str,
                                 close_price: float,
-                                close_order_id: Optional[int] = None):
-        """记录平仓历史
+                                close_order_id: int = None):
+        """记录平仓历史（双写模式）
+        
+        同时写入：
+        1. 反向交易专用历史文件（用于统计）
+        2. live_engine 的通用历史文件（用于前端展示）
         
         Args:
             position: 被平仓的持仓
@@ -75,7 +110,8 @@ class ReverseHistoryWriter:
         """
         with self._lock:
             try:
-                if position.side == 'long':
+                # 计算盈亏
+                if position.side == 'long' or position.side.lower() == 'buy':
                     realized_pnl = (close_price - position.entry_price) * position.qty
                 else:
                     realized_pnl = (position.entry_price - close_price) * position.qty
@@ -84,6 +120,7 @@ class ReverseHistoryWriter:
                 if position.margin_usdt > 0:
                     pnl_percent = (realized_pnl / position.margin_usdt) * 100
                 
+                # 1. 写入反向交易专用历史
                 record = ReverseTradeHistory(
                     id=position.id,
                     symbol=position.symbol,
@@ -109,7 +146,17 @@ class ReverseHistoryWriter:
                 
                 self._save_history()
                 
-                logger.info(f"[反向] 平仓记录已保存: {position.symbol} "
+                # 2. 写入 live_engine 的通用历史（标记为反向交易）
+                self.live_history_writer.record_closed_position(
+                    position=position,
+                    close_reason=f"[反向] {close_reason}",
+                    close_price=close_price,
+                    realized_pnl=realized_pnl,
+                    close_order_id=close_order_id,
+                    is_reverse=True
+                )
+                
+                logger.info(f"[反向] 平仓记录已保存（双写）: {position.symbol} "
                            f"reason={close_reason} pnl={realized_pnl:.2f}U ({pnl_percent:.1f}%)")
                 
             except Exception as e:

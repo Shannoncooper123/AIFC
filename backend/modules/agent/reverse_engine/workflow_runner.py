@@ -26,26 +26,38 @@ from modules.monitor.utils.logger import get_logger
 logger = get_logger('reverse_engine.workflow_runner')
 
 
-def _ensure_trading_engine_initialized():
-    """确保交易引擎已初始化"""
-    from modules.agent.engine import get_engine, set_engine, ensure_engine
+def _ensure_engines_initialized():
+    """确保 live_engine 和 reverse_engine 都已初始化
     
-    if get_engine() is None:
+    初始化顺序：
+    1. 先初始化 live_engine（反向交易强制依赖）
+    2. 再初始化 reverse_engine（传入 live_engine）
+    
+    反向交易模式始终使用实盘引擎，因为需要在币安真实下单。
+    """
+    from modules.agent.engine import (
+        get_engine, set_engine, 
+        get_reverse_engine, init_reverse_engine
+    )
+    
+    # 1. 确保 live_engine 已初始化
+    live_eng = get_engine()
+    if live_eng is None:
         cfg = get_config()
-        trading_mode = cfg.get('trading', {}).get('mode', 'simulator')
-        
-        if trading_mode == 'live':
-            from modules.agent.live_engine import BinanceLiveEngine
-            eng = BinanceLiveEngine(cfg)
-            set_engine(eng)
-            eng.start()
-            logger.info("[反向] 实盘交易引擎已初始化")
-        else:
-            from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine
-            eng = TradeSimulatorEngine(cfg)
-            set_engine(eng)
-            eng.start()
-            logger.info("[反向] 模拟交易引擎已初始化")
+        from modules.agent.live_engine import BinanceLiveEngine
+        live_eng = BinanceLiveEngine(cfg)
+        set_engine(live_eng)
+        live_eng.start()
+        logger.info("[反向] 实盘交易引擎已初始化（反向交易始终使用实盘）")
+    
+    # 2. 确保 reverse_engine 已初始化（传入 live_engine）
+    reverse_eng = get_reverse_engine()
+    if reverse_eng is None:
+        cfg = get_config()
+        reverse_eng = init_reverse_engine(live_eng, cfg)
+        logger.info("[反向] 反向交易引擎已初始化（复用 live_engine）")
+    
+    return live_eng, reverse_eng
 
 
 class ReverseWorkflowRunner:
@@ -148,7 +160,7 @@ class ReverseWorkflowRunner:
             self._workflow_running = True
         
         try:
-            _ensure_trading_engine_initialized()
+            _ensure_engines_initialized()
             
             cfg = get_config()
             workflow_run_id = generate_trace_id("rv")

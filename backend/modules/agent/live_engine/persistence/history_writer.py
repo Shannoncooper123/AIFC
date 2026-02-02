@@ -47,7 +47,7 @@ class HistoryWriter:
     
     def record_closed_position(self, position: Any, close_reason: str = 'unknown', 
                                close_price: float = None, realized_pnl: float = None,
-                               close_order_id: int = None):
+                               close_order_id: int = None, is_reverse: bool = False):
         """记录已平仓的仓位
         
         Args:
@@ -56,6 +56,7 @@ class HistoryWriter:
             close_price: 平仓价格
             realized_pnl: 已实现盈亏
             close_order_id: 平仓订单ID（用于复盘）
+            is_reverse: 是否为反向交易（用于区分反向交易记录）
         """
         try:
             # 构造历史记录
@@ -78,6 +79,7 @@ class HistoryWriter:
                 'realized_pnl': realized_pnl if realized_pnl is not None else position.unrealized_pnl(close_price),
                 'fees_open': position.fees_open if hasattr(position, 'fees_open') else 0.0,
                 'fees_close': 0.0,  # 实盘手续费从账户余额变化中体现
+                'is_reverse': is_reverse,  # 标记是否为反向交易
             }
             
             # 读取现有历史
