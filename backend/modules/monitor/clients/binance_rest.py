@@ -981,7 +981,6 @@ class BinanceRestClient:
             'quantity': str(formatted_qty),
             'triggerPrice': str(formatted_price),
             'workingType': working_type,
-            'reduceOnly': 'true',
             'timestamp': int(time.time() * 1000)
         }
         
