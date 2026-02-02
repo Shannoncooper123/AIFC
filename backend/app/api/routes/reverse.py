@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/reverse", tags=["reverse"])
 class ReverseConfigUpdate(BaseModel):
     """反向交易配置更新请求"""
     enabled: Optional[bool] = None
-    fixed_margin_usdt: Optional[float] = Field(None, ge=10, le=10000)
+    fixed_margin_usdt: Optional[float] = Field(None, ge=1, le=100000)
     fixed_leverage: Optional[int] = Field(None, ge=1, le=125)
     expiration_days: Optional[int] = Field(None, ge=1, le=30)
     max_positions: Optional[int] = Field(None, ge=1, le=100)

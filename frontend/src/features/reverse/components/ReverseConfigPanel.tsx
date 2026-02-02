@@ -7,6 +7,16 @@ interface ReverseConfigPanelProps {
   onConfigChange?: () => void;
 }
 
+const parseNumber = (value: string, defaultValue: number): number => {
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? defaultValue : parsed;
+};
+
+const parseInteger = (value: string, defaultValue: number): number => {
+  const parsed = parseInt(value, 10);
+  return isNaN(parsed) ? defaultValue : parsed;
+};
+
 export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) {
   const [config, setConfig] = useState<ReverseConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -15,10 +25,10 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
   const [error, setError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
-    fixed_margin_usdt: 50,
-    fixed_leverage: 10,
-    expiration_days: 10,
-    max_positions: 10,
+    fixed_margin_usdt: '50',
+    fixed_leverage: '10',
+    expiration_days: '10',
+    max_positions: '10',
   });
 
   const fetchConfig = async () => {
@@ -27,10 +37,10 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
       const data = await getReverseConfig();
       setConfig(data);
       setFormData({
-        fixed_margin_usdt: data.fixed_margin_usdt,
-        fixed_leverage: data.fixed_leverage,
-        expiration_days: data.expiration_days,
-        max_positions: data.max_positions,
+        fixed_margin_usdt: String(data.fixed_margin_usdt),
+        fixed_leverage: String(data.fixed_leverage),
+        expiration_days: String(data.expiration_days),
+        max_positions: String(data.max_positions),
       });
       setError(null);
     } catch (err) {
@@ -48,7 +58,12 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
   const handleSave = async () => {
     try {
       setSaving(true);
-      await updateReverseConfig(formData);
+      await updateReverseConfig({
+        fixed_margin_usdt: parseNumber(formData.fixed_margin_usdt, 50),
+        fixed_leverage: parseInteger(formData.fixed_leverage, 10),
+        expiration_days: parseInteger(formData.expiration_days, 10),
+        max_positions: parseInteger(formData.max_positions, 10),
+      });
       await fetchConfig();
       onConfigChange?.();
     } catch (err) {
@@ -132,7 +147,7 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
             max={10000}
             step={10}
             value={formData.fixed_margin_usdt}
-            onChange={(e) => setFormData({ ...formData, fixed_margin_usdt: Number(e.target.value) })}
+            onChange={(e) => setFormData({ ...formData, fixed_margin_usdt: e.target.value })}
             className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <p className="mt-1 text-xs text-neutral-500">Amount of margin per trade (10-10000)</p>
@@ -147,7 +162,7 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
             min={1}
             max={125}
             value={formData.fixed_leverage}
-            onChange={(e) => setFormData({ ...formData, fixed_leverage: Number(e.target.value) })}
+            onChange={(e) => setFormData({ ...formData, fixed_leverage: e.target.value })}
             className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <p className="mt-1 text-xs text-neutral-500">Leverage multiplier (1-125x)</p>
@@ -162,7 +177,7 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
             min={1}
             max={30}
             value={formData.expiration_days}
-            onChange={(e) => setFormData({ ...formData, expiration_days: Number(e.target.value) })}
+            onChange={(e) => setFormData({ ...formData, expiration_days: e.target.value })}
             className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <p className="mt-1 text-xs text-neutral-500">Auto-cancel pending orders after (1-30 days)</p>
@@ -177,7 +192,7 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
             min={1}
             max={100}
             value={formData.max_positions}
-            onChange={(e) => setFormData({ ...formData, max_positions: Number(e.target.value) })}
+            onChange={(e) => setFormData({ ...formData, max_positions: e.target.value })}
             className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <p className="mt-1 text-xs text-neutral-500">Maximum concurrent positions (1-100)</p>
