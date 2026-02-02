@@ -206,8 +206,8 @@ class AlgoOrderService:
                     algo_type='CONDITIONAL',
                     trigger_price=trigger_price_formatted,
                     quantity=quantity,
-                    order_type='MARKET',
-                    working_type='MARK_PRICE',
+                    order_type='STOP_MARKET',
+                    working_type='CONTRACT_PRICE',
                     good_till_date=expiration_ms,
                     position_side=position_side
                 )
@@ -235,7 +235,12 @@ class AlgoOrderService:
                 self.pending_orders[algo_id] = order
                 self._save_state()
                 
-                logger.info(f"[反向] 条件单创建成功: algoId={algo_id}")
+                logger.info(f"[反向] ✅ 条件单创建成功: algoId={algo_id}")
+                logger.info(f"[反向]    - Symbol: {symbol}")
+                logger.info(f"[反向]    - Side: {side} ({position_side})")
+                logger.info(f"[反向]    - Trigger: {trigger_price_formatted}")
+                logger.info(f"[反向]    - TP: {tp_price} | SL: {sl_price}")
+                logger.info(f"[反向]    - Qty: {quantity} | Margin: {fixed_margin}U | Leverage: {fixed_leverage}x")
                 return order
                 
             except Exception as e:

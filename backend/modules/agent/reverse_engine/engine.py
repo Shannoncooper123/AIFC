@@ -117,12 +117,14 @@ class ReverseEngine:
                 self.algo_order_service.sync_from_api()
                 self.position_service.sync_from_api()
                 
-                # 复用 live_engine 的 WebSocket，不创建独立连接
-                # live_engine 的 event_dispatcher 会处理所有事件
-                # 反向交易相关的事件通过定时同步来检测
-                logger.info("[反向] 复用 live_engine 的 User Data WebSocket")
+                # 注册到 live_engine 的事件分发器，接收 WebSocket 事件
+                if self.live_engine and hasattr(self.live_engine, 'event_dispatcher'):
+                    self.live_engine.event_dispatcher.register_listener(self.order_handler.handle_event)
+                    logger.info("[反向] 已注册到 live_engine 的事件分发器")
+                else:
+                    logger.warning("[反向] 无法注册到 live_engine 事件分发器，将依赖定时同步")
                 
-                # 启动定时同步线程
+                # 启动定时同步线程（作为兜底机制）
                 self._sync_thread = threading.Thread(target=self._periodic_sync_loop, daemon=True)
                 self._sync_thread.start()
                 
@@ -147,6 +149,11 @@ class ReverseEngine:
             try:
                 # 停止所有 workflow
                 self.workflow_manager.stop_all()
+                
+                # 取消注册事件监听器
+                if self.live_engine and hasattr(self.live_engine, 'event_dispatcher'):
+                    self.live_engine.event_dispatcher.unregister_listener(self.order_handler.handle_event)
+                    logger.info("[反向] 已从 live_engine 事件分发器取消注册")
                 
                 # 等待同步线程退出
                 if self._sync_thread and self._sync_thread.is_alive():
