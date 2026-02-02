@@ -140,7 +140,18 @@ async def get_positions():
     
     positions_data = trade_data.get("positions", [])
     
-    open_positions = [p for p in positions_data if p.get("status") == "open"]
+    # 确保 positions_data 是列表
+    if isinstance(positions_data, dict):
+        # 如果是字典，转换为列表
+        positions_data = list(positions_data.values())
+    elif not isinstance(positions_data, list):
+        positions_data = []
+    
+    # 过滤出 open 状态的持仓
+    open_positions = []
+    for p in positions_data:
+        if isinstance(p, dict) and p.get("status") == "open":
+            open_positions.append(p)
     positions = [parse_position(p) for p in open_positions]
     
     pending_orders = pending_data if isinstance(pending_data, list) else []
