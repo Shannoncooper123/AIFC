@@ -10,7 +10,7 @@ from modules.agent.state import SymbolAnalysisState
 from modules.agent.tools.trend_comparison_tool import trend_comparison_tool
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
-from modules.agent.utils.kline_utils import fetch_klines, get_current_price, format_price
+from modules.agent.utils.kline_utils import get_current_price, format_price
 from modules.agent.utils.model_factory import get_model_factory, with_async_retry
 from modules.agent.utils.trace_utils import create_trace_agent, traced_node
 from modules.monitor.utils.logger import get_logger
@@ -38,76 +38,14 @@ def _format_account_summary(account: Dict[str, Any]) -> str:
     )
 
 
-def _format_current_position(positions: List[Dict[str, Any]]) -> str:
-    """格式化当前币种持仓，精简显示"""
-    if not positions:
-        return "无"
-
-    pos = positions[0]
-    side = pos.get('side', '?')
-    entry = pos.get('entry_price', 0)
-    mark = pos.get('mark_price', 0)
-    pnl = pos.get('unrealized_pnl', 0)
-    roe = pos.get('roe', 0) * 100
-    tp = pos.get('tp_price', 0)
-    sl = pos.get('sl_price', 0)
-    leverage = pos.get('leverage', 1)
-
-    return (
-        f"方向: {side.upper()} {leverage}x | "
-        f"入场: ${entry:.6f} | 当前: ${mark:.6f} | "
-        f"浮盈: ${pnl:.2f} ({roe:+.1f}%) | "
-        f"止盈: ${tp:.6f} | 止损: ${sl:.6f}"
-    )
-
-
-def _format_position_history(
-    history: List[Dict[str, Any]],
-    current_symbol: str,
-    max_items: int = 3
-) -> str:
-    """格式化历史仓位，只显示当前分析币种的历史记录"""
-    if not history:
-        return "无"
-
-    symbol_history = [h for h in history if h.get('symbol') == current_symbol]
-    if not symbol_history:
-        return "无"
-
-    lines = [_format_single_history(h) for h in symbol_history[:max_items]]
-    return "\n".join(lines)
-
-
-def _format_single_history(h: Dict[str, Any]) -> str:
-    """格式化单条历史记录"""
-    symbol = h.get('symbol', '?')
-    side = h.get('side', '?')
-    entry = h.get('entry_price', 0)
-    close = h.get('close_price', 0)
-    pnl = h.get('realized_pnl', 0)
-    reason = h.get('close_reason', '?')
-
-    pnl_sign = "+" if pnl >= 0 else ""
-    return f"  • {symbol} {side.upper()}: ${entry:.6f}→${close:.6f}, 盈亏: {pnl_sign}${pnl:.2f}, 原因: {reason}"
-
-
 def _build_supplemental_context(
-    symbol: str,
     account_summary: Optional[Dict[str, Any]],
-    positions_summary: Optional[List[Dict[str, Any]]],
-    position_history: Optional[List[Dict[str, Any]]],
 ) -> List[str]:
-    """构建精简的补充上下文"""
+    """构建精简的补充上下文，只包含账户信息"""
 
     context = [
         "【账户状态】",
         _format_account_summary(account_summary or {}),
-        "",
-        f"【{symbol} 当前持仓】",
-        _format_current_position(positions_summary or []),
-        "",
-        "【近期平仓记录】",
-        _format_position_history(position_history or [], symbol),
     ]
 
     return context
@@ -118,7 +56,6 @@ def _build_multimodal_content(
     symbol: str,
     market_context: str,
     supplemental_context: str,
-    position_status_hint: str,
     direction: str,
     current_price: Optional[float],
 ) -> List[Dict[str, Any]]:
@@ -127,8 +64,7 @@ def _build_multimodal_content(
     Args:
         symbol: 交易对
         market_context: 市场上下文
-        supplemental_context: 补充上下文（账户、持仓等）
-        position_status_hint: 持仓状态提示
+        supplemental_context: 补充上下文（账户信息）
         direction: 分析方向 "long" 或 "short"
         current_price: 当前价格
         
@@ -148,8 +84,7 @@ def _build_multimodal_content(
 
 {supplemental_context}
 
-请利用 get_kline_image 工具，严格按照 4h -> 1h -> 15m 的顺序，逐个获取K线图像并进行分析。
-{position_status_hint}"""
+请利用 get_kline_image 工具，严格按照 4h -> 1h -> 15m 的顺序，逐个获取K线图像并进行分析。"""
     content.append({"type": "text", "text": text_part})
     
     return content
@@ -166,7 +101,7 @@ def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
         (subagent, node_name) 元组
     """
     tools = [
-        get_kline_image_tool,  # 新增工具
+        get_kline_image_tool,
         trend_comparison_tool,
         calc_metrics_tool,
     ]
@@ -238,7 +173,6 @@ async def _run_parallel_analysis(
     symbol: str,
     market_context: str,
     supplemental_context: str,
-    position_status_hint: str,
     current_price: Optional[float],
     config: RunnableConfig,
 ) -> Tuple[Optional[str], Optional[str], List[str]]:
@@ -251,7 +185,6 @@ async def _run_parallel_analysis(
         symbol: 交易对
         market_context: 市场上下文
         supplemental_context: 补充上下文
-        position_status_hint: 持仓状态提示
         current_price: 当前价格
         config: RunnableConfig
         
@@ -259,10 +192,10 @@ async def _run_parallel_analysis(
         (long_result, short_result, errors) 元组
     """
     long_content = _build_multimodal_content(
-        symbol, market_context, supplemental_context, position_status_hint, "long", current_price
+        symbol, market_context, supplemental_context, "long", current_price
     )
     short_content = _build_multimodal_content(
-        symbol, market_context, supplemental_context, position_status_hint, "short", current_price
+        symbol, market_context, supplemental_context, "short", current_price
     )
     
     tasks = [
@@ -328,18 +261,9 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
             logger.info(f"{symbol} 当前价格: ${format_price(current_price)}")
         else:
             logger.warning(f"{symbol} 无法获取当前价格")
-        
-        has_existing_position = bool(state.positions_summary)
-        position_status_hint = ""
-        if has_existing_position:
-            position_status_hint = f"\n重要提示：{symbol} 已有持仓，分析时需考虑加仓可能性（需极强信号）。"
-            logger.warning(f"检测到 {symbol} 已有持仓: {state.positions_summary}")
 
         supplemental_context = _build_supplemental_context(
-            symbol=symbol,
             account_summary=state.account_summary,
-            positions_summary=state.positions_summary,
-            position_history=state.position_history,
         )
         supplemental_context_str = "\n".join(supplemental_context)
 
@@ -350,7 +274,6 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
                 symbol,
                 market_context,
                 supplemental_context_str,
-                position_status_hint,
                 current_price,
                 config
             )
