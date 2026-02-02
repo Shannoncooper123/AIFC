@@ -224,7 +224,7 @@ class ReverseEngine:
             if not open_records:
                 return
             
-            account_info = self.rest_client.get_account_info()
+            account_info = self.rest_client.get_account()
             positions = account_info.get('positions', [])
             
             bn_positions = {}
