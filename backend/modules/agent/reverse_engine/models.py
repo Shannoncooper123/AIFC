@@ -16,6 +16,15 @@ class AlgoOrderStatus(str, Enum):
     FAILED = "FAILED"
 
 
+class TradeRecordStatus(str, Enum):
+    """开仓记录状态"""
+    OPEN = "OPEN"
+    TP_CLOSED = "TP_CLOSED"
+    SL_CLOSED = "SL_CLOSED"
+    MANUAL_CLOSED = "MANUAL_CLOSED"
+    LIQUIDATED = "LIQUIDATED"
+
+
 @dataclass
 class ReverseAlgoOrder:
     """反向交易条件单"""
@@ -236,4 +245,137 @@ class ReverseTradeHistory:
             close_reason=data['close_reason'],
             algo_order_id=data.get('algo_order_id'),
             agent_order_id=data.get('agent_order_id')
+        )
+
+
+@dataclass
+class ReverseTradeRecord:
+    """独立开仓记录
+    
+    每个条件单触发后创建一条独立记录，用于自主管理 TP/SL。
+    不依赖 Binance 的持仓合并，每条记录有独立的 TP/SL 价格。
+    """
+    id: str
+    symbol: str
+    side: str
+    qty: float
+    entry_price: float
+    tp_price: float
+    sl_price: float
+    leverage: int
+    margin_usdt: float
+    notional_usdt: float
+    status: TradeRecordStatus
+    
+    algo_order_id: str
+    agent_order_id: Optional[str] = None
+    
+    open_time: str = field(default_factory=lambda: datetime.now().isoformat())
+    close_time: Optional[str] = None
+    close_price: Optional[float] = None
+    realized_pnl: Optional[float] = None
+    close_reason: Optional[str] = None
+    
+    latest_mark_price: Optional[float] = None
+    
+    def unrealized_pnl(self, mark_price: Optional[float] = None) -> float:
+        """计算未实现盈亏"""
+        price = mark_price or self.latest_mark_price or self.entry_price
+        if self.side.upper() in ('LONG', 'BUY'):
+            return (price - self.entry_price) * self.qty
+        else:
+            return (self.entry_price - price) * self.qty
+    
+    def roe(self, mark_price: Optional[float] = None) -> float:
+        """计算收益率"""
+        pnl = self.unrealized_pnl(mark_price)
+        if self.margin_usdt > 0:
+            return pnl / self.margin_usdt
+        return 0.0
+    
+    def is_tp_triggered(self, mark_price: float) -> bool:
+        """检查是否触发止盈
+        
+        Args:
+            mark_price: 当前标记价格
+            
+        Returns:
+            是否触发止盈
+        """
+        if self.status != TradeRecordStatus.OPEN:
+            return False
+        
+        if self.side.upper() in ('LONG', 'BUY'):
+            return mark_price >= self.tp_price
+        else:
+            return mark_price <= self.tp_price
+    
+    def is_sl_triggered(self, mark_price: float) -> bool:
+        """检查是否触发止损
+        
+        Args:
+            mark_price: 当前标记价格
+            
+        Returns:
+            是否触发止损
+        """
+        if self.status != TradeRecordStatus.OPEN:
+            return False
+        
+        if self.side.upper() in ('LONG', 'BUY'):
+            return mark_price <= self.sl_price
+        else:
+            return mark_price >= self.sl_price
+    
+    def to_dict(self) -> dict:
+        """转换为字典"""
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'side': self.side,
+            'qty': self.qty,
+            'entry_price': self.entry_price,
+            'tp_price': self.tp_price,
+            'sl_price': self.sl_price,
+            'leverage': self.leverage,
+            'margin_usdt': self.margin_usdt,
+            'notional_usdt': self.notional_usdt,
+            'status': self.status.value if isinstance(self.status, TradeRecordStatus) else self.status,
+            'algo_order_id': self.algo_order_id,
+            'agent_order_id': self.agent_order_id,
+            'open_time': self.open_time,
+            'close_time': self.close_time,
+            'close_price': self.close_price,
+            'realized_pnl': self.realized_pnl,
+            'close_reason': self.close_reason,
+            'latest_mark_price': self.latest_mark_price
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ReverseTradeRecord':
+        """从字典创建"""
+        status = data.get('status', 'OPEN')
+        if isinstance(status, str):
+            status = TradeRecordStatus(status)
+        
+        return cls(
+            id=data['id'],
+            symbol=data['symbol'],
+            side=data['side'],
+            qty=data['qty'],
+            entry_price=data['entry_price'],
+            tp_price=data['tp_price'],
+            sl_price=data['sl_price'],
+            leverage=data['leverage'],
+            margin_usdt=data['margin_usdt'],
+            notional_usdt=data['notional_usdt'],
+            status=status,
+            algo_order_id=data['algo_order_id'],
+            agent_order_id=data.get('agent_order_id'),
+            open_time=data.get('open_time', datetime.now().isoformat()),
+            close_time=data.get('close_time'),
+            close_price=data.get('close_price'),
+            realized_pnl=data.get('realized_pnl'),
+            close_reason=data.get('close_reason'),
+            latest_mark_price=data.get('latest_mark_price')
         )

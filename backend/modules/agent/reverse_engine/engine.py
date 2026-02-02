@@ -3,11 +3,12 @@
 当 Agent 下限价单时，自动创建反向条件单进行对冲交易。
 使用固定保证金和杠杆，与 Agent 的参数无关。
 
-架构说明：
+架构说明（v2 - 自主管理 TP/SL）：
 - 强制复用 live_engine 的 REST 客户端（不创建独立连接）
 - 复用 live_engine 的 WebSocket 连接
-- 复用 live_engine 的 HistoryWriter（添加 is_reverse 标记）
-- 只独立管理：条件单状态 (AlgoOrderService)、反向交易统计
+- 独立管理：条件单状态、开仓记录、TP/SL 监控
+- 通过 Mark Price WebSocket 监控价格，自行判断 TP/SL 触发
+- 每个开仓记录有独立的 TP/SL，不依赖 Binance 持仓合并
 """
 
 import threading
@@ -17,10 +18,12 @@ from modules.monitor.utils.logger import get_logger
 
 from .config import ConfigManager
 from .services.algo_order_service import AlgoOrderService
-from .services.position_service import ReversePositionService
+from .services.trade_record_service import TradeRecordService
+from .services.tpsl_monitor import TPSLMonitorService
 from .services.history_writer import ReverseHistoryWriter
 from .events.order_handler import ReverseOrderHandler
 from .workflow_runner import ReverseWorkflowManager
+from modules.monitor.clients.mark_price_ws import MarkPriceWSClient
 
 if TYPE_CHECKING:
     from modules.agent.live_engine.engine import BinanceLiveEngine
@@ -34,19 +37,20 @@ class ReverseEngine:
     职责：
     - 监听 Agent 限价单创建事件
     - 创建反向条件单
-    - 管理反向交易持仓的 TP/SL 订单
-    - 处理 TP/SL 触发并记录历史
+    - 自主管理开仓记录和 TP/SL（不依赖 Binance 的 TP/SL 订单）
+    - 通过 Mark Price WebSocket 监控价格，自行触发平仓
     
     架构：
-    - 强制依赖 live_engine，复用其 REST/WS 连接
-    - 减少资源消耗，保持状态一致性
+    - 强制依赖 live_engine，复用其 REST 连接
+    - 独立的 Mark Price WebSocket 用于价格监控
+    - 每个开仓记录有独立的 TP/SL，支持同币种多仓位
     """
     
     def __init__(self, live_engine: 'BinanceLiveEngine', config: Dict):
         """初始化
         
         Args:
-            live_engine: 实盘引擎实例（必需），用于复用 REST/WS 连接
+            live_engine: 实盘引擎实例（必需），用于复用 REST 连接
             config: 配置字典
             
         Raises:
@@ -60,34 +64,33 @@ class ReverseEngine:
         self._running = False
         self._sync_thread = None
         
-        # 强制复用 live_engine
         self.live_engine = live_engine
         self.rest_client = live_engine.rest_client
         
         self.config_manager = ConfigManager()
         
-        # 条件单服务 - 反向交易独有
         self.algo_order_service = AlgoOrderService(self.rest_client, self.config_manager)
         
-        # 持仓服务 - 管理反向交易的 TP/SL 订单
-        self.position_service = ReversePositionService(self.rest_client)
+        self.trade_record_service = TradeRecordService()
         
-        # 历史记录 - 复用 live_engine 的 HistoryWriter，同时保留反向交易专用统计
+        self.tpsl_monitor = TPSLMonitorService(self.trade_record_service, self.rest_client)
+        
+        self.mark_price_ws: Optional[MarkPriceWSClient] = None
+        
         self.history_writer = ReverseHistoryWriter(
             config, 
             live_history_writer=live_engine.history_writer
         )
         
-        # 订单事件处理器
         self.order_handler = ReverseOrderHandler(
             self.algo_order_service,
-            self.position_service,
+            self.trade_record_service,
             self.history_writer
         )
         
         self.workflow_manager = ReverseWorkflowManager()
         
-        logger.info("[反向] 反向交易引擎已初始化（复用 live_engine）")
+        logger.info("[反向] 反向交易引擎已初始化（v2 - 自主管理 TP/SL）")
     
     def is_enabled(self) -> bool:
         """是否启用"""
@@ -106,36 +109,59 @@ class ReverseEngine:
             
             self._running = True
             logger.info("=" * 60)
-            logger.info("[反向] 反向交易引擎启动")
+            logger.info("[反向] 反向交易引擎启动 (v2 - 自主管理 TP/SL)")
             logger.info(f"[反向] 配置: margin={self.config_manager.fixed_margin_usdt}U, "
                        f"leverage={self.config_manager.fixed_leverage}x, "
                        f"expiration={self.config_manager.expiration_days}days")
             logger.info("=" * 60)
             
             try:
-                # 同步条件单和持仓状态
                 self.algo_order_service.sync_from_api()
-                self.position_service.sync_from_api()
                 
-                # 注册到 live_engine 的事件分发器，接收 WebSocket 事件
+                self._start_mark_price_ws()
+                
                 if self.live_engine and hasattr(self.live_engine, 'event_dispatcher'):
                     self.live_engine.event_dispatcher.register_listener(self.order_handler.handle_event)
                     logger.info("[反向] 已注册到 live_engine 的事件分发器")
                 else:
                     logger.warning("[反向] 无法注册到 live_engine 事件分发器，将依赖定时同步")
                 
-                # 启动定时同步线程（作为兜底机制）
                 self._sync_thread = threading.Thread(target=self._periodic_sync_loop, daemon=True)
                 self._sync_thread.start()
                 
                 logger.info("[反向] 反向交易引擎启动完成")
                 logger.info(f"[反向] 待触发条件单: {len(self.algo_order_service.pending_orders)}")
-                logger.info(f"[反向] 当前持仓: {len(self.position_service.positions)}")
+                logger.info(f"[反向] 当前开仓记录: {len(self.trade_record_service.get_open_records())}")
                 
             except Exception as e:
                 logger.error(f"[反向] 启动引擎失败: {e}", exc_info=True)
                 self._running = False
                 raise
+    
+    def _start_mark_price_ws(self):
+        """启动 Mark Price WebSocket"""
+        try:
+            watched_symbols = self.trade_record_service.get_watched_symbols()
+            
+            self.mark_price_ws = MarkPriceWSClient(
+                on_price_update=self._on_mark_price_update,
+                symbols_filter=watched_symbols if watched_symbols else None
+            )
+            self.mark_price_ws.start()
+            logger.info(f"[反向] Mark Price WebSocket 已启动，监控 {len(watched_symbols)} 个交易对")
+        except Exception as e:
+            logger.error(f"[反向] 启动 Mark Price WebSocket 失败: {e}")
+    
+    def _on_mark_price_update(self, prices: Dict[str, float]):
+        """处理标记价格更新
+        
+        Args:
+            prices: {symbol: mark_price} 字典
+        """
+        try:
+            self.tpsl_monitor.on_mark_price_update(prices)
+        except Exception as e:
+            logger.error(f"[反向] 处理标记价格更新失败: {e}")
     
     def stop(self):
         """停止引擎"""
@@ -147,19 +173,18 @@ class ReverseEngine:
             self._running = False
             
             try:
-                # 停止所有 workflow
                 self.workflow_manager.stop_all()
                 
-                # 取消注册事件监听器
+                if self.mark_price_ws:
+                    self.mark_price_ws.stop()
+                    logger.info("[反向] Mark Price WebSocket 已停止")
+                
                 if self.live_engine and hasattr(self.live_engine, 'event_dispatcher'):
                     self.live_engine.event_dispatcher.unregister_listener(self.order_handler.handle_event)
                     logger.info("[反向] 已从 live_engine 事件分发器取消注册")
                 
-                # 等待同步线程退出
                 if self._sync_thread and self._sync_thread.is_alive():
                     time.sleep(0.5)
-                
-                # 不需要关闭 REST 客户端和 WebSocket，因为它们属于 live_engine
                 
                 logger.info("[反向] 反向交易引擎已停止")
                 
@@ -183,48 +208,53 @@ class ReverseEngine:
                 if not self._running:
                     break
                 
-                # 同步条件单状态，获取已触发的条件单
                 triggered_orders = self.algo_order_service.sync_from_api()
                 
-                # 处理已触发的条件单（WebSocket 兜底）
                 for order in triggered_orders:
                     logger.info(f"[反向] 🔄 通过定时同步检测到条件单触发: {order.symbol} algoId={order.algo_id}")
                     
-                    # 检查是否已有持仓（避免重复处理）
-                    if order.symbol in self.position_service.positions:
-                        logger.info(f"[反向] {order.symbol} 已有持仓，跳过")
-                        self.algo_order_service.remove_order(order.algo_id)
-                        continue
-                    
-                    # 获取当前价格作为成交价（近似）
                     try:
                         ticker = self.rest_client.get_ticker_price(order.symbol)
                         filled_price = float(ticker.get('price', order.trigger_price))
                     except:
                         filled_price = order.trigger_price
                     
-                    logger.info(f"[反向] 创建持仓: {order.symbol} @ {filled_price}")
+                    logger.info(f"[反向] 创建开仓记录: {order.symbol} @ {filled_price}")
                     
-                    # 标记条件单已触发
                     self.algo_order_service.mark_order_triggered(order.algo_id, filled_price)
                     
-                    # 创建持仓并下 TP/SL
-                    position = self.position_service.create_position_from_algo_order(order, filled_price)
+                    record = self.trade_record_service.create_record(order, filled_price)
                     
-                    if position:
-                        logger.info(f"[反向] ✅ 持仓已创建: {order.symbol} {position.side} @ {filled_price}")
-                        logger.info(f"[反向]    TP={position.tp_price} SL={position.sl_price}")
+                    if record:
+                        logger.info(f"[反向] ✅ 开仓记录已创建: {order.symbol} {record.side} @ {filled_price}")
+                        logger.info(f"[反向]    TP={record.tp_price} SL={record.sl_price}")
+                        
+                        if self.mark_price_ws:
+                            self.mark_price_ws.add_symbol(order.symbol)
                     
-                    # 移除已处理的条件单
                     self.algo_order_service.remove_order(order.algo_id)
                 
-                # 同步持仓状态
-                self.position_service.sync_from_api()
+                self._update_watched_symbols()
                 
             except Exception as e:
                 logger.error(f"[反向] 定时同步失败: {e}", exc_info=True)
         
         logger.info("[反向] 定时同步线程已退出")
+    
+    def _update_watched_symbols(self):
+        """更新 Mark Price WebSocket 监控的交易对"""
+        if not self.mark_price_ws:
+            return
+        
+        watched_symbols = self.trade_record_service.get_watched_symbols()
+        
+        pending_symbols = {o.symbol for o in self.algo_order_service.pending_orders.values()}
+        all_symbols = watched_symbols | pending_symbols
+        
+        if all_symbols:
+            self.mark_price_ws.set_symbols_filter(all_symbols)
+        else:
+            self.mark_price_ws.symbols_filter = None
     
     def on_agent_limit_order(self, symbol: str, side: str, limit_price: float,
                               tp_price: float, sl_price: float,
@@ -252,10 +282,10 @@ class ReverseEngine:
             return None
         
         max_positions = self.config_manager.max_positions
-        current_positions = len(self.position_service.positions)
+        current_records = len(self.trade_record_service.get_open_records())
         current_pending = len(self.algo_order_service.pending_orders)
         
-        if current_positions + current_pending >= max_positions:
+        if current_records + current_pending >= max_positions:
             logger.warning(f"[反向] 达到最大持仓/挂单数限制 ({max_positions})，跳过 {symbol}")
             return None
         
@@ -280,6 +310,9 @@ class ReverseEngine:
         
         if order:
             logger.info(f"[反向] 条件单创建成功: {symbol} algoId={order.algo_id}")
+            
+            if self.mark_price_ws:
+                self.mark_price_ws.add_symbol(symbol)
         else:
             logger.error(f"[反向] 条件单创建失败: {symbol}")
         
@@ -337,8 +370,8 @@ class ReverseEngine:
         return config.to_dict()
     
     def get_positions_summary(self) -> List[Dict[str, Any]]:
-        """获取持仓汇总"""
-        return self.position_service.get_positions_summary()
+        """获取开仓记录汇总"""
+        return self.trade_record_service.get_summary()
     
     def get_pending_orders_summary(self) -> Dict[str, Any]:
         """获取待触发条件单汇总"""
@@ -346,11 +379,11 @@ class ReverseEngine:
     
     def get_history(self, limit: int = 50) -> List[Dict[str, Any]]:
         """获取历史记录"""
-        return self.history_writer.get_history(limit)
+        return self.trade_record_service.get_history(limit)
     
     def get_statistics(self) -> Dict[str, Any]:
         """获取统计信息"""
-        return self.history_writer.get_statistics()
+        return self.trade_record_service.get_statistics()
     
     def cancel_pending_order(self, algo_id: str) -> bool:
         """撤销待触发条件单
@@ -363,12 +396,51 @@ class ReverseEngine:
         """
         return self.algo_order_service.cancel_order(algo_id)
     
+    def close_record(self, record_id: str) -> bool:
+        """手动关闭指定开仓记录
+        
+        Args:
+            record_id: 记录ID
+            
+        Returns:
+            是否成功
+        """
+        return self.tpsl_monitor.manual_close(record_id, 'MANUAL_CLOSED')
+    
+    def close_all_records_by_symbol(self, symbol: str) -> int:
+        """关闭指定交易对的所有开仓记录
+        
+        Args:
+            symbol: 交易对
+            
+        Returns:
+            关闭的记录数量
+        """
+        return self.tpsl_monitor.close_all_by_symbol(symbol, 'MANUAL_CLOSED')
+    
     def get_summary(self) -> Dict[str, Any]:
-        """获取引擎汇总信息"""
+        """获取引擎汇总信息
+        
+        返回格式与前端 ReverseSummary 类型匹配
+        """
         return {
             'enabled': self.config_manager.enabled,
             'config': self.config_manager.get_dict(),
             'pending_orders_count': len(self.algo_order_service.pending_orders),
-            'positions_count': len(self.position_service.positions),
-            'statistics': self.history_writer.get_statistics()
+            'positions_count': len(self.trade_record_service.get_open_records()),
+            'statistics': self.trade_record_service.get_statistics(),
+            'tpsl_monitor_status': self.tpsl_monitor.get_status()
         }
+    
+    def get_mark_price(self, symbol: str) -> Optional[float]:
+        """获取指定交易对的最新标记价格
+        
+        Args:
+            symbol: 交易对
+            
+        Returns:
+            标记价格
+        """
+        if self.mark_price_ws:
+            return self.mark_price_ws.get_latest_price(symbol)
+        return None

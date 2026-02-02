@@ -396,13 +396,13 @@ class BinanceUserDataWSClient:
             data = json.loads(message)
             event_type = data.get('e')
             
-            # 打印所有收到的消息（便于调试）
             if event_type:
                 logger.info(f"[UserDataWS] 📥 收到事件: {event_type}")
             
             if event_type == 'ACCOUNT_UPDATE':
                 logger.info(f"[UserDataWS] ACCOUNT_UPDATE 事件")
                 self.on_event_callback('ACCOUNT_UPDATE', data)
+            
             elif event_type == 'ORDER_TRADE_UPDATE':
                 order_info = data.get('o', {})
                 symbol = order_info.get('s', '')
@@ -410,8 +410,20 @@ class BinanceUserDataWSClient:
                 order_type = order_info.get('ot', '')
                 logger.info(f"[UserDataWS] ORDER_TRADE_UPDATE: {symbol} type={order_type} status={status}")
                 self.on_event_callback('ORDER_TRADE_UPDATE', data)
+            
+            elif event_type == 'ALGO_UPDATE':
+                order_info = data.get('o', {})
+                symbol = order_info.get('s', '')
+                status = order_info.get('X', '')
+                algo_id = order_info.get('aid', '')
+                algo_type = order_info.get('at', '')
+                logger.info(f"[UserDataWS] 📊 ALGO_UPDATE: {symbol} algoId={algo_id} "
+                           f"type={algo_type} status={status}")
+                self.on_event_callback('ALGO_UPDATE', data)
+            
             elif event_type == 'listenKeyExpired':
                 logger.warning(f"[UserDataWS] ⚠️ listenKey 已过期！需要重新连接")
+            
             else:
                 logger.debug(f"[UserDataWS] 收到其他事件类型: {event_type}")
         

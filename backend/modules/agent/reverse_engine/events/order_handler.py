@@ -1,30 +1,31 @@
 """反向交易订单事件处理器
 
-职责说明：
+职责说明（v2 - 自主管理 TP/SL）：
 - 处理来自 Binance User Data Stream 的订单更新事件
-- 监听条件单 (Algo Order) 的状态变化
-- 监听 TP/SL 订单的成交事件
+- 监听条件单 (Algo Order) 的状态变化（ALGO_UPDATE 事件）
+- 条件单触发后创建开仓记录（不再下 Binance TP/SL 订单）
+- TP/SL 由 TPSLMonitorService 通过 Mark Price WebSocket 自行管理
 
 工作流程：
-1. 条件单触发 -> 创建持仓 -> 下 TP/SL 订单
-2. TP/SL 成交 -> 记录历史 -> 移除持仓
+1. 条件单触发 (ALGO_UPDATE TRIGGERED) -> 创建开仓记录
+2. Mark Price 触达 TP/SL -> TPSLMonitorService 执行平仓
 
-事件字段说明（参考币安文档）：
-- o.ot: 原始订单类型 (STOP_MARKET, TAKE_PROFIT_MARKET 等)
-- o.X: 订单当前状态 (NEW, FILLED, CANCELED, EXPIRED 等)
-- o.x: 本次事件执行类型 (NEW, TRADE, CANCELED 等)
-- o.i: 订单ID
-- o.s: 交易对
-- o.ap: 订单平均价格
-- o.L: 订单末次成交价格
+事件字段说明：
+- ALGO_UPDATE: 条件单状态更新
+  - o.X: 条件单状态 (NEW/TRIGGERED/FINISHED/CANCELED/EXPIRED)
+  - o.aid: 条件单ID
+  - o.ap: 触发后实际成交价格
+  - o.s: 交易对
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 from modules.monitor.utils.logger import get_logger
 from ..services.algo_order_service import AlgoOrderService
-from ..services.position_service import ReversePositionService
 from ..services.history_writer import ReverseHistoryWriter
 from ..models import AlgoOrderStatus
+
+if TYPE_CHECKING:
+    from ..services.trade_record_service import TradeRecordService
 
 logger = get_logger('reverse_engine.order_handler')
 
@@ -33,27 +34,28 @@ class ReverseOrderHandler:
     """反向交易订单事件处理器
     
     职责：
-    - 处理条件单 (STOP_MARKET) 状态变化
-    - 处理 TP/SL 订单成交事件
-    - 协调 AlgoOrderService、PositionService、HistoryWriter
+    - 处理 ALGO_UPDATE 事件（条件单状态变化）
+    - 条件单触发后创建开仓记录
+    - 协调 AlgoOrderService、TradeRecordService
     
     事件类型：
-    - ORDER_TRADE_UPDATE: 订单状态更新
-    - ACCOUNT_UPDATE: 账户状态更新（用于检测持仓变化）
+    - ALGO_UPDATE: 条件单状态更新（主要关注）
+    - ORDER_TRADE_UPDATE: 普通订单状态更新（用于调试）
+    - ACCOUNT_UPDATE: 账户状态更新
     """
     
     def __init__(self, algo_order_service: AlgoOrderService,
-                 position_service: ReversePositionService,
+                 trade_record_service: 'TradeRecordService',
                  history_writer: ReverseHistoryWriter):
         """初始化
         
         Args:
             algo_order_service: 条件单服务
-            position_service: 持仓服务
+            trade_record_service: 开仓记录服务
             history_writer: 历史记录写入器
         """
         self.algo_order_service = algo_order_service
-        self.position_service = position_service
+        self.trade_record_service = trade_record_service
         self.history_writer = history_writer
     
     def handle_event(self, event_type: str, data: Dict[str, Any]):
@@ -64,147 +66,121 @@ class ReverseOrderHandler:
             data: 事件数据
         """
         try:
-            if event_type == 'ORDER_TRADE_UPDATE':
+            if event_type == 'ALGO_UPDATE':
+                self._handle_algo_update(data)
+            elif event_type == 'ORDER_TRADE_UPDATE':
                 self._handle_order_update(data)
             elif event_type == 'ACCOUNT_UPDATE':
                 self._handle_account_update(data)
         except Exception as e:
             logger.error(f"[反向] 处理事件失败: {e}", exc_info=True)
     
-    def _handle_order_update(self, data: Dict[str, Any]):
-        """处理订单更新事件
+    def _handle_algo_update(self, data: Dict[str, Any]):
+        """处理条件单状态更新事件 (ALGO_UPDATE)
+        
+        这是条件单专用的事件类型，包含条件单的完整状态信息。
+        
+        状态说明：
+        - NEW: 条件订单已提交，但尚未触发
+        - CANCELED: 条件订单已被取消
+        - TRIGGERING: 条件订单已满足触发条件，正在转发至撮合引擎
+        - TRIGGERED: 条件订单已成功触发并进入撮合引擎
+        - FINISHED: 触发的条件订单已在撮合引擎中被成交或取消
+        - REJECTED: 条件订单被撮合引擎拒绝
+        - EXPIRED: 条件订单被系统取消
         
         Args:
-            data: 订单更新数据
+            data: ALGO_UPDATE 事件数据
         """
         order_info = data.get('o', {})
         
-        order_type = order_info.get('ot', '')  # 原始订单类型
-        order_status = order_info.get('X', '')  # 订单当前状态
-        execution_type = order_info.get('x', '')  # 本次事件执行类型
-        symbol = order_info.get('s', '')
-        order_id = str(order_info.get('i', ''))
-        
-        # 打印所有订单更新事件，便于调试
-        logger.info(f"[反向] 📥 ORDER_TRADE_UPDATE: {symbol} | type={order_type} | status={order_status} | exec={execution_type} | orderId={order_id}")
-        
-        # 检查是否是我们的条件单（通过 order_id 匹配 algo_id）
-        # 注意：条件单触发后，会生成一个新的订单，但我们通过 algo_id 跟踪
-        # 币安的条件单 WebSocket 事件中，订单ID 就是 algoId
-        algo_order = self.algo_order_service.get_order(order_id)
-        
-        # 打印当前跟踪的条件单列表，便于调试
-        pending_algo_ids = list(self.algo_order_service.pending_orders.keys())
-        if pending_algo_ids:
-            logger.debug(f"[反向] 当前跟踪的条件单: {pending_algo_ids}")
-        
-        if algo_order:
-            # 这是我们的条件单
-            self._handle_algo_order_update(order_info, algo_order)
-        elif order_type in ['TAKE_PROFIT_MARKET', 'STOP_MARKET']:
-            # 可能是我们的 TP/SL 订单
-            if order_status == 'FILLED':
-                self._handle_tpsl_filled(order_info)
-    
-    def _handle_algo_order_update(self, order_info: Dict[str, Any], algo_order):
-        """处理条件单更新
-        
-        Args:
-            order_info: 订单信息
-            algo_order: 条件单对象
-        """
         status = order_info.get('X', '')
+        algo_id = str(order_info.get('aid', ''))
         symbol = order_info.get('s', '')
-        algo_id = algo_order.algo_id
+        side = order_info.get('S', '')
         
-        if status == 'FILLED':
-            # 条件单已成交
+        logger.info(f"[反向] 📥 ALGO_UPDATE: {symbol} | status={status} | algoId={algo_id} | side={side}")
+        
+        algo_order = self.algo_order_service.get_order(algo_id)
+        
+        if not algo_order:
+            pending_ids = list(self.algo_order_service.pending_orders.keys())
+            logger.debug(f"[反向] algoId={algo_id} 不在跟踪列表中，当前跟踪: {pending_ids}")
+            return
+        
+        if status == 'TRIGGERED':
             avg_price = float(order_info.get('ap', 0))
             if avg_price == 0:
-                avg_price = float(order_info.get('L', 0))  # 末次成交价格
-            if avg_price == 0:
-                avg_price = algo_order.trigger_price  # 使用触发价作为兜底
+                avg_price = algo_order.trigger_price
             
-            logger.info(f"[反向] 条件单已成交: {symbol} algoId={algo_id} price={avg_price}")
+            logger.info(f"[反向] ✅ 条件单已触发: {symbol} algoId={algo_id} price={avg_price}")
             
             self.algo_order_service.mark_order_triggered(algo_id, avg_price)
             
-            position = self.position_service.create_position_from_algo_order(algo_order, avg_price)
+            record = self.trade_record_service.create_record(algo_order, avg_price)
             
-            if position:
-                logger.info(f"[反向] 持仓已创建: {symbol} {position.side} @ {avg_price}")
-                logger.info(f"[反向] TP={position.tp_price} SL={position.sl_price}")
+            if record:
+                logger.info(f"[反向] 📗 开仓记录已创建: {symbol} {record.side} @ {avg_price}")
+                logger.info(f"[反向]    TP={record.tp_price} SL={record.sl_price}")
             
+            self.algo_order_service.remove_order(algo_id)
+        
+        elif status == 'FINISHED':
+            avg_price = float(order_info.get('ap', 0))
+            aq = float(order_info.get('aq', 0))
+            
+            logger.info(f"[反向] 条件单已完成: {symbol} algoId={algo_id} avgPrice={avg_price} filledQty={aq}")
+            
+            if algo_id in self.algo_order_service.pending_orders:
+                if avg_price > 0:
+                    self.algo_order_service.mark_order_triggered(algo_id, avg_price)
+                    
+                    record = self.trade_record_service.create_record(algo_order, avg_price)
+                    if record:
+                        logger.info(f"[反向] 📗 开仓记录已创建 (FINISHED): {symbol} {record.side} @ {avg_price}")
+                
+                self.algo_order_service.remove_order(algo_id)
+        
+        elif status == 'CANCELED':
+            logger.info(f"[反向] 条件单已取消: {symbol} algoId={algo_id}")
             self.algo_order_service.remove_order(algo_id)
         
         elif status == 'EXPIRED':
             logger.info(f"[反向] 条件单已过期: {symbol} algoId={algo_id}")
             self.algo_order_service.remove_order(algo_id)
         
-        elif status == 'CANCELED':
-            logger.info(f"[反向] 条件单已取消: {symbol} algoId={algo_id}")
+        elif status == 'REJECTED':
+            reason = order_info.get('rm', '')
+            logger.warning(f"[反向] ⚠️ 条件单被拒绝: {symbol} algoId={algo_id} reason={reason}")
             self.algo_order_service.remove_order(algo_id)
         
         elif status == 'NEW':
-            logger.info(f"[反向] 条件单状态更新: {symbol} algoId={algo_id} status={status}")
+            logger.info(f"[反向] 条件单已创建: {symbol} algoId={algo_id}")
+        
+        elif status == 'TRIGGERING':
+            logger.info(f"[反向] 条件单正在触发: {symbol} algoId={algo_id}")
     
-    def _handle_tpsl_filled(self, order_info: Dict[str, Any]):
-        """处理 TP/SL 成交（平仓）
+    def _handle_order_update(self, data: Dict[str, Any]):
+        """处理普通订单更新事件 (ORDER_TRADE_UPDATE)
+        
+        主要用于调试和日志记录。
         
         Args:
-            order_info: 订单信息
+            data: 订单更新数据
         """
-        symbol = order_info.get('s', '')
+        order_info = data.get('o', {})
+        
         order_type = order_info.get('ot', '')
-        avg_price = float(order_info.get('ap', 0)) or float(order_info.get('L', 0))
-        order_id = order_info.get('i')
+        order_status = order_info.get('X', '')
+        execution_type = order_info.get('x', '')
+        symbol = order_info.get('s', '')
+        order_id = str(order_info.get('i', ''))
+        side = order_info.get('S', '')
+        position_side = order_info.get('ps', '')
         
-        position = self.position_service.get_position(symbol)
-        if not position:
-            logger.debug(f"[反向] {symbol} TP/SL 成交但无对应持仓，可能不是反向交易")
-            return
-        
-        tpsl_orders = self.position_service.tpsl_orders.get(symbol, {})
-        tp_order_id = tpsl_orders.get('tp_order_id')
-        sl_order_id = tpsl_orders.get('sl_order_id')
-        
-        is_our_order = (order_id == tp_order_id or order_id == sl_order_id)
-        if not is_our_order:
-            logger.debug(f"[反向] {symbol} TP/SL 订单 {order_id} 不是反向交易的订单")
-            return
-        
-        if order_type == 'TAKE_PROFIT_MARKET':
-            close_reason = '止盈'
-            if order_id == tp_order_id and sl_order_id:
-                self._cancel_order_safe(symbol, sl_order_id)
-        else:
-            close_reason = '止损'
-            if order_id == sl_order_id and tp_order_id:
-                self._cancel_order_safe(symbol, tp_order_id)
-        
-        logger.info(f"[反向] {symbol} 平仓: {close_reason} price={avg_price}")
-        
-        self.history_writer.record_closed_position(
-            position=position,
-            close_reason=close_reason,
-            close_price=avg_price,
-            close_order_id=order_id
-        )
-        
-        self.position_service.remove_position(symbol)
-    
-    def _cancel_order_safe(self, symbol: str, order_id: int):
-        """安全撤销订单
-        
-        Args:
-            symbol: 交易对
-            order_id: 订单ID
-        """
-        try:
-            self.position_service.rest_client.cancel_order(symbol, order_id=order_id)
-            logger.info(f"[反向] {symbol} 对立订单已撤销: orderId={order_id}")
-        except Exception as e:
-            logger.warning(f"[反向] {symbol} 撤销对立订单失败: {e}")
+        logger.info(f"[反向] 📥 ORDER_TRADE_UPDATE: {symbol} | type={order_type} | "
+                   f"status={order_status} | exec={execution_type} | "
+                   f"side={side} | positionSide={position_side} | orderId={order_id}")
     
     def _handle_account_update(self, data: Dict[str, Any]):
         """处理账户更新事件
@@ -220,8 +196,9 @@ class ReverseOrderHandler:
             position_amt = float(pos_data.get('pa', 0))
             mark_price = float(pos_data.get('mp', 0))
             
-            if symbol in self.position_service.positions:
+            open_records = self.trade_record_service.get_open_records_by_symbol(symbol)
+            if open_records:
+                self.trade_record_service.update_mark_price(symbol, mark_price)
+                
                 if position_amt == 0:
-                    logger.info(f"[反向] {symbol} 持仓已被平仓（账户更新检测）")
-                else:
-                    self.position_service.update_mark_price(symbol, mark_price)
+                    logger.info(f"[反向] {symbol} Binance 持仓已清零（账户更新检测）")

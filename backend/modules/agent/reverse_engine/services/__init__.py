@@ -1,7 +1,13 @@
 """反向交易引擎服务层"""
 
 from .algo_order_service import AlgoOrderService
-from .position_service import ReversePositionService
+from .trade_record_service import TradeRecordService
+from .tpsl_monitor import TPSLMonitorService
 from .history_writer import ReverseHistoryWriter
 
-__all__ = ['AlgoOrderService', 'ReversePositionService', 'ReverseHistoryWriter']
+__all__ = [
+    'AlgoOrderService',
+    'TradeRecordService',
+    'TPSLMonitorService',
+    'ReverseHistoryWriter'
+]

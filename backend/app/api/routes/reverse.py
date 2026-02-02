@@ -135,7 +135,7 @@ async def update_reverse_config(config: ReverseConfigUpdate) -> Dict[str, Any]:
 
 @router.get("/positions")
 async def get_reverse_positions() -> Dict[str, Any]:
-    """获取反向交易持仓"""
+    """获取反向交易持仓（开仓记录）"""
     try:
         engine = _get_reverse_engine()
         positions = engine.get_positions_summary()
@@ -145,6 +145,37 @@ async def get_reverse_positions() -> Dict[str, Any]:
         }
     except HTTPException:
         return {"positions": [], "total": 0}
+
+
+@router.delete("/positions/{record_id}")
+async def close_reverse_position(record_id: str) -> Dict[str, Any]:
+    """手动关闭指定开仓记录
+    
+    Args:
+        record_id: 开仓记录ID
+    """
+    engine = _get_reverse_engine()
+    success = engine.close_record(record_id)
+    if success:
+        return {"success": True, "message": f"开仓记录 {record_id} 已关闭"}
+    else:
+        raise HTTPException(status_code=400, detail=f"关闭开仓记录 {record_id} 失败")
+
+
+@router.delete("/positions/symbol/{symbol}")
+async def close_reverse_positions_by_symbol(symbol: str) -> Dict[str, Any]:
+    """关闭指定交易对的所有开仓记录
+    
+    Args:
+        symbol: 交易对
+    """
+    engine = _get_reverse_engine()
+    count = engine.close_all_records_by_symbol(symbol.upper())
+    return {
+        "success": True,
+        "message": f"已关闭 {symbol} 的 {count} 条开仓记录",
+        "closed_count": count
+    }
 
 
 @router.get("/pending-orders")
