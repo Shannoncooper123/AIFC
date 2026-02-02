@@ -730,7 +730,7 @@ class BinanceRestClient:
         Note:
             参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order
         """
-        url = f"{self.base_url}/fapi/v1/algo/order"
+        url = f"{self.base_url}/fapi/v1/algoOrder"
         
         params = {
             'symbol': symbol,
@@ -771,7 +771,7 @@ class BinanceRestClient:
         Note:
             参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/Cancel-Algo-Order
         """
-        url = f"{self.base_url}/fapi/v1/algo/order"
+        url = f"{self.base_url}/fapi/v1/algoOrder"
         
         params = {
             'algoId': algo_id,
