@@ -76,6 +76,9 @@ class BinanceLiveEngine:
         
         # 用户数据流 WebSocket
         self.user_data_ws: Optional[BinanceUserDataWSClient] = None
+        
+        # 持仓模式标记（启动时会设置为双向持仓）
+        self._dual_side_position = False
     
     def _inject_tpsl_into_positions(self) -> None:
         """从当前挂单中提取 TP/SL 价格并写入到 Position 对象"""
@@ -107,20 +110,24 @@ class BinanceLiveEngine:
             logger.info("=" * 60)
             
             try:
-                # 1. 检查并设置持仓模式为单向持仓
+                # 1. 检查并设置持仓模式为双向持仓（Hedge Mode）
+                # 双向持仓模式允许同一币种同时持有多空两个方向的仓位
+                # 这对于反向交易功能是必需的
                 logger.info("1. 检查持仓模式...")
                 try:
                     position_mode = self.rest_client.get_position_mode()
                     dual_side = position_mode.get('dualSidePosition', False)
-                    if dual_side:
-                        logger.warning("当前为双向持仓模式，正在切换为单向持仓模式...")
-                        self.rest_client.set_position_mode(dual_side=False)
-                        logger.info("✅ 已切换为单向持仓模式（One-way Mode）")
+                    if not dual_side:
+                        logger.warning("当前为单向持仓模式，正在切换为双向持仓模式...")
+                        self.rest_client.set_position_mode(dual_side=True)
+                        logger.info("✅ 已切换为双向持仓模式（Hedge Mode）")
                     else:
-                        logger.info("✅ 当前已是单向持仓模式")
+                        logger.info("✅ 当前已是双向持仓模式")
+                    self._dual_side_position = True
                 except Exception as e:
                     logger.error(f"设置持仓模式失败: {e}")
                     logger.warning("将继续启动，但下单可能失败")
+                    self._dual_side_position = False
                 
                 # 2. 同步账户和持仓信息
                 logger.info("2. 同步账户信息...")

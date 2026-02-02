@@ -1,8 +1,27 @@
-"""订单服务：管理市价单、止盈止损单等订单操作"""
+"""订单服务：管理市价单、止盈止损单等订单操作
+
+双向持仓模式说明：
+- 开多仓：side='BUY', position_side='LONG'
+- 开空仓：side='SELL', position_side='SHORT'
+- 平多仓：side='SELL', position_side='LONG'
+- 平空仓：side='BUY', position_side='SHORT'
+"""
 from typing import Dict, Optional, Any, List
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('live_engine.order_service')
+
+
+def _get_position_side(side: str) -> str:
+    """根据持仓方向获取 positionSide 参数
+    
+    Args:
+        side: 持仓方向（long/short）
+        
+    Returns:
+        positionSide 参数（LONG/SHORT）
+    """
+    return 'LONG' if side == 'long' else 'SHORT'
 
 
 class OrderService:
@@ -51,16 +70,19 @@ class OrderService:
             except Exception as e:
                 logger.warning(f"设置杠杆失败（可能已设置）: {e}")
             
-            # 2. 下市价单
+            # 2. 下市价单（双向持仓模式）
             order_side = 'BUY' if side == 'long' else 'SELL'
+            position_side = _get_position_side(side)
+            
             market_order = self.rest_client.place_order(
                 symbol=symbol,
                 side=order_side,
                 order_type='MARKET',
-                quantity=quantity
+                quantity=quantity,
+                position_side=position_side
             )
             
-            logger.info(f"市价单已下: {symbol} {side} 数量={quantity}")
+            logger.info(f"市价单已下: {symbol} {side} 数量={quantity} positionSide={position_side}")
             
             # 3. 下 TP/SL 条件单（格式化价格精度）
             tp_order_id = None
@@ -68,7 +90,6 @@ class OrderService:
             
             if tp_price:
                 tp_side = 'SELL' if side == 'long' else 'BUY'
-                # 格式化价格精度
                 tp_price_formatted = round(tp_price, price_precision)
                 tp_order = self.rest_client.place_order(
                     symbol=symbol,
@@ -76,14 +97,14 @@ class OrderService:
                     order_type='TAKE_PROFIT_MARKET',
                     stop_price=tp_price_formatted,
                     close_position=True,
-                    working_type='MARK_PRICE'
+                    working_type='MARK_PRICE',
+                    position_side=position_side
                 )
                 tp_order_id = tp_order.get('orderId')
-                logger.info(f"止盈单已下: {symbol} 价格={tp_price_formatted}")
+                logger.info(f"止盈单已下: {symbol} 价格={tp_price_formatted} positionSide={position_side}")
             
             if sl_price:
                 sl_side = 'SELL' if side == 'long' else 'BUY'
-                # 格式化价格精度
                 sl_price_formatted = round(sl_price, price_precision)
                 sl_order = self.rest_client.place_order(
                     symbol=symbol,
@@ -91,10 +112,11 @@ class OrderService:
                     order_type='STOP_MARKET',
                     stop_price=sl_price_formatted,
                     close_position=True,
-                    working_type='MARK_PRICE'
+                    working_type='MARK_PRICE',
+                    position_side=position_side
                 )
                 sl_order_id = sl_order.get('orderId')
-                logger.info(f"止损单已下: {symbol} 价格={sl_price_formatted}")
+                logger.info(f"止损单已下: {symbol} 价格={sl_price_formatted} positionSide={position_side}")
             
             # 记录订单ID
             self.tpsl_orders[symbol] = {
@@ -131,17 +153,20 @@ class OrderService:
             # 1. 撤销 TP/SL 订单
             self._cancel_tpsl_orders(symbol)
             
-            # 2. 下市价平仓单
+            # 2. 下市价平仓单（双向持仓模式）
             close_side = 'SELL' if side == 'long' else 'BUY'
+            position_side = _get_position_side(side)
+            
             order = self.rest_client.place_order(
                 symbol=symbol,
                 side=close_side,
                 order_type='MARKET',
                 quantity=quantity,
-                reduce_only=True
+                reduce_only=True,
+                position_side=position_side
             )
             
-            logger.info(f"市价平仓: {symbol} 数量={quantity} 原因={close_reason}")
+            logger.info(f"市价平仓: {symbol} 数量={quantity} 原因={close_reason} positionSide={position_side}")
             
             return {'success': True, 'order': order, 'close_reason': close_reason}
         
@@ -166,9 +191,10 @@ class OrderService:
             # 1. 撤销旧的 TP/SL 订单
             self._cancel_tpsl_orders(symbol)
             
-            # 2. 下新的 TP/SL 订单
+            # 2. 下新的 TP/SL 订单（双向持仓模式）
             tp_order_id = None
             sl_order_id = None
+            position_side = _get_position_side(side)
             
             if tp_price:
                 tp_side = 'SELL' if side == 'long' else 'BUY'
@@ -178,10 +204,11 @@ class OrderService:
                     order_type='TAKE_PROFIT_MARKET',
                     stop_price=tp_price,
                     close_position=True,
-                    working_type='MARK_PRICE'
+                    working_type='MARK_PRICE',
+                    position_side=position_side
                 )
                 tp_order_id = tp_order.get('orderId')
-                logger.info(f"止盈单已更新: {symbol} 价格={tp_price}")
+                logger.info(f"止盈单已更新: {symbol} 价格={tp_price} positionSide={position_side}")
             
             if sl_price:
                 sl_side = 'SELL' if side == 'long' else 'BUY'
@@ -191,10 +218,11 @@ class OrderService:
                     order_type='STOP_MARKET',
                     stop_price=sl_price,
                     close_position=True,
-                    working_type='MARK_PRICE'
+                    working_type='MARK_PRICE',
+                    position_side=position_side
                 )
                 sl_order_id = sl_order.get('orderId')
-                logger.info(f"止损单已更新: {symbol} 价格={sl_price}")
+                logger.info(f"止损单已更新: {symbol} 价格={sl_price} positionSide={position_side}")
             
             # 更新订单ID
             self.tpsl_orders[symbol] = {
@@ -548,4 +576,3 @@ class OrderService:
         except Exception as e:
             logger.warning(f"获取 {symbol} 价格精度失败，使用默认值2: {e}")
             return 2
-
