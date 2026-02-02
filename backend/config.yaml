@@ -116,7 +116,12 @@ agent:
     max_leverage: 10            # 最大杠杆倍数
     ws_interval: "1m"           # WebSocket K线订阅间隔
   
-  # 反向交易引擎：所有配置通过前端动态管理，无需在此配置
+  # 反向交易引擎文件路径配置（数值配置通过前端动态管理）
+  reverse:
+    config_path: "modules/data/reverse_config.json"           # 动态配置文件
+    algo_orders_path: "modules/data/reverse_algo_orders.json" # 条件单状态
+    trade_records_path: "modules/data/reverse_trade_records.json" # 开仓记录
+    history_path: "modules/data/reverse_history.json"         # 历史记录
   
   # 决策验证配置（基于 logprobs 的置信度检查）
   decision_verification:

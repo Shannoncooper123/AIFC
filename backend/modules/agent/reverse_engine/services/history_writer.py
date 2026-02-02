@@ -33,9 +33,9 @@ class ReverseHistoryWriter:
     架构：
     - 强制依赖 live_history_writer
     - 双写模式确保数据一致性
+    - 路径从 config.yaml 读取
     """
     
-    HISTORY_FILE = 'agent/reverse_history.json'
     MAX_HISTORY_RECORDS = 1000
     
     def __init__(self, config: Dict, live_history_writer: 'LiveHistoryWriter'):
@@ -55,6 +55,7 @@ class ReverseHistoryWriter:
         self.live_history_writer = live_history_writer
         self._lock = threading.RLock()
         
+        self.history_file = self._get_history_file_path()
         self.history: List[ReverseTradeHistory] = []
         
         self._ensure_history_dir()
@@ -62,17 +63,28 @@ class ReverseHistoryWriter:
         
         logger.info("[反向] 历史记录写入器已初始化（双写模式）")
     
+    def _get_history_file_path(self) -> str:
+        """从 settings.py 获取历史文件路径"""
+        try:
+            from modules.config.settings import get_config
+            config = get_config()
+            reverse_cfg = config.get('agent', {}).get('reverse', {})
+            return reverse_cfg.get('history_path', 'modules/data/reverse_history.json')
+        except Exception as e:
+            logger.warning(f"从 settings 获取路径失败，使用默认路径: {e}")
+            return 'modules/data/reverse_history.json'
+    
     def _ensure_history_dir(self):
         """确保历史目录存在"""
-        history_dir = os.path.dirname(self.HISTORY_FILE)
+        history_dir = os.path.dirname(self.history_file)
         if history_dir and not os.path.exists(history_dir):
             os.makedirs(history_dir, exist_ok=True)
     
     def _load_history(self):
         """从文件加载历史"""
         try:
-            if os.path.exists(self.HISTORY_FILE):
-                with open(self.HISTORY_FILE, 'r', encoding='utf-8') as f:
+            if os.path.exists(self.history_file):
+                with open(self.history_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     for record in data.get('history', []):
                         self.history.append(ReverseTradeHistory.from_dict(record))
@@ -87,7 +99,7 @@ class ReverseHistoryWriter:
                 'history': [h.to_dict() for h in self.history[-self.MAX_HISTORY_RECORDS:]],
                 'updated_at': datetime.now().isoformat()
             }
-            with open(self.HISTORY_FILE, 'w', encoding='utf-8') as f:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[反向] 保存历史记录失败: {e}")

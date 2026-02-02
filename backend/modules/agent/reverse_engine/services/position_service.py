@@ -36,7 +36,7 @@ class ReversePositionService:
     - 本服务主要用于反向交易特有的功能
     """
     
-    STATE_FILE = 'agent/reverse_trade_state.json'
+    STATE_FILE = 'modules/data/reverse_trade_state.json'
     
     def __init__(self, rest_client):
         """初始化

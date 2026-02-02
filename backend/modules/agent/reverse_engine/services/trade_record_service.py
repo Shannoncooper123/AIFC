@@ -26,29 +26,41 @@ class TradeRecordService:
     - 管理独立的开仓记录（不依赖 Binance 持仓合并）
     - 每条记录有独立的 TP/SL 价格
     - 持久化到 JSON 文件，支持服务重启恢复
+    - 路径从 config.yaml 读取
     """
-    
-    STATE_FILE = 'agent/reverse_trade_records.json'
     
     def __init__(self):
         """初始化"""
         self._lock = threading.RLock()
         self.records: Dict[str, ReverseTradeRecord] = {}
         
+        self.state_file = self._get_state_file_path()
+        
         self._ensure_state_dir()
         self._load_state()
     
+    def _get_state_file_path(self) -> str:
+        """从 settings.py 获取状态文件路径"""
+        try:
+            from modules.config.settings import get_config
+            config = get_config()
+            reverse_cfg = config.get('agent', {}).get('reverse', {})
+            return reverse_cfg.get('trade_records_path', 'modules/data/reverse_trade_records.json')
+        except Exception as e:
+            logger.warning(f"从 settings 获取路径失败，使用默认路径: {e}")
+            return 'modules/data/reverse_trade_records.json'
+    
     def _ensure_state_dir(self):
         """确保状态目录存在"""
-        state_dir = os.path.dirname(self.STATE_FILE)
+        state_dir = os.path.dirname(self.state_file)
         if state_dir and not os.path.exists(state_dir):
             os.makedirs(state_dir, exist_ok=True)
     
     def _load_state(self):
         """从文件加载状态"""
         try:
-            if os.path.exists(self.STATE_FILE):
-                with open(self.STATE_FILE, 'r', encoding='utf-8') as f:
+            if os.path.exists(self.state_file):
+                with open(self.state_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     for record_data in data.get('records', []):
                         record = ReverseTradeRecord.from_dict(record_data)
@@ -64,7 +76,7 @@ class TradeRecordService:
                 'records': [r.to_dict() for r in self.records.values()],
                 'updated_at': datetime.now().isoformat()
             }
-            with open(self.STATE_FILE, 'w', encoding='utf-8') as f:
+            with open(self.state_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[TradeRecord] 保存状态失败: {e}")

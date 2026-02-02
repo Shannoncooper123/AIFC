@@ -42,22 +42,36 @@ class ConfigManager:
     """配置管理器
     
     配置完全由前端动态管理，存储在 JSON 文件中。
+    路径从 config.yaml 读取。
     """
-    
-    DEFAULT_CONFIG_PATH = 'agent/reverse_config.json'
     
     def __init__(self, config_path: Optional[str] = None):
         """初始化
         
         Args:
-            config_path: 配置文件路径
+            config_path: 配置文件路径，如果为 None 则从 config.yaml 读取
         """
-        self.config_path = config_path or self.DEFAULT_CONFIG_PATH
+        if config_path:
+            self.config_path = config_path
+        else:
+            self.config_path = self._get_config_path_from_settings()
+        
         self._config = ReverseEngineConfig()
         self._lock = threading.RLock()
         
         self._ensure_config_dir()
         self._load_config()
+    
+    def _get_config_path_from_settings(self) -> str:
+        """从 settings.py 获取配置路径"""
+        try:
+            from modules.config.settings import get_config
+            config = get_config()
+            reverse_cfg = config.get('agent', {}).get('reverse', {})
+            return reverse_cfg.get('config_path', 'modules/data/reverse_config.json')
+        except Exception as e:
+            logger.warning(f"从 settings 获取配置路径失败，使用默认路径: {e}")
+            return 'modules/data/reverse_config.json'
     
     def _ensure_config_dir(self):
         """确保配置目录存在"""

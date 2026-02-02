@@ -16,9 +16,8 @@ class AlgoOrderService:
     """条件单服务
     
     管理反向交易的条件单创建、查询、撤销等操作
+    路径从 config.yaml 读取
     """
-    
-    STATE_FILE = 'agent/reverse_algo_orders.json'
     
     def __init__(self, rest_client, config_manager: ConfigManager):
         """初始化
@@ -31,6 +30,8 @@ class AlgoOrderService:
         self.config_manager = config_manager
         self._lock = threading.RLock()
         
+        self.state_file = self._get_state_file_path()
+        
         self.pending_orders: Dict[str, ReverseAlgoOrder] = {}
         self._dual_mode_checked = False
         self._symbol_leverage_set: set = set()
@@ -38,17 +39,28 @@ class AlgoOrderService:
         self._ensure_state_dir()
         self._load_state()
     
+    def _get_state_file_path(self) -> str:
+        """从 settings.py 获取状态文件路径"""
+        try:
+            from modules.config.settings import get_config
+            config = get_config()
+            reverse_cfg = config.get('agent', {}).get('reverse', {})
+            return reverse_cfg.get('algo_orders_path', 'modules/data/reverse_algo_orders.json')
+        except Exception as e:
+            logger.warning(f"从 settings 获取路径失败，使用默认路径: {e}")
+            return 'modules/data/reverse_algo_orders.json'
+    
     def _ensure_state_dir(self):
         """确保状态目录存在"""
-        state_dir = os.path.dirname(self.STATE_FILE)
+        state_dir = os.path.dirname(self.state_file)
         if state_dir and not os.path.exists(state_dir):
             os.makedirs(state_dir, exist_ok=True)
     
     def _load_state(self):
         """从文件加载状态"""
         try:
-            if os.path.exists(self.STATE_FILE):
-                with open(self.STATE_FILE, 'r', encoding='utf-8') as f:
+            if os.path.exists(self.state_file):
+                with open(self.state_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     for algo_id, order_data in data.get('pending_orders', {}).items():
                         self.pending_orders[algo_id] = ReverseAlgoOrder.from_dict(order_data)
@@ -66,7 +78,7 @@ class AlgoOrderService:
                 },
                 'updated_at': datetime.now().isoformat()
             }
-            with open(self.STATE_FILE, 'w', encoding='utf-8') as f:
+            with open(self.state_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"保存条件单状态失败: {e}")

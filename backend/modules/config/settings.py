@@ -73,10 +73,19 @@ class ConfigLoader:
             if not os.path.isabs(agent_cfg[key]):
                 agent_cfg[key] = os.path.join(backend_dir, agent_cfg[key])
         
-        optional_path_keys = ['workflow_trace_path', 'workflow_artifacts_dir']
+        optional_path_keys = ['workflow_trace_path', 'workflow_artifacts_dir', 
+                              'workflow_index_path', 'workflow_traces_dir']
         for key in optional_path_keys:
             if key in agent_cfg and not os.path.isabs(agent_cfg[key]):
                 agent_cfg[key] = os.path.join(backend_dir, agent_cfg[key])
+        
+        # 反向交易引擎路径配置（转换为绝对路径）
+        reverse_cfg = agent_cfg.get('reverse', {})
+        reverse_path_keys = ['config_path', 'algo_orders_path', 'trade_records_path', 'history_path']
+        for key in reverse_path_keys:
+            if key in reverse_cfg and not os.path.isabs(reverse_cfg[key]):
+                reverse_cfg[key] = os.path.join(backend_dir, reverse_cfg[key])
+        agent_cfg['reverse'] = reverse_cfg
         
         # 验证 simulator 配置存在（数值配置从 config.yaml 读取）
         if 'simulator' not in agent_cfg:
