@@ -115,15 +115,13 @@ def init_reverse_engine(config: Dict[str, Any]) -> Optional['ReverseEngine']:
         config: 配置字典
         
     Returns:
-        ReverseEngine 实例，如果未启用则返回 None
+        ReverseEngine 实例
     """
     global _reverse_engine
     with _reverse_engine_lock:
         if _reverse_engine is None:
-            reverse_cfg = config.get('agent', {}).get('reverse_engine', {})
-            if reverse_cfg.get('enabled', False):
-                from modules.agent.reverse_engine.engine import ReverseEngine
-                _reverse_engine = ReverseEngine(config)
+            from modules.agent.reverse_engine.engine import ReverseEngine
+            _reverse_engine = ReverseEngine(config)
         return _reverse_engine
 
 

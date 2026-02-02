@@ -143,14 +143,14 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
           </label>
           <input
             type="number"
-            min={10}
-            max={10000}
-            step={10}
+            min={1}
+            max={100000}
+            step={1}
             value={formData.fixed_margin_usdt}
             onChange={(e) => setFormData({ ...formData, fixed_margin_usdt: e.target.value })}
             className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
-          <p className="mt-1 text-xs text-neutral-500">Amount of margin per trade (10-10000)</p>
+          <p className="mt-1 text-xs text-neutral-500">Amount of margin per trade (1-100000)</p>
         </div>
 
         <div>

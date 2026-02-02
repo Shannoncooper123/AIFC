@@ -65,24 +65,21 @@ def _init_trading_engine():
 
 
 def _init_reverse_engine():
-    """初始化反向交易引擎（如果配置启用）"""
+    """初始化反向交易引擎"""
     cfg = get_config()
     logger = setup_logger()
     try:
         from modules.agent.engine import init_reverse_engine, start_reverse_engine
         
-        reverse_cfg = cfg.get('agent', {}).get('reverse_engine', {})
-        if not reverse_cfg.get('enabled', False):
-            logger.info("反向交易引擎未启用")
-            return None
-        
         reverse_engine = init_reverse_engine(cfg)
         if reverse_engine:
             start_reverse_engine()
+            cm = reverse_engine.config_manager
             logger.info("=" * 40)
-            logger.info("🔄 反向交易引擎已启动")
-            logger.info(f"   保证金: {reverse_cfg.get('fixed_margin_usdt', 50)}U")
-            logger.info(f"   杠杆: {reverse_cfg.get('fixed_leverage', 10)}x")
+            logger.info("🔄 反向交易引擎已初始化")
+            logger.info(f"   启用状态: {cm.enabled}")
+            logger.info(f"   保证金: {cm.fixed_margin_usdt}U")
+            logger.info(f"   杠杆: {cm.fixed_leverage}x")
             logger.info("=" * 40)
             return reverse_engine
         return None

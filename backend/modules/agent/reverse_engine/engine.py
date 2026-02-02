@@ -212,6 +212,7 @@ class ReverseEngine:
         """启动指定币种的 workflow 分析
         
         每根K线收盘时触发 workflow 分析，Agent 开仓后自动创建反向条件单。
+        启动 workflow 会自动启用反向交易引擎。
         
         Args:
             symbol: 交易对（如 "BTCUSDT"）
@@ -221,8 +222,8 @@ class ReverseEngine:
             是否成功启动
         """
         if not self.config_manager.enabled:
-            logger.warning(f"[反向] 引擎未启用，无法启动 {symbol} workflow")
-            return False
+            logger.info(f"[反向] 自动启用反向交易引擎以启动 {symbol} workflow")
+            self.config_manager.update(enabled=True)
         
         return self.workflow_manager.start_symbol(symbol, interval)
     
