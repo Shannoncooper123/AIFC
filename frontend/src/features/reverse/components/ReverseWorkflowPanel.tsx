@@ -25,7 +25,7 @@ interface ReverseWorkflowPanelProps {
 
 export function ReverseWorkflowPanel({ onWorkflowChange }: ReverseWorkflowPanelProps) {
   const [symbol, setSymbol] = useState('BTCUSDT');
-  const [interval, setInterval] = useState('15m');
+  const [selectedInterval, setSelectedInterval] = useState('15m');
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [runningSymbols, setRunningSymbols] = useState<string[]>([]);
@@ -66,7 +66,7 @@ export function ReverseWorkflowPanel({ onWorkflowChange }: ReverseWorkflowPanelP
     try {
       setStarting(true);
       setError(null);
-      await startSymbolWorkflow(symbol.toUpperCase(), interval);
+      await startSymbolWorkflow(symbol.toUpperCase(), selectedInterval);
       await fetchStatus();
       onWorkflowChange?.();
     } catch (err: unknown) {
@@ -122,8 +122,8 @@ export function ReverseWorkflowPanel({ onWorkflowChange }: ReverseWorkflowPanelP
             K线周期
           </label>
           <select
-            value={interval}
-            onChange={(e) => setInterval(e.target.value)}
+            value={selectedInterval}
+            onChange={(e) => setSelectedInterval(e.target.value)}
             className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           >
             {INTERVALS.map((opt) => (
