@@ -2,6 +2,7 @@
 
 使用 Pillow 渲染器实现高并发图表生成，线程安全，无需子进程隔离。
 """
+import time
 from typing import Dict, Any, List
 from langchain.tools import tool
 
@@ -36,6 +37,7 @@ def get_kline_image_tool(
         return [{"type": "text", "text": f"TOOL_RUNTIME_ERROR: {msg}"}]
     
     try:
+        t_start = time.perf_counter()
         limit = 100
         
         logger.info(f"get_kline_image_tool 被调用 - symbol={symbol}, interval={interval}")
@@ -55,14 +57,21 @@ def get_kline_image_tool(
         
         fetch_limit = limit + 100
         
-        logger.info(f"获取 {symbol} {interval} K线数据，数量={fetch_limit} (显示{limit})")
+        t_fetch_start = time.perf_counter()
         klines, error = fetch_klines(symbol, interval, fetch_limit)
+        t_fetch_end = time.perf_counter()
+        fetch_ms = (t_fetch_end - t_fetch_start) * 1000
         
         if error or not klines:
             return _make_runtime_error(error or f"未获取到 {symbol} {interval} 的K线数据")
         
-        logger.info(f"生成 {symbol} {interval} K线图（含技术指标）- 使用 Pillow 渲染")
+        t_render_start = time.perf_counter()
         image_base64 = render_kline_chart_pillow(klines, symbol, interval, limit)
+        t_render_end = time.perf_counter()
+        render_ms = (t_render_end - t_render_start) * 1000
+        
+        total_ms = (t_render_end - t_start) * 1000
+        logger.info(f"[PERF] {symbol} {interval}: fetch={fetch_ms:.1f}ms, render={render_ms:.1f}ms, total={total_ms:.1f}ms")
         
         return [
             {

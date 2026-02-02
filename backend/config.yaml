@@ -116,6 +116,17 @@ agent:
     max_leverage: 10            # 最大杠杆倍数
     ws_interval: "1m"           # WebSocket K线订阅间隔
   
+  # 反向交易引擎配置
+  reverse_engine:
+    enabled: True                # 是否启用反向交易引擎
+    fixed_margin_usdt: 5         # 固定保证金（USDT），范围 10-10000
+    fixed_leverage: 30            # 固定杠杆倍数，范围 1-125
+    expiration_days: 10           # 条件单过期天数，范围 1-30
+    max_positions: 100             # 最大同时持仓数量，范围 1-100
+    state_file: "agent/reverse_algo_orders.json"    # 条件单状态文件
+    positions_file: "agent/reverse_positions.json"  # 持仓状态文件
+    history_file: "agent/reverse_history.jsonl"     # 交易历史文件
+  
   # 决策验证配置（基于 logprobs 的置信度检查）
   decision_verification:
     enabled: true               # 是否启用决策验证

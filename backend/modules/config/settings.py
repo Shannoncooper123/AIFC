@@ -221,6 +221,28 @@ class ConfigLoader:
         if agent['default_interval_min'] < 1:
             raise ValueError("默认唤醒间隔必须 >= 1 分钟")
         
+        # 验证 reverse_engine 配置（可选）
+        reverse_engine = agent.get('reverse_engine')
+        if reverse_engine:
+            if not isinstance(reverse_engine.get('enabled'), bool):
+                raise ValueError("reverse_engine.enabled 必须是布尔值")
+            
+            margin = reverse_engine.get('fixed_margin_usdt', 50)
+            if margin < 10 or margin > 10000:
+                raise ValueError("reverse_engine.fixed_margin_usdt 必须在 10-10000 之间")
+            
+            leverage = reverse_engine.get('fixed_leverage', 10)
+            if leverage < 1 or leverage > 125:
+                raise ValueError("reverse_engine.fixed_leverage 必须在 1-125 之间")
+            
+            exp_days = reverse_engine.get('expiration_days', 10)
+            if exp_days < 1 or exp_days > 30:
+                raise ValueError("reverse_engine.expiration_days 必须在 1-30 之间")
+            
+            max_pos = reverse_engine.get('max_positions', 10)
+            if max_pos < 1 or max_pos > 100:
+                raise ValueError("reverse_engine.max_positions 必须在 1-100 之间")
+        
         # 验证 decision_verification 配置（可选，但如果存在需要验证格式）
         verification = agent.get('decision_verification')
         if verification:

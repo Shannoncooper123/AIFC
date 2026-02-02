@@ -210,6 +210,24 @@ def create_limit_order_tool(
         # 发送邮件
         _send_limit_order_email(symbol, side_lower, margin_usdt, leverage, limit_price, tp_price, sl_price)
         
+        # 触发反向交易引擎（如果启用）
+        try:
+            from modules.agent.engine import get_reverse_engine
+            reverse_engine = get_reverse_engine()
+            if reverse_engine and reverse_engine.is_enabled():
+                order_id = res.get('id') if isinstance(res, dict) else None
+                reverse_engine.on_agent_limit_order(
+                    symbol=symbol,
+                    side=side_lower,
+                    limit_price=limit_price,
+                    tp_price=tp_price,
+                    sl_price=sl_price,
+                    agent_order_id=order_id
+                )
+                logger.info(f"[反向] 已触发反向交易引擎: {symbol} {side_lower}")
+        except Exception as e:
+            logger.warning(f"反向交易引擎处理失败（不影响主订单）: {e}")
+        
         return _format_limit_order_result(res, margin_usdt, leverage)
         
     except Exception as e:

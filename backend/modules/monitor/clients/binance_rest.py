@@ -138,6 +138,33 @@ class BinanceRestClient:
         response.raise_for_status()
         return response.json()
     
+    @retry_on_exception(max_retries=3, delay=0.5, exceptions=(requests.RequestException,))
+    def get_mark_price(self, symbol: Optional[str] = None) -> Any:
+        """获取标记价格和资金费率
+        
+        Args:
+            symbol: 交易对符号（None表示获取所有）
+            
+        Returns:
+            标记价格数据，包含：
+            - symbol: 交易对
+            - markPrice: 标记价格
+            - indexPrice: 指数价格
+            - estimatedSettlePrice: 预估结算价
+            - lastFundingRate: 最近资金费率
+            - nextFundingTime: 下次资金费时间
+            - interestRate: 利率
+            - time: 更新时间
+        """
+        url = f"{self.base_url}/fapi/v1/premiumIndex"
+        params = {}
+        if symbol:
+            params['symbol'] = symbol
+        
+        response = self.session.get(url, params=params, timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+    
     def get_all_usdt_perpetual_symbols(self, min_volume_24h: float = 0) -> List[str]:
         """获取所有USDT永续合约交易对
         
@@ -247,7 +274,8 @@ class BinanceRestClient:
                     quantity: Optional[float] = None, price: Optional[float] = None,
                     stop_price: Optional[float] = None, close_position: bool = False,
                     reduce_only: bool = False, time_in_force: str = 'GTC',
-                    working_type: str = 'MARK_PRICE') -> Dict[str, Any]:
+                    working_type: str = 'MARK_PRICE',
+                    position_side: str = 'BOTH') -> Dict[str, Any]:
         """下单
         
         Args:
@@ -261,6 +289,7 @@ class BinanceRestClient:
             reduce_only: 只减仓
             time_in_force: 有效方式（GTC/IOC/FOK）
             working_type: 条件单触发价格类型（MARK_PRICE/CONTRACT_PRICE）
+            position_side: 持仓方向（BOTH/LONG/SHORT），双向持仓模式下需指定
             
         Returns:
             订单响应
@@ -272,6 +301,7 @@ class BinanceRestClient:
             'symbol': symbol,
             'side': side,
             'type': order_type,
+            'positionSide': position_side,
             'timestamp': int(time.time() * 1000)
         }
         
@@ -518,6 +548,35 @@ class BinanceRestClient:
         response.raise_for_status()
         return response.json()
     
+    @retry_on_exception(max_retries=3, delay=1.0, exceptions=(requests.RequestException,))
+    def change_position_mode(self, dual_side_position: bool) -> Dict[str, Any]:
+        """更改持仓模式
+        
+        变换用户在所有 symbol 合约上的持仓模式：双向持仓或单向持仓
+        
+        Args:
+            dual_side_position: True 为双向持仓模式，False 为单向持仓模式
+            
+        Returns:
+            {'code': 200, 'msg': 'success'}
+            
+        Note:
+            - 只有在没有持仓和挂单的情况下才能更改持仓模式
+            - 参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/Change-Position-Mode
+        """
+        url = f"{self.base_url}/fapi/v1/positionSide/dual"
+        
+        params = {
+            'dualSidePosition': 'true' if dual_side_position else 'false',
+            'timestamp': int(time.time() * 1000)
+        }
+        
+        params['signature'] = self._sign_request(params)
+        
+        response = self.session.post(url, params=params, headers=self._get_headers(), timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+    
     @retry_on_exception(max_retries=5, delay=1.0, exceptions=(requests.RequestException,))
     def create_listen_key(self) -> Dict[str, Any]:
         """创建用户数据流 listenKey
@@ -640,4 +699,158 @@ class BinanceRestClient:
             return response.status_code == 200
         except Exception:
             return False
+    
+    @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
+    def place_algo_order(self, symbol: str, side: str, algo_type: str,
+                         trigger_price: float, quantity: float,
+                         order_type: str = 'MARKET',
+                         price: Optional[float] = None,
+                         time_in_force: str = 'GTC',
+                         working_type: str = 'MARK_PRICE',
+                         good_till_date: Optional[int] = None,
+                         position_side: str = 'BOTH') -> Dict[str, Any]:
+        """创建条件单 (Algo Order)
+        
+        Args:
+            symbol: 交易对
+            side: BUY/SELL
+            algo_type: 条件单类型（CONDITIONAL）
+            trigger_price: 触发价格
+            quantity: 数量
+            order_type: 订单类型（MARKET/LIMIT）
+            price: 限价单价格（仅 LIMIT 类型需要）
+            time_in_force: 有效方式（GTC/IOC/FOK）
+            working_type: 触发价格类型（MARK_PRICE/CONTRACT_PRICE）
+            good_till_date: 过期时间戳（毫秒），超过此时间自动取消
+            position_side: 持仓方向（BOTH/LONG/SHORT）
+            
+        Returns:
+            条件单响应
+            
+        Note:
+            参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order
+        """
+        url = f"{self.base_url}/fapi/v1/algo/order"
+        
+        params = {
+            'symbol': symbol,
+            'side': side,
+            'algoType': algo_type,
+            'triggerPrice': trigger_price,
+            'quantity': quantity,
+            'type': order_type,
+            'workingType': working_type,
+            'positionSide': position_side,
+            'timestamp': int(time.time() * 1000)
+        }
+        
+        if order_type == 'LIMIT' and price is not None:
+            params['price'] = price
+            params['timeInForce'] = time_in_force
+        
+        if good_till_date is not None:
+            params['goodTillDate'] = good_till_date
+        
+        params['signature'] = self._sign_request(params)
+        
+        order_timeout = max(self.timeout, 20)
+        response = self.session.post(url, params=params, headers=self._get_headers(), timeout=order_timeout)
+        response.raise_for_status()
+        return response.json()
+    
+    @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
+    def cancel_algo_order(self, algo_id: int) -> Dict[str, Any]:
+        """撤销条件单
+        
+        Args:
+            algo_id: 条件单ID
+            
+        Returns:
+            撤销响应
+            
+        Note:
+            参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/Cancel-Algo-Order
+        """
+        url = f"{self.base_url}/fapi/v1/algo/order"
+        
+        params = {
+            'algoId': algo_id,
+            'timestamp': int(time.time() * 1000)
+        }
+        
+        params['signature'] = self._sign_request(params)
+        
+        order_timeout = max(self.timeout, 15)
+        response = self.session.delete(url, params=params, headers=self._get_headers(), timeout=order_timeout)
+        response.raise_for_status()
+        return response.json()
+    
+    @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
+    def get_algo_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """查询当前条件单
+        
+        Args:
+            symbol: 交易对（可选）
+            
+        Returns:
+            条件单列表
+            
+        Note:
+            参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/Query-Current-Algo-Open-Orders
+        """
+        url = f"{self.base_url}/fapi/v1/algo/openOrders"
+        
+        params = {
+            'timestamp': int(time.time() * 1000)
+        }
+        
+        if symbol:
+            params['symbol'] = symbol
+        
+        params['signature'] = self._sign_request(params)
+        
+        response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)
+        response.raise_for_status()
+        result = response.json()
+        return result.get('orders', [])
+    
+    @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
+    def get_algo_order_history(self, symbol: Optional[str] = None,
+                                start_time: Optional[int] = None,
+                                end_time: Optional[int] = None,
+                                limit: int = 100) -> List[Dict[str, Any]]:
+        """查询条件单历史
+        
+        Args:
+            symbol: 交易对（可选）
+            start_time: 起始时间戳（毫秒）
+            end_time: 结束时间戳（毫秒）
+            limit: 返回数量限制（默认100，最大1000）
+            
+        Returns:
+            条件单历史列表
+            
+        Note:
+            参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/Query-Historical-Algo-Orders
+        """
+        url = f"{self.base_url}/fapi/v1/algo/historyOrders"
+        
+        params = {
+            'limit': min(limit, 1000),
+            'timestamp': int(time.time() * 1000)
+        }
+        
+        if symbol:
+            params['symbol'] = symbol
+        if start_time is not None:
+            params['startTime'] = start_time
+        if end_time is not None:
+            params['endTime'] = end_time
+        
+        params['signature'] = self._sign_request(params)
+        
+        response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)
+        response.raise_for_status()
+        result = response.json()
+        return result.get('orders', [])
 

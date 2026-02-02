@@ -63,6 +63,33 @@ def _init_trading_engine():
         logger.error(f"交易引擎启动失败: {e}", exc_info=True)
         return None
 
+
+def _init_reverse_engine():
+    """初始化反向交易引擎（如果配置启用）"""
+    cfg = get_config()
+    logger = setup_logger()
+    try:
+        from modules.agent.engine import init_reverse_engine, start_reverse_engine
+        
+        reverse_cfg = cfg.get('agent', {}).get('reverse_engine', {})
+        if not reverse_cfg.get('enabled', False):
+            logger.info("反向交易引擎未启用")
+            return None
+        
+        reverse_engine = init_reverse_engine(cfg)
+        if reverse_engine:
+            start_reverse_engine()
+            logger.info("=" * 40)
+            logger.info("🔄 反向交易引擎已启动")
+            logger.info(f"   保证金: {reverse_cfg.get('fixed_margin_usdt', 50)}U")
+            logger.info(f"   杠杆: {reverse_cfg.get('fixed_leverage', 10)}x")
+            logger.info("=" * 40)
+            return reverse_engine
+        return None
+    except Exception as e:
+        logger.error(f"反向交易引擎启动失败: {e}", exc_info=True)
+        return None
+
 def _wrap_config(latest_alert: dict | None, base_cfg: dict, workflow_run_id: str) -> RunnableConfig:
     """
     统一将配置包装为 RunnableConfig。
@@ -109,6 +136,8 @@ def main():
     if not engine:
         logger.error("交易引擎启动失败，退出程序")
         return
+
+    reverse_engine = _init_reverse_engine()
 
     try:
         graph = create_workflow(cfg)
@@ -178,6 +207,11 @@ def main():
         if watcher:
             watcher.stop()
         
+        if reverse_engine:
+            from modules.agent.engine import stop_reverse_engine
+            stop_reverse_engine()
+            logger.info("反向交易引擎已停止")
+        
         engine.stop()
         
         logger.info("优雅退出完成")
@@ -193,6 +227,10 @@ def run_workflow_service(is_stop_requested, add_log):
     if not engine:
         raise RuntimeError("交易引擎启动失败")
     add_log(f"交易引擎已启动: {cfg.get('trading', {}).get('mode', 'simulator')}")
+
+    reverse_engine = _init_reverse_engine()
+    if reverse_engine:
+        add_log("反向交易引擎已启动")
 
     try:
         graph = create_workflow(cfg)
@@ -254,6 +292,9 @@ def run_workflow_service(is_stop_requested, add_log):
     finally:
         if watcher:
             watcher.stop()
+        if reverse_engine:
+            from modules.agent.engine import stop_reverse_engine
+            stop_reverse_engine()
         engine.stop()
         add_log("Workflow 服务已停止")
 

@@ -7,6 +7,7 @@ from typing import Optional, TYPE_CHECKING, Any, Dict, Protocol, List
 if TYPE_CHECKING:
     from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine
     from modules.agent.live_engine.engine import BinanceLiveEngine
+    from modules.agent.reverse_engine.engine import ReverseEngine
 
 
 class EngineProtocol(Protocol):
@@ -101,6 +102,60 @@ def is_engine_initialized() -> bool:
         return True
     with _engine_lock:
         return _engine is not None
+
+
+_reverse_engine: Optional['ReverseEngine'] = None
+_reverse_engine_lock = threading.RLock()
+
+
+def init_reverse_engine(config: Dict[str, Any]) -> Optional['ReverseEngine']:
+    """初始化反向交易引擎
+    
+    Args:
+        config: 配置字典
+        
+    Returns:
+        ReverseEngine 实例，如果未启用则返回 None
+    """
+    global _reverse_engine
+    with _reverse_engine_lock:
+        if _reverse_engine is None:
+            reverse_cfg = config.get('agent', {}).get('reverse_engine', {})
+            if reverse_cfg.get('enabled', False):
+                from modules.agent.reverse_engine.engine import ReverseEngine
+                _reverse_engine = ReverseEngine(config)
+        return _reverse_engine
+
+
+def get_reverse_engine() -> Optional['ReverseEngine']:
+    """获取反向交易引擎实例
+    
+    Returns:
+        ReverseEngine 实例，如果未初始化则返回 None
+    """
+    with _reverse_engine_lock:
+        return _reverse_engine
+
+
+def start_reverse_engine() -> bool:
+    """启动反向交易引擎
+    
+    Returns:
+        是否成功启动
+    """
+    with _reverse_engine_lock:
+        if _reverse_engine is not None:
+            _reverse_engine.start()
+            return True
+        return False
+
+
+def stop_reverse_engine() -> None:
+    """停止反向交易引擎"""
+    global _reverse_engine
+    with _reverse_engine_lock:
+        if _reverse_engine is not None:
+            _reverse_engine.stop()
 
 
 def ensure_engine(config: Dict[str, Any]) -> EngineProtocol:

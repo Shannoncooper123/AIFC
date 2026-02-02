@@ -83,3 +83,9 @@ logs/
 /backend/modules/data/*.jsonl
 *.pid
 analysis/all_positions.jsonl
+
+# 反向交易引擎运行时配置（用户通过前端修改的配置）
+/backend/agent/reverse_config.json
+/backend/agent/reverse_algo_orders.json
+/backend/agent/reverse_positions.json
+/backend/agent/reverse_history.jsonl
