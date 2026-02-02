@@ -200,13 +200,24 @@ class AlgoOrderService:
                            f"margin={fixed_margin}U leverage={fixed_leverage}x "
                            f"expires_in={expiration_days}days")
                 
+                # 根据方向选择正确的条件单类型
+                # STOP_MARKET: 买入时价格≥trigger触发，卖出时价格≤trigger触发
+                # TAKE_PROFIT_MARKET: 买入时价格≤trigger触发，卖出时价格≥trigger触发
+                # 
+                # 反向交易逻辑：
+                # - Agent做多 → 反向做空 → 需要价格上涨到trigger时做空 → TAKE_PROFIT_MARKET (SELL)
+                # - Agent做空 → 反向做多 → 需要价格下跌到trigger时做多 → TAKE_PROFIT_MARKET (BUY)
+                order_type = 'TAKE_PROFIT_MARKET'
+                
+                logger.info(f"[反向] 条件单类型: {order_type} (触发后{side})")
+                
                 result = self.rest_client.place_algo_order(
                     symbol=symbol,
                     side=side,
                     algo_type='CONDITIONAL',
                     trigger_price=trigger_price_formatted,
                     quantity=quantity,
-                    order_type='STOP_MARKET',
+                    order_type=order_type,
                     working_type='CONTRACT_PRICE',
                     good_till_date=expiration_ms,
                     position_side=position_side

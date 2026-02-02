@@ -500,6 +500,8 @@ class BinanceRestClient:
         params['signature'] = self._sign_request(params)
         
         response = self.session.post(url, params=params, headers=self._get_headers(), timeout=self.timeout)
+        if not response.ok:
+            logger.error(f"Algo Order API 错误: {response.status_code} - {response.text}")
         response.raise_for_status()
         return response.json()
     
@@ -755,6 +757,8 @@ class BinanceRestClient:
         
         order_timeout = max(self.timeout, 20)
         response = self.session.post(url, params=params, headers=self._get_headers(), timeout=order_timeout)
+        if not response.ok:
+            logger.error(f"[Algo Order] API 错误: {response.status_code} - {response.text}")
         response.raise_for_status()
         return response.json()
     

@@ -203,10 +203,13 @@ class ReverseEngine:
             tp_price: Agent 止盈价（作为我们的止损价）
             sl_price: Agent 止损价（作为我们的止盈价）
             agent_order_id: Agent 订单ID
+            
+        Returns:
+            创建的条件单对象，失败返回 None
         """
         if not self.config_manager.enabled:
             logger.debug(f"[反向] 引擎未启用，跳过处理 {symbol}")
-            return
+            return None
         
         max_positions = self.config_manager.max_positions
         current_positions = len(self.position_service.positions)
@@ -214,7 +217,7 @@ class ReverseEngine:
         
         if current_positions + current_pending >= max_positions:
             logger.warning(f"[反向] 达到最大持仓/挂单数限制 ({max_positions})，跳过 {symbol}")
-            return
+            return None
         
         reverse_side = 'SELL' if side == 'long' else 'BUY'
         
@@ -239,6 +242,8 @@ class ReverseEngine:
             logger.info(f"[反向] 条件单创建成功: {symbol} algoId={order.algo_id}")
         else:
             logger.error(f"[反向] 条件单创建失败: {symbol}")
+        
+        return order
     
     def start_symbol_workflow(self, symbol: str, interval: str = "15m") -> bool:
         """启动指定币种的 workflow 分析

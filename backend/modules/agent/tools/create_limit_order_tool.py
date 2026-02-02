@@ -190,45 +190,72 @@ def create_limit_order_tool(
         except Exception as e:
             logger.warning(f"保证金上限校验时出错（继续执行）: {e}")
 
-        # 调用引擎创建限价单
-        logger.info(f"create_limit_order: {symbol} {side_lower} @ {limit_price}, margin={margin_usdt}")
+        # 检查是否启用反向交易模式
+        from modules.agent.engine import get_reverse_engine
+        reverse_engine = get_reverse_engine()
+        is_reverse_mode = reverse_engine and reverse_engine.is_enabled()
         
-        res = eng.create_limit_order(
-            symbol=symbol,
-            side=side_lower,
-            limit_price=limit_price,
-            margin_usdt=margin_usdt,
-            leverage=leverage,
-            tp_price=tp_price,
-            sl_price=sl_price
-        )
-        
-        if isinstance(res, dict) and 'error' in res:
-            logger.error(f"create_limit_order failed: {res['error']}")
-            return res
+        if is_reverse_mode:
+            # 反向模式：只创建反向条件单，不创建正向限价单
+            logger.info(f"[反向模式] 跳过正向限价单，直接创建反向条件单: {symbol} {side_lower} @ {limit_price}")
             
-        # 发送邮件
-        _send_limit_order_email(symbol, side_lower, margin_usdt, leverage, limit_price, tp_price, sl_price)
-        
-        # 触发反向交易引擎（如果启用）
-        try:
-            from modules.agent.engine import get_reverse_engine
-            reverse_engine = get_reverse_engine()
-            if reverse_engine and reverse_engine.is_enabled():
-                order_id = res.get('id') if isinstance(res, dict) else None
-                reverse_engine.on_agent_limit_order(
+            try:
+                order = reverse_engine.on_agent_limit_order(
                     symbol=symbol,
                     side=side_lower,
                     limit_price=limit_price,
                     tp_price=tp_price,
                     sl_price=sl_price,
-                    agent_order_id=order_id
+                    agent_order_id=None
                 )
-                logger.info(f"[反向] 已触发反向交易引擎: {symbol} {side_lower}")
-        except Exception as e:
-            logger.warning(f"反向交易引擎处理失败（不影响主订单）: {e}")
+                
+                if order:
+                    logger.info(f"[反向模式] 反向条件单创建成功: {symbol} algoId={order.algo_id}")
+                    
+                    # 发送邮件通知
+                    _send_limit_order_email(symbol, side_lower, margin_usdt, leverage, limit_price, tp_price, sl_price)
+                    
+                    # 返回反向条件单的结果
+                    reverse_side = 'short' if side_lower == 'long' else 'long'
+                    reverse_side_cn = '做空' if reverse_side == 'short' else '做多'
+                    return f"""✅ 反向条件单创建成功
+
+【{symbol}】反向{reverse_side_cn} (Conditional) | {leverage}x杠杆
+  条件单ID: {order.algo_id}
+  触发价格: ${limit_price:.6g}
+  止盈: ${order.tp_price:.6g} (Agent止损位)
+  止损: ${order.sl_price:.6g} (Agent止盈位)
+  状态: 等待触发"""
+                else:
+                    logger.error(f"[反向模式] 反向条件单创建失败: {symbol}")
+                    return {"error": "TOOL_RUNTIME_ERROR: 反向条件单创建失败"}
+                    
+            except Exception as e:
+                logger.error(f"[反向模式] 创建反向条件单异常: {e}", exc_info=True)
+                return {"error": f"TOOL_RUNTIME_ERROR: {str(e)}"}
         
-        return _format_limit_order_result(res, margin_usdt, leverage)
+        else:
+            # 正常模式：创建正向限价单
+            logger.info(f"create_limit_order: {symbol} {side_lower} @ {limit_price}, margin={margin_usdt}")
+            
+            res = eng.create_limit_order(
+                symbol=symbol,
+                side=side_lower,
+                limit_price=limit_price,
+                margin_usdt=margin_usdt,
+                leverage=leverage,
+                tp_price=tp_price,
+                sl_price=sl_price
+            )
+            
+            if isinstance(res, dict) and 'error' in res:
+                logger.error(f"create_limit_order failed: {res['error']}")
+                return res
+                
+            # 发送邮件
+            _send_limit_order_email(symbol, side_lower, margin_usdt, leverage, limit_price, tp_price, sl_price)
+            
+            return _format_limit_order_result(res, margin_usdt, leverage)
         
     except Exception as e:
         logger.error(f"create_limit_order_tool exception: {e}", exc_info=True)
