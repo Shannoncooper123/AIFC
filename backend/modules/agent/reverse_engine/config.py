@@ -41,25 +41,20 @@ class ReverseEngineConfig:
 class ConfigManager:
     """配置管理器
     
-    配置优先级：
-    1. 运行时 JSON 配置文件（用户通过前端修改的配置）
-    2. config.yaml 中的 agent.reverse_engine 配置
-    3. 默认值
+    配置完全由前端动态管理，存储在 JSON 文件中。
     """
     
     DEFAULT_CONFIG_PATH = 'agent/reverse_config.json'
     
-    def __init__(self, config_path: Optional[str] = None, app_config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config_path: Optional[str] = None):
         """初始化
         
         Args:
             config_path: 配置文件路径
-            app_config: 应用配置（从 config.yaml 加载的配置）
         """
         self.config_path = config_path or self.DEFAULT_CONFIG_PATH
         self._config = ReverseEngineConfig()
         self._lock = threading.RLock()
-        self._app_config = app_config
         
         self._ensure_config_dir()
         self._load_config()
@@ -73,30 +68,17 @@ class ConfigManager:
     def _load_config(self):
         """从文件加载配置
         
-        优先级：
-        1. 运行时 JSON 配置文件（用户通过前端修改的配置）
-        2. config.yaml 中的 agent.reverse_engine 配置
-        3. 默认值
+        配置完全由前端动态管理，存储在 JSON 文件中。
+        如果文件不存在，使用默认值并保存。
         """
         try:
             if os.path.exists(self.config_path):
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self._config = ReverseEngineConfig.from_dict(data)
-                    logger.info(f"反向交易配置已从 JSON 加载: enabled={self._config.enabled}, "
+                    logger.info(f"反向交易配置已加载: enabled={self._config.enabled}, "
                                f"margin={self._config.fixed_margin_usdt}U, "
                                f"leverage={self._config.fixed_leverage}x")
-            elif self._app_config:
-                reverse_cfg = self._app_config.get('agent', {}).get('reverse_engine', {})
-                if reverse_cfg:
-                    self._config = ReverseEngineConfig.from_dict(reverse_cfg)
-                    logger.info(f"反向交易配置已从 config.yaml 加载: enabled={self._config.enabled}, "
-                               f"margin={self._config.fixed_margin_usdt}U, "
-                               f"leverage={self._config.fixed_leverage}x")
-                    self._save_config()
-                else:
-                    logger.info("config.yaml 中无反向交易配置，使用默认配置")
-                    self._save_config()
             else:
                 logger.info("反向交易配置文件不存在，使用默认配置")
                 self._save_config()

@@ -44,7 +44,7 @@ class ReverseEngine:
         
         self.rest_client = BinanceRestClient(config)
         
-        self.config_manager = ConfigManager(app_config=config)
+        self.config_manager = ConfigManager()
         
         self.algo_order_service = AlgoOrderService(self.rest_client, self.config_manager)
         self.position_service = ReversePositionService(self.rest_client)
