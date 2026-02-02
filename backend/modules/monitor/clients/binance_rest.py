@@ -865,4 +865,137 @@ class BinanceRestClient:
         response.raise_for_status()
         result = response.json()
         return result.get('orders', [])
+    
+    def place_tp_sl_algo_orders(self, symbol: str, position_side: str, quantity: float,
+                                 tp_price: float, sl_price: float,
+                                 working_type: str = 'MARK_PRICE') -> Dict[str, Any]:
+        """下止盈止损条件单
+        
+        为已有持仓下止盈和止损条件单。
+        
+        Args:
+            symbol: 交易对
+            position_side: 持仓方向 (LONG/SHORT)
+            quantity: 平仓数量
+            tp_price: 止盈价格
+            sl_price: 止损价格
+            working_type: 触发价格类型 (MARK_PRICE/CONTRACT_PRICE)
+            
+        Returns:
+            {
+                'tp_algo_id': str,  # 止盈条件单ID
+                'sl_algo_id': str,  # 止损条件单ID
+                'success': bool
+            }
+        """
+        close_side = 'SELL' if position_side == 'LONG' else 'BUY'
+        
+        result = {
+            'tp_algo_id': None,
+            'sl_algo_id': None,
+            'success': False
+        }
+        
+        try:
+            tp_result = self._place_single_tp_sl_order(
+                symbol=symbol,
+                side=close_side,
+                position_side=position_side,
+                order_type='TAKE_PROFIT_MARKET',
+                trigger_price=tp_price,
+                quantity=quantity,
+                working_type=working_type
+            )
+            if tp_result and tp_result.get('algoId'):
+                result['tp_algo_id'] = str(tp_result['algoId'])
+                logger.info(f"[TP/SL] ✅ 止盈单创建成功: {symbol} algoId={result['tp_algo_id']} price={tp_price}")
+        except Exception as e:
+            logger.error(f"[TP/SL] ❌ 止盈单创建失败: {symbol} price={tp_price} error={e}")
+        
+        try:
+            sl_result = self._place_single_tp_sl_order(
+                symbol=symbol,
+                side=close_side,
+                position_side=position_side,
+                order_type='STOP_MARKET',
+                trigger_price=sl_price,
+                quantity=quantity,
+                working_type=working_type
+            )
+            if sl_result and sl_result.get('algoId'):
+                result['sl_algo_id'] = str(sl_result['algoId'])
+                logger.info(f"[TP/SL] ✅ 止损单创建成功: {symbol} algoId={result['sl_algo_id']} price={sl_price}")
+        except Exception as e:
+            logger.error(f"[TP/SL] ❌ 止损单创建失败: {symbol} price={sl_price} error={e}")
+        
+        result['success'] = result['tp_algo_id'] is not None and result['sl_algo_id'] is not None
+        return result
+    
+    def _place_single_tp_sl_order(self, symbol: str, side: str, position_side: str,
+                                   order_type: str, trigger_price: float, quantity: float,
+                                   working_type: str = 'MARK_PRICE') -> Dict[str, Any]:
+        """下单个止盈/止损条件单
+        
+        Args:
+            symbol: 交易对
+            side: 买卖方向 (BUY/SELL)
+            position_side: 持仓方向 (LONG/SHORT)
+            order_type: 订单类型 (TAKE_PROFIT_MARKET/STOP_MARKET)
+            trigger_price: 触发价格
+            quantity: 数量
+            working_type: 触发价格类型
+            
+        Returns:
+            API 响应
+        """
+        url = f"{self.base_url}/fapi/v1/algoOrder"
+        
+        params = {
+            'algoType': 'CONDITIONAL',
+            'symbol': symbol,
+            'side': side,
+            'positionSide': position_side,
+            'type': order_type,
+            'quantity': str(quantity),
+            'triggerPrice': str(trigger_price),
+            'workingType': working_type,
+            'reduceOnly': 'true',
+            'timestamp': int(time.time() * 1000)
+        }
+        
+        params['signature'] = self._sign_request(params)
+        
+        response = self.session.post(url, params=params, headers=self._get_headers(), timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+    
+    def cancel_algo_order(self, symbol: str, algo_id: str) -> bool:
+        """取消条件单
+        
+        Args:
+            symbol: 交易对
+            algo_id: 条件单ID
+            
+        Returns:
+            是否成功
+        """
+        url = f"{self.base_url}/fapi/v1/algoOrder"
+        
+        params = {
+            'symbol': symbol,
+            'algoId': algo_id,
+            'timestamp': int(time.time() * 1000)
+        }
+        
+        params['signature'] = self._sign_request(params)
+        
+        try:
+            response = self.session.delete(url, params=params, headers=self._get_headers(), timeout=self.timeout)
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"[Algo Order] ✅ 取消条件单成功: {symbol} algoId={algo_id}")
+            return True
+        except Exception as e:
+            logger.error(f"[Algo Order] ❌ 取消条件单失败: {symbol} algoId={algo_id} error={e}")
+            return False
 

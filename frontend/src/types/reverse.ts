@@ -11,13 +11,16 @@ export interface ReverseConfig {
 }
 
 export interface ReversePosition {
+  id: string;
   symbol: string;
-  side: 'LONG' | 'SHORT';
+  side: 'LONG' | 'SHORT' | string;
   size: number;
   entry_price: number;
   mark_price?: number;
   take_profit?: number;
   stop_loss?: number;
+  tp_algo_id?: string;
+  sl_algo_id?: string;
   unrealized_pnl?: number;
   roe?: number;
   leverage: number;

@@ -3,12 +3,12 @@
 当 Agent 下限价单时，自动创建反向条件单进行对冲交易。
 使用固定保证金和杠杆，与 Agent 的参数无关。
 
-架构说明（v2 - 自主管理 TP/SL）：
+架构说明（v3 - Binance 条件单管理 TP/SL）：
 - 强制复用 live_engine 的 REST 客户端（不创建独立连接）
 - 复用 live_engine 的 WebSocket 连接
-- 独立管理：条件单状态、开仓记录、TP/SL 监控
-- 通过 Mark Price WebSocket 监控价格，自行判断 TP/SL 触发
-- 每个开仓记录有独立的 TP/SL，不依赖 Binance 持仓合并
+- 独立管理：条件单状态、开仓记录
+- 使用 Binance 的 TAKE_PROFIT_MARKET 和 STOP_MARKET 条件单管理 TP/SL
+- 不再需要本地价格监控，更加可靠
 """
 
 import threading
@@ -23,7 +23,6 @@ from .services.tpsl_monitor import TPSLMonitorService
 from .services.history_writer import ReverseHistoryWriter
 from .events.order_handler import ReverseOrderHandler
 from .workflow_runner import ReverseWorkflowManager
-from modules.monitor.clients.mark_price_ws import MarkPriceWSClient
 
 if TYPE_CHECKING:
     from modules.agent.live_engine.engine import BinanceLiveEngine
@@ -37,13 +36,13 @@ class ReverseEngine:
     职责：
     - 监听 Agent 限价单创建事件
     - 创建反向条件单
-    - 自主管理开仓记录和 TP/SL（不依赖 Binance 的 TP/SL 订单）
-    - 通过 Mark Price WebSocket 监控价格，自行触发平仓
+    - 使用 Binance 条件单管理 TP/SL（更可靠）
+    - 监听 ALGO_UPDATE 事件处理条件单触发
     
     架构：
-    - 强制依赖 live_engine，复用其 REST 连接
-    - 独立的 Mark Price WebSocket 用于价格监控
-    - 每个开仓记录有独立的 TP/SL，支持同币种多仓位
+    - 强制依赖 live_engine，复用其 REST 连接和 WebSocket
+    - 开仓条件单触发后自动下止盈止损条件单
+    - 止盈/止损条件单触发后自动关闭记录并取消另一个
     """
     
     def __init__(self, live_engine: 'BinanceLiveEngine', config: Dict):
@@ -71,11 +70,9 @@ class ReverseEngine:
         
         self.algo_order_service = AlgoOrderService(self.rest_client, self.config_manager)
         
-        self.trade_record_service = TradeRecordService()
+        self.trade_record_service = TradeRecordService(self.rest_client)
         
         self.tpsl_monitor = TPSLMonitorService(self.trade_record_service, self.rest_client)
-        
-        self.mark_price_ws: Optional[MarkPriceWSClient] = None
         
         self.history_writer = ReverseHistoryWriter(
             config, 
@@ -90,7 +87,7 @@ class ReverseEngine:
         
         self.workflow_manager = ReverseWorkflowManager()
         
-        logger.info("[反向] 反向交易引擎已初始化（v2 - 自主管理 TP/SL）")
+        logger.info("[反向] 反向交易引擎已初始化（v3 - Binance 条件单管理 TP/SL）")
     
     def is_enabled(self) -> bool:
         """是否启用"""
@@ -109,7 +106,7 @@ class ReverseEngine:
             
             self._running = True
             logger.info("=" * 60)
-            logger.info("[反向] 反向交易引擎启动 (v2 - 自主管理 TP/SL)")
+            logger.info("[反向] 反向交易引擎启动 (v3 - Binance 条件单管理 TP/SL)")
             logger.info(f"[反向] 配置: margin={self.config_manager.fixed_margin_usdt}U, "
                        f"leverage={self.config_manager.fixed_leverage}x, "
                        f"expiration={self.config_manager.expiration_days}days")
@@ -117,8 +114,6 @@ class ReverseEngine:
             
             try:
                 self.algo_order_service.sync_from_api()
-                
-                self._start_mark_price_ws()
                 
                 if self.live_engine and hasattr(self.live_engine, 'event_dispatcher'):
                     self.live_engine.event_dispatcher.register_listener(self.order_handler.handle_event)
@@ -138,31 +133,6 @@ class ReverseEngine:
                 self._running = False
                 raise
     
-    def _start_mark_price_ws(self):
-        """启动 Mark Price WebSocket"""
-        try:
-            watched_symbols = self.trade_record_service.get_watched_symbols()
-            
-            self.mark_price_ws = MarkPriceWSClient(
-                on_price_update=self._on_mark_price_update,
-                symbols_filter=watched_symbols if watched_symbols else None
-            )
-            self.mark_price_ws.start()
-            logger.info(f"[反向] Mark Price WebSocket 已启动，监控 {len(watched_symbols)} 个交易对")
-        except Exception as e:
-            logger.error(f"[反向] 启动 Mark Price WebSocket 失败: {e}")
-    
-    def _on_mark_price_update(self, prices: Dict[str, float]):
-        """处理标记价格更新
-        
-        Args:
-            prices: {symbol: mark_price} 字典
-        """
-        try:
-            self.tpsl_monitor.on_mark_price_update(prices)
-        except Exception as e:
-            logger.error(f"[反向] 处理标记价格更新失败: {e}")
-    
     def stop(self):
         """停止引擎"""
         with self._lock:
@@ -174,10 +144,6 @@ class ReverseEngine:
             
             try:
                 self.workflow_manager.stop_all()
-                
-                if self.mark_price_ws:
-                    self.mark_price_ws.stop()
-                    logger.info("[反向] Mark Price WebSocket 已停止")
                 
                 if self.live_engine and hasattr(self.live_engine, 'event_dispatcher'):
                     self.live_engine.event_dispatcher.unregister_listener(self.order_handler.handle_event)
@@ -228,34 +194,15 @@ class ReverseEngine:
                     
                     if record:
                         logger.info(f"[反向] ✅ 开仓记录已创建: {order.symbol} {record.side} @ {filled_price}")
-                        logger.info(f"[反向]    TP={record.tp_price} SL={record.sl_price}")
-                        
-                        if self.mark_price_ws:
-                            self.mark_price_ws.add_symbol(order.symbol)
+                        logger.info(f"[反向]    TP={record.tp_price} (algoId={record.tp_algo_id})")
+                        logger.info(f"[反向]    SL={record.sl_price} (algoId={record.sl_algo_id})")
                     
                     self.algo_order_service.remove_order(order.algo_id)
-                
-                self._update_watched_symbols()
                 
             except Exception as e:
                 logger.error(f"[反向] 定时同步失败: {e}", exc_info=True)
         
         logger.info("[反向] 定时同步线程已退出")
-    
-    def _update_watched_symbols(self):
-        """更新 Mark Price WebSocket 监控的交易对"""
-        if not self.mark_price_ws:
-            return
-        
-        watched_symbols = self.trade_record_service.get_watched_symbols()
-        
-        pending_symbols = {o.symbol for o in self.algo_order_service.pending_orders.values()}
-        all_symbols = watched_symbols | pending_symbols
-        
-        if all_symbols:
-            self.mark_price_ws.set_symbols_filter(all_symbols)
-        else:
-            self.mark_price_ws.symbols_filter = None
     
     def on_agent_limit_order(self, symbol: str, side: str, limit_price: float,
                               tp_price: float, sl_price: float,
@@ -311,9 +258,6 @@ class ReverseEngine:
         
         if order:
             logger.info(f"[反向] 条件单创建成功: {symbol} algoId={order.algo_id}")
-            
-            if self.mark_price_ws:
-                self.mark_price_ws.add_symbol(symbol)
         else:
             logger.error(f"[反向] 条件单创建失败: {symbol}")
         
@@ -436,16 +380,3 @@ class ReverseEngine:
             'statistics': self.trade_record_service.get_statistics(),
             'tpsl_monitor_status': self.tpsl_monitor.get_status()
         }
-    
-    def get_mark_price(self, symbol: str) -> Optional[float]:
-        """获取指定交易对的最新标记价格
-        
-        Args:
-            symbol: 交易对
-            
-        Returns:
-            标记价格
-        """
-        if self.mark_price_ws:
-            return self.mark_price_ws.get_latest_price(symbol)
-        return None

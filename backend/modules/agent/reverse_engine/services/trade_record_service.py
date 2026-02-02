@@ -4,7 +4,8 @@
 - 创建/查询/更新开仓记录
 - 持久化到 JSON 文件
 - 服务重启后恢复状态
-- 每个条件单触发后创建独立记录，支持独立 TP/SL 管理
+- 每个条件单触发后创建独立记录
+- 使用 Binance 条件单管理 TP/SL（不再本地监控价格）
 """
 
 import json
@@ -12,9 +13,12 @@ import os
 import threading
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from modules.monitor.utils.logger import get_logger
 from ..models import ReverseTradeRecord, ReverseAlgoOrder, TradeRecordStatus
+
+if TYPE_CHECKING:
+    from modules.monitor.clients.binance_rest import BinanceRestClient
 
 logger = get_logger('reverse_engine.trade_record')
 
@@ -24,20 +28,29 @@ class TradeRecordService:
     
     功能：
     - 管理独立的开仓记录（不依赖 Binance 持仓合并）
-    - 每条记录有独立的 TP/SL 价格
+    - 每条记录有独立的 TP/SL 价格和 Binance 条件单
     - 持久化到 JSON 文件，支持服务重启恢复
-    - 路径从 config.yaml 读取
+    - 使用 Binance 条件单管理 TP/SL（更可靠）
     """
     
-    def __init__(self):
-        """初始化"""
+    def __init__(self, rest_client: 'BinanceRestClient' = None):
+        """初始化
+        
+        Args:
+            rest_client: Binance REST 客户端，用于下止盈止损条件单
+        """
         self._lock = threading.RLock()
         self.records: Dict[str, ReverseTradeRecord] = {}
+        self.rest_client = rest_client
         
         self.state_file = self._get_state_file_path()
         
         self._ensure_state_dir()
         self._load_state()
+    
+    def set_rest_client(self, rest_client: 'BinanceRestClient'):
+        """设置 REST 客户端（延迟注入）"""
+        self.rest_client = rest_client
     
     def _get_state_file_path(self) -> str:
         """从 settings.py 获取状态文件路径"""
@@ -84,6 +97,8 @@ class TradeRecordService:
     def create_record(self, algo_order: ReverseAlgoOrder, filled_price: float) -> ReverseTradeRecord:
         """从条件单创建开仓记录
         
+        创建记录后会自动下止盈止损条件单到 Binance。
+        
         Args:
             algo_order: 触发的条件单
             filled_price: 成交价格
@@ -94,6 +109,8 @@ class TradeRecordService:
         with self._lock:
             notional = algo_order.quantity * filled_price
             margin = notional / algo_order.leverage
+            
+            position_side = 'SHORT' if algo_order.side.upper() in ('SELL', 'SHORT') else 'LONG'
             
             record = ReverseTradeRecord(
                 id=str(uuid.uuid4()),
@@ -120,7 +137,47 @@ class TradeRecordService:
                        f"qty={record.qty} entry={filled_price} "
                        f"TP={record.tp_price} SL={record.sl_price}")
             
+            if self.rest_client and algo_order.tp_price and algo_order.sl_price:
+                self._place_tp_sl_orders(record, position_side)
+            
             return record
+    
+    def _place_tp_sl_orders(self, record: ReverseTradeRecord, position_side: str):
+        """为开仓记录下止盈止损条件单
+        
+        Args:
+            record: 开仓记录
+            position_side: 持仓方向 (LONG/SHORT)
+        """
+        try:
+            result = self.rest_client.place_tp_sl_algo_orders(
+                symbol=record.symbol,
+                position_side=position_side,
+                quantity=record.qty,
+                tp_price=record.tp_price,
+                sl_price=record.sl_price,
+                working_type='MARK_PRICE'
+            )
+            
+            if result.get('tp_algo_id'):
+                record.tp_algo_id = result['tp_algo_id']
+                logger.info(f"[TradeRecord] 📈 止盈单已创建: {record.symbol} "
+                           f"algoId={record.tp_algo_id} price={record.tp_price}")
+            
+            if result.get('sl_algo_id'):
+                record.sl_algo_id = result['sl_algo_id']
+                logger.info(f"[TradeRecord] 📉 止损单已创建: {record.symbol} "
+                           f"algoId={record.sl_algo_id} price={record.sl_price}")
+            
+            self._save_state()
+            
+            if result.get('success'):
+                logger.info(f"[TradeRecord] ✅ 止盈止损单全部创建成功: {record.symbol}")
+            else:
+                logger.warning(f"[TradeRecord] ⚠️ 止盈止损单部分创建失败: {record.symbol}")
+                
+        except Exception as e:
+            logger.error(f"[TradeRecord] ❌ 下止盈止损单失败: {record.symbol} error={e}")
     
     def close_record(self, record_id: str, close_price: float, 
                      close_reason: str) -> Optional[ReverseTradeRecord]:
@@ -224,6 +281,48 @@ class TradeRecordService:
             return {r.symbol for r in self.records.values() 
                     if r.status == TradeRecordStatus.OPEN}
     
+    def get_record_by_tp_algo_id(self, tp_algo_id: str) -> Optional[ReverseTradeRecord]:
+        """根据止盈条件单ID查找记录"""
+        with self._lock:
+            for record in self.records.values():
+                if record.tp_algo_id == tp_algo_id:
+                    return record
+            return None
+    
+    def get_record_by_sl_algo_id(self, sl_algo_id: str) -> Optional[ReverseTradeRecord]:
+        """根据止损条件单ID查找记录"""
+        with self._lock:
+            for record in self.records.values():
+                if record.sl_algo_id == sl_algo_id:
+                    return record
+            return None
+    
+    def cancel_remaining_tp_sl(self, record: ReverseTradeRecord, triggered_type: str):
+        """取消剩余的止盈或止损单
+        
+        当止盈单触发时取消止损单，反之亦然。
+        
+        Args:
+            record: 开仓记录
+            triggered_type: 触发的类型 ('TP' 或 'SL')
+        """
+        if not self.rest_client:
+            return
+        
+        try:
+            if triggered_type == 'TP' and record.sl_algo_id:
+                self.rest_client.cancel_algo_order(record.symbol, record.sl_algo_id)
+                logger.info(f"[TradeRecord] 🚫 取消止损单: {record.symbol} algoId={record.sl_algo_id}")
+                record.sl_algo_id = None
+            elif triggered_type == 'SL' and record.tp_algo_id:
+                self.rest_client.cancel_algo_order(record.symbol, record.tp_algo_id)
+                logger.info(f"[TradeRecord] 🚫 取消止盈单: {record.symbol} algoId={record.tp_algo_id}")
+                record.tp_algo_id = None
+            
+            self._save_state()
+        except Exception as e:
+            logger.error(f"[TradeRecord] 取消条件单失败: {e}")
+    
     def get_summary(self) -> List[Dict[str, Any]]:
         """获取开仓记录汇总（用于前端展示）
         
@@ -247,6 +346,8 @@ class TradeRecordService:
                     'mark_price': record.latest_mark_price or record.entry_price,
                     'take_profit': record.tp_price,
                     'stop_loss': record.sl_price,
+                    'tp_algo_id': record.tp_algo_id,
+                    'sl_algo_id': record.sl_algo_id,
                     'unrealized_pnl': round(unrealized_pnl, 4),
                     'roe': round(roe * 100, 2),
                     'leverage': record.leverage,

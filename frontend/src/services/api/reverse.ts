@@ -37,6 +37,11 @@ export async function cancelReversePendingOrder(algoId: string): Promise<{ succe
   return data;
 }
 
+export async function closeReversePosition(recordId: string): Promise<{ success: boolean; message: string }> {
+  const { data } = await apiClient.delete(`/reverse/positions/${recordId}`);
+  return data;
+}
+
 export async function getReverseHistory(limit = 50): Promise<ReverseHistoryResponse> {
   const { data } = await apiClient.get('/reverse/history', { params: { limit } });
   return data;

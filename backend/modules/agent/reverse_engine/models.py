@@ -252,8 +252,8 @@ class ReverseTradeHistory:
 class ReverseTradeRecord:
     """独立开仓记录
     
-    每个条件单触发后创建一条独立记录，用于自主管理 TP/SL。
-    不依赖 Binance 的持仓合并，每条记录有独立的 TP/SL 价格。
+    每个条件单触发后创建一条独立记录，使用 Binance 条件单管理 TP/SL。
+    不依赖 Binance 的持仓合并，每条记录有独立的 TP/SL 价格和条件单。
     """
     id: str
     symbol: str
@@ -269,6 +269,9 @@ class ReverseTradeRecord:
     
     algo_order_id: str
     agent_order_id: Optional[str] = None
+    
+    tp_algo_id: Optional[str] = None
+    sl_algo_id: Optional[str] = None
     
     open_time: str = field(default_factory=lambda: datetime.now().isoformat())
     close_time: Optional[str] = None
@@ -343,6 +346,8 @@ class ReverseTradeRecord:
             'status': self.status.value if isinstance(self.status, TradeRecordStatus) else self.status,
             'algo_order_id': self.algo_order_id,
             'agent_order_id': self.agent_order_id,
+            'tp_algo_id': self.tp_algo_id,
+            'sl_algo_id': self.sl_algo_id,
             'open_time': self.open_time,
             'close_time': self.close_time,
             'close_price': self.close_price,
@@ -372,6 +377,8 @@ class ReverseTradeRecord:
             status=status,
             algo_order_id=data['algo_order_id'],
             agent_order_id=data.get('agent_order_id'),
+            tp_algo_id=data.get('tp_algo_id'),
+            sl_algo_id=data.get('sl_algo_id'),
             open_time=data.get('open_time', datetime.now().isoformat()),
             close_time=data.get('close_time'),
             close_price=data.get('close_price'),

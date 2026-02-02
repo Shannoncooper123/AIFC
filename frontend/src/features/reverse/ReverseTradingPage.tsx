@@ -13,6 +13,7 @@ import {
   getReversePendingOrders,
   getReverseHistory,
   getReverseStatistics,
+  closeReversePosition,
 } from '../../services/api/reverse';
 import type {
   ReversePosition,
@@ -72,6 +73,24 @@ export function ReverseTradingPage() {
   const handleRefresh = () => {
     setRefreshing(true);
     fetchData();
+  };
+
+  const handleClosePosition = async (recordId: string) => {
+    if (!confirm('Are you sure you want to close this position? This will cancel the associated TP/SL orders.')) {
+      return;
+    }
+    
+    try {
+      const result = await closeReversePosition(recordId);
+      if (result.success) {
+        fetchData();
+      } else {
+        alert(`Failed to close position: ${result.message}`);
+      }
+    } catch (err) {
+      console.error('Failed to close position:', err);
+      alert('Failed to close position');
+    }
   };
 
   return (
@@ -146,7 +165,11 @@ export function ReverseTradingPage() {
         </div>
 
         {activeTab === 'positions' && (
-          <ReversePositionsTable positions={positions} loading={loading} />
+          <ReversePositionsTable 
+            positions={positions} 
+            loading={loading} 
+            onClosePosition={handleClosePosition}
+          />
         )}
         {activeTab === 'orders' && (
           <ReversePendingOrdersTable
