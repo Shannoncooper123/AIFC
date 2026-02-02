@@ -339,6 +339,87 @@ class BinanceLiveEngine:
             logger.error(f"开仓失败: {e}", exc_info=True)
             return {'error': str(e)}
     
+    def create_limit_order(self, symbol: str, side: str, limit_price: float, margin_usdt: float,
+                           leverage: int, tp_price: Optional[float] = None, 
+                           sl_price: Optional[float] = None) -> Dict[str, Any]:
+        """创建限价单
+        
+        Args:
+            symbol: 交易对
+            side: 方向（long/short）
+            limit_price: 限价
+            margin_usdt: 保证金
+            leverage: 杠杆
+            tp_price: 止盈价
+            sl_price: 止损价
+            
+        Returns:
+            订单信息字典
+        """
+        import uuid
+        try:
+            # 计算数量
+            notional = margin_usdt * leverage
+            quantity = notional / limit_price
+            
+            # 获取交易规则（精度）
+            exchange_info = self.rest_client.get_exchange_info()
+            quantity_precision = 3
+            price_precision = 2
+            for s in exchange_info.get('symbols', []):
+                if s['symbol'] == symbol:
+                    quantity_precision = s.get('quantityPrecision', 3)
+                    price_precision = s.get('pricePrecision', 2)
+                    break
+            
+            quantity = round(quantity, quantity_precision)
+            limit_price = round(limit_price, price_precision)
+            
+            logger.info(f"创建限价单: {symbol} {side} @ {limit_price}, margin={margin_usdt}, leverage={leverage}x, qty={quantity}")
+            
+            # 设置杠杆
+            try:
+                self.rest_client.set_leverage(symbol, leverage)
+            except Exception as e:
+                logger.warning(f"设置杠杆失败（可能已设置）: {e}")
+            
+            # 下限价单（双向持仓模式）
+            order_side = 'BUY' if side == 'long' else 'SELL'
+            position_side = 'LONG' if side == 'long' else 'SHORT'
+            
+            order = self.rest_client.place_order(
+                symbol=symbol,
+                side=order_side,
+                order_type='LIMIT',
+                quantity=quantity,
+                price=limit_price,
+                time_in_force='GTC',
+                position_side=position_side
+            )
+            
+            order_id = order.get('orderId', str(uuid.uuid4()))
+            
+            logger.info(f"限价单已创建: {symbol} orderId={order_id}")
+            
+            # 返回结果（注意：限价单成交后才会有持仓，TP/SL 需要在成交后设置）
+            return {
+                'success': True,
+                'id': str(order_id),
+                'symbol': symbol,
+                'side': side,
+                'limit_price': limit_price,
+                'qty': quantity,
+                'margin_usdt': margin_usdt,
+                'leverage': leverage,
+                'tp_price': tp_price,
+                'sl_price': sl_price,
+                'order': order
+            }
+            
+        except Exception as e:
+            logger.error(f"创建限价单失败: {e}", exc_info=True)
+            return {'error': str(e)}
+    
     def close_position(self, position_id: Optional[str] = None, symbol: Optional[str] = None,
                        close_reason: Optional[str] = None, close_price: Optional[float] = None) -> Dict[str, Any]:
         """平仓（兼容模拟器接口）"""

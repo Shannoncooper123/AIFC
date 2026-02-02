@@ -54,7 +54,6 @@ def _build_supplemental_context(
 
 def _build_multimodal_content(
     symbol: str,
-    market_context: str,
     supplemental_context: str,
     direction: str,
     current_price: Optional[float],
@@ -63,7 +62,6 @@ def _build_multimodal_content(
     
     Args:
         symbol: 交易对
-        market_context: 市场上下文
         supplemental_context: 补充上下文（账户信息）
         direction: 分析方向 "long" 或 "short"
         current_price: 当前价格
@@ -79,8 +77,6 @@ def _build_multimodal_content(
     text_part = f"""【待分析币种】{symbol}
 【当前价格】{price_str}
 【分析方向】{direction_cn}
-
-{market_context}
 
 {supplemental_context}
 
@@ -171,7 +167,6 @@ async def _run_directional_analysis_async(
 
 async def _run_parallel_analysis(
     symbol: str,
-    market_context: str,
     supplemental_context: str,
     current_price: Optional[float],
     config: RunnableConfig,
@@ -183,7 +178,6 @@ async def _run_parallel_analysis(
     
     Args:
         symbol: 交易对
-        market_context: 市场上下文
         supplemental_context: 补充上下文
         current_price: 当前价格
         config: RunnableConfig
@@ -192,10 +186,10 @@ async def _run_parallel_analysis(
         (long_result, short_result, errors) 元组
     """
     long_content = _build_multimodal_content(
-        symbol, market_context, supplemental_context, "long", current_price
+        symbol, supplemental_context, "long", current_price
     )
     short_content = _build_multimodal_content(
-        symbol, market_context, supplemental_context, "short", current_price
+        symbol, supplemental_context, "short", current_price
     )
     
     tasks = [
@@ -250,11 +244,6 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
     logger.info(f"单币种双向分析节点执行: {symbol}")
     logger.info("=" * 60)
 
-    market_context = state.symbol_contexts.get(symbol) or state.market_context
-    if not market_context:
-        logger.error(f"{symbol} 分析失败: 缺少上下文")
-        return {"analysis_results": {symbol: "分析失败: 缺少上下文"}}
-
     try:
         current_price = get_current_price(symbol)
         if current_price:
@@ -272,7 +261,6 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
         long_result, short_result, errors = asyncio.run(
             _run_parallel_analysis(
                 symbol,
-                market_context,
                 supplemental_context_str,
                 current_price,
                 config
