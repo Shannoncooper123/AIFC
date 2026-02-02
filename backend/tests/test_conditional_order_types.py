@@ -36,8 +36,11 @@ LEVERAGE = 10
 
 
 def sign_request(params: dict) -> str:
-    """生成请求签名"""
-    query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
+    """生成请求签名
+    
+    注意：Binance 签名需要按参数原始顺序，不能排序
+    """
+    query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
     signature = hmac.new(
         BINANCE_API_SECRET.encode('utf-8'),
         query_string.encode('utf-8'),
@@ -175,38 +178,44 @@ def test_conditional_orders():
     ensure_dual_position_mode()
     set_leverage(SYMBOL, LEVERAGE)
     
+    # 根据 Binance 条件单触发规则选择正确的订单类型：
+    # - STOP_MARKET (BUY): 价格 ≥ trigger 时触发 → 触发价需在当前价上方
+    # - STOP_MARKET (SELL): 价格 ≤ trigger 时触发 → 触发价需在当前价下方
+    # - TAKE_PROFIT_MARKET (BUY): 价格 ≤ trigger 时触发 → 触发价需在当前价下方
+    # - TAKE_PROFIT_MARKET (SELL): 价格 ≥ trigger 时触发 → 触发价需在当前价上方
+    
     test_cases = [
         {
             'name': '做多 @ 0.09 (当前价格下方)',
             'trigger_price': 0.09,
             'side': 'BUY',
             'position_side': 'LONG',
-            'order_type': 'STOP_MARKET',
-            'expected': '根据规则 BUY LONG 使用 STOP_MARKET'
+            'order_type': 'TAKE_PROFIT_MARKET',  # BUY + 触发价<当前价 → TAKE_PROFIT_MARKET
+            'expected': 'BUY + 触发价<当前价 → TAKE_PROFIT_MARKET（等价格跌下来）'
         },
         {
             'name': '做空 @ 0.09 (当前价格下方)',
             'trigger_price': 0.09,
             'side': 'SELL',
             'position_side': 'SHORT',
-            'order_type': 'TAKE_PROFIT_MARKET',
-            'expected': '根据规则 SELL SHORT 使用 TAKE_PROFIT_MARKET'
+            'order_type': 'STOP_MARKET',  # SELL + 触发价<当前价 → STOP_MARKET
+            'expected': 'SELL + 触发价<当前价 → STOP_MARKET（等价格跌下去）'
         },
         {
             'name': '做多 @ 0.12 (当前价格上方)',
             'trigger_price': 0.12,
             'side': 'BUY',
             'position_side': 'LONG',
-            'order_type': 'STOP_MARKET',
-            'expected': '根据规则 BUY LONG 使用 STOP_MARKET'
+            'order_type': 'STOP_MARKET',  # BUY + 触发价>当前价 → STOP_MARKET
+            'expected': 'BUY + 触发价>当前价 → STOP_MARKET（等价格涨上去）'
         },
         {
             'name': '做空 @ 0.12 (当前价格上方)',
             'trigger_price': 0.12,
             'side': 'SELL',
             'position_side': 'SHORT',
-            'order_type': 'TAKE_PROFIT_MARKET',
-            'expected': '根据规则 SELL SHORT 使用 TAKE_PROFIT_MARKET'
+            'order_type': 'TAKE_PROFIT_MARKET',  # SELL + 触发价>当前价 → TAKE_PROFIT_MARKET
+            'expected': 'SELL + 触发价>当前价 → TAKE_PROFIT_MARKET（等价格涨上去）'
         },
     ]
     

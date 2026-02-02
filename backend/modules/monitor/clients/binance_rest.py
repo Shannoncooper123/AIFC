@@ -872,6 +872,7 @@ class BinanceRestClient:
         """下止盈止损条件单
         
         为已有持仓下止盈和止损条件单。
+        根据当前价格动态选择正确的条件单类型，避免 "Order would immediately trigger" 错误。
         
         Args:
             symbol: 交易对
@@ -896,12 +897,42 @@ class BinanceRestClient:
             'success': False
         }
         
+        # 获取当前价格以动态选择条件单类型
+        try:
+            mark_price_data = self.get_mark_price(symbol)
+            current_price = float(mark_price_data.get('markPrice', 0))
+        except Exception as e:
+            logger.warning(f"[TP/SL] 获取当前价格失败: {e}，使用默认订单类型")
+            current_price = 0
+        
+        # 根据平仓方向和触发价与当前价的关系选择订单类型
+        # - BUY + 触发价 > 当前价: STOP_MARKET
+        # - BUY + 触发价 < 当前价: TAKE_PROFIT_MARKET
+        # - SELL + 触发价 > 当前价: TAKE_PROFIT_MARKET
+        # - SELL + 触发价 < 当前价: STOP_MARKET
+        
+        def get_order_type(side: str, trigger_price: float) -> str:
+            if current_price <= 0:
+                # 无法获取当前价格时使用默认逻辑
+                return 'TAKE_PROFIT_MARKET' if trigger_price == tp_price else 'STOP_MARKET'
+            
+            if side == 'BUY':
+                return 'STOP_MARKET' if trigger_price > current_price else 'TAKE_PROFIT_MARKET'
+            else:
+                return 'TAKE_PROFIT_MARKET' if trigger_price > current_price else 'STOP_MARKET'
+        
+        tp_order_type = get_order_type(close_side, tp_price)
+        sl_order_type = get_order_type(close_side, sl_price)
+        
+        logger.info(f"[TP/SL] {symbol} 当前价格: {current_price}, 平仓方向: {close_side}")
+        logger.info(f"[TP/SL] 止盈: {tp_price} → {tp_order_type}, 止损: {sl_price} → {sl_order_type}")
+        
         try:
             tp_result = self._place_single_tp_sl_order(
                 symbol=symbol,
                 side=close_side,
                 position_side=position_side,
-                order_type='TAKE_PROFIT_MARKET',
+                order_type=tp_order_type,
                 trigger_price=tp_price,
                 quantity=quantity,
                 working_type=working_type
@@ -925,7 +956,7 @@ class BinanceRestClient:
                 symbol=symbol,
                 side=close_side,
                 position_side=position_side,
-                order_type='STOP_MARKET',
+                order_type=sl_order_type,
                 trigger_price=sl_price,
                 quantity=quantity,
                 working_type=working_type
