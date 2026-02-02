@@ -186,7 +186,7 @@ class TradeRecordService:
         Args:
             record_id: 记录ID
             close_price: 平仓价格
-            close_reason: 平仓原因（TP_CLOSED/SL_CLOSED/MANUAL_CLOSED）
+            close_reason: 平仓原因（TP_CLOSED/SL_CLOSED/MANUAL_CLOSED/POSITION_CLOSED_EXTERNALLY）
             
         Returns:
             关闭的记录，未找到返回 None
@@ -210,7 +210,12 @@ class TradeRecordService:
             record.close_time = datetime.now().isoformat()
             record.realized_pnl = pnl
             record.close_reason = close_reason
-            record.status = TradeRecordStatus(close_reason)
+            
+            try:
+                record.status = TradeRecordStatus(close_reason)
+            except ValueError:
+                logger.warning(f"[TradeRecord] 未知的关闭原因 {close_reason}，使用 MANUAL_CLOSED")
+                record.status = TradeRecordStatus.MANUAL_CLOSED
             
             self._save_state()
             

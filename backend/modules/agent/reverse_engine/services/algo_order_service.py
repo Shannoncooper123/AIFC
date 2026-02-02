@@ -212,7 +212,15 @@ class AlgoOrderService:
                            f"margin={fixed_margin}U leverage={fixed_leverage}x "
                            f"expires_in={expiration_days}days")
                 
-                # 根据方向选择正确的条件单类型
+                # 获取当前价格以决定条件单类型
+                try:
+                    mark_price_data = self.rest_client.get_mark_price(symbol)
+                    current_price = float(mark_price_data.get('markPrice', 0))
+                except Exception as e:
+                    logger.warning(f"[反向] 获取当前价格失败: {e}，使用触发价作为参考")
+                    current_price = trigger_price_formatted
+                
+                # 根据当前价格和触发价格选择正确的条件单类型
                 # 
                 # Binance 条件单触发规则：
                 # - STOP_MARKET (BUY): 价格 ≥ trigger 时触发（追涨）
@@ -220,16 +228,29 @@ class AlgoOrderService:
                 # - TAKE_PROFIT_MARKET (BUY): 价格 ≤ trigger 时触发（抄底）
                 # - TAKE_PROFIT_MARKET (SELL): 价格 ≥ trigger 时触发（止盈）
                 # 
-                # 反向交易逻辑：
-                # - Agent做多 → 反向做空 → Agent限价买入 → 价格下跌到trigger时做空
-                #   → 需要 SELL + 价格≤trigger → STOP_MARKET (SELL)
-                # - Agent做空 → 反向做多 → Agent限价卖出 → 价格上涨到trigger时做多
-                #   → 需要 BUY + 价格≥trigger → STOP_MARKET (BUY)
-                #
-                # 简化：反向开仓条件单统一使用 STOP_MARKET
-                order_type = 'STOP_MARKET'
+                # 选择逻辑：
+                # - BUY: 如果当前价格 < trigger，用 STOP_MARKET（等价格涨上去）
+                #        如果当前价格 > trigger，用 TAKE_PROFIT_MARKET（等价格跌下来）
+                # - SELL: 如果当前价格 > trigger，用 STOP_MARKET（等价格跌下去）
+                #         如果当前价格 < trigger，用 TAKE_PROFIT_MARKET（等价格涨上去）
                 
-                logger.info(f"[反向] 条件单类型: {order_type} (触发后{side})")
+                if side.upper() == 'BUY':
+                    if current_price < trigger_price_formatted:
+                        order_type = 'STOP_MARKET'
+                        trigger_direction = '价格上涨到'
+                    else:
+                        order_type = 'TAKE_PROFIT_MARKET'
+                        trigger_direction = '价格下跌到'
+                else:
+                    if current_price > trigger_price_formatted:
+                        order_type = 'STOP_MARKET'
+                        trigger_direction = '价格下跌到'
+                    else:
+                        order_type = 'TAKE_PROFIT_MARKET'
+                        trigger_direction = '价格上涨到'
+                
+                logger.info(f"[反向] 当前价格: {current_price}, 触发价: {trigger_price_formatted}")
+                logger.info(f"[反向] 条件单类型: {order_type} ({trigger_direction}{trigger_price_formatted}时{side})")
                 
                 result = self.rest_client.place_algo_order(
                     symbol=symbol,
