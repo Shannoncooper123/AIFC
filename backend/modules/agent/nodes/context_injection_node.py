@@ -72,7 +72,11 @@ def context_injection_node(state: AgentState, *, config: RunnableConfig) -> Dict
     eng = get_engine()
     account_summary = eng.get_account_summary() if eng else {}
     positions_summary = eng.get_positions_summary() if eng else []
-    pending_orders = eng.get_pending_orders_summary() if eng else []
+    
+    # 获取反向交易的待触发条件单（如果 reverse_engine 已初始化）
+    from modules.agent.engine import get_reverse_engine
+    reverse_eng = get_reverse_engine()
+    pending_orders = reverse_eng.get_pending_orders_summary() if reverse_eng else {}
 
     ts = latest_alert.get('ts', 'UNKNOWN')
     interval = latest_alert.get('interval', '15m')
