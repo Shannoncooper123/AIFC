@@ -26,6 +26,28 @@ from modules.monitor.utils.logger import get_logger
 logger = get_logger('reverse_engine.workflow_runner')
 
 
+def _ensure_trading_engine_initialized():
+    """确保交易引擎已初始化"""
+    from modules.agent.engine import get_engine, set_engine, ensure_engine
+    
+    if get_engine() is None:
+        cfg = get_config()
+        trading_mode = cfg.get('trading', {}).get('mode', 'simulator')
+        
+        if trading_mode == 'live':
+            from modules.agent.live_engine import BinanceLiveEngine
+            eng = BinanceLiveEngine(cfg)
+            set_engine(eng)
+            eng.start()
+            logger.info("[反向] 实盘交易引擎已初始化")
+        else:
+            from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine
+            eng = TradeSimulatorEngine(cfg)
+            set_engine(eng)
+            eng.start()
+            logger.info("[反向] 模拟交易引擎已初始化")
+
+
 class ReverseWorkflowRunner:
     """反向交易 Workflow 运行器
     
@@ -126,6 +148,8 @@ class ReverseWorkflowRunner:
             self._workflow_running = True
         
         try:
+            _ensure_trading_engine_initialized()
+            
             cfg = get_config()
             workflow_run_id = generate_trace_id("rv")
             start_iso = datetime.now(timezone.utc).isoformat()
