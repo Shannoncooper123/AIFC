@@ -244,6 +244,18 @@ async def stop_reverse_engine_api() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _get_or_init_reverse_engine():
+    """获取或初始化反向交易引擎实例"""
+    from modules.agent.engine import get_reverse_engine, init_reverse_engine
+    from modules.config.settings import get_config
+    
+    engine = get_reverse_engine()
+    if engine is None:
+        config = get_config()
+        engine = init_reverse_engine(config)
+    return engine
+
+
 @router.post("/workflow/start/{symbol}")
 async def start_symbol_workflow(symbol: str, interval: str = "15m") -> Dict[str, Any]:
     """启动指定币种的 workflow 分析
@@ -255,7 +267,10 @@ async def start_symbol_workflow(symbol: str, interval: str = "15m") -> Dict[str,
         interval: K线周期（如 15m, 1h, 4h）
     """
     try:
-        engine = _get_reverse_engine()
+        engine = _get_or_init_reverse_engine()
+        if engine is None:
+            raise HTTPException(status_code=503, detail="反向交易引擎初始化失败")
+        
         success = engine.start_symbol_workflow(symbol.upper(), interval)
         
         if success:
@@ -266,7 +281,7 @@ async def start_symbol_workflow(symbol: str, interval: str = "15m") -> Dict[str,
                 "interval": interval,
             }
         else:
-            raise HTTPException(status_code=400, detail=f"启动 {symbol} workflow 失败")
+            raise HTTPException(status_code=400, detail=f"启动 {symbol} workflow 失败，请先在配置中启用反向交易引擎")
     except HTTPException:
         raise
     except Exception as e:
@@ -282,7 +297,10 @@ async def stop_symbol_workflow(symbol: str) -> Dict[str, Any]:
         symbol: 交易对
     """
     try:
-        engine = _get_reverse_engine()
+        engine = _get_or_init_reverse_engine()
+        if engine is None:
+            raise HTTPException(status_code=400, detail=f"{symbol} workflow 未在运行")
+        
         success = engine.stop_symbol_workflow(symbol.upper())
         
         if success:
@@ -308,18 +326,33 @@ async def get_workflow_status(symbol: Optional[str] = None) -> Dict[str, Any]:
         symbol: 指定币种，不传则获取所有
     """
     try:
-        engine = _get_reverse_engine()
+        from modules.agent.engine import get_reverse_engine
+        engine = get_reverse_engine()
+        if engine is None:
+            return {
+                "running_count": 0,
+                "symbols": {},
+            }
         return engine.get_workflow_status(symbol.upper() if symbol else None)
     except Exception as e:
         logger.error(f"获取 workflow 状态失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "running_count": 0,
+            "symbols": {},
+        }
 
 
 @router.get("/workflow/running")
 async def get_running_workflows() -> Dict[str, Any]:
     """获取正在运行 workflow 的币种列表"""
     try:
-        engine = _get_reverse_engine()
+        from modules.agent.engine import get_reverse_engine
+        engine = get_reverse_engine()
+        if engine is None:
+            return {
+                "count": 0,
+                "symbols": [],
+            }
         symbols = engine.get_running_workflows()
         return {
             "count": len(symbols),
@@ -327,4 +360,7 @@ async def get_running_workflows() -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"获取运行中的 workflow 失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "count": 0,
+            "symbols": [],
+        }
