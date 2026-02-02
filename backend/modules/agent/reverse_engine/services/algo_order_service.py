@@ -341,6 +341,11 @@ class AlgoOrderService:
     def sync_from_api(self) -> List[ReverseAlgoOrder]:
         """从 API 同步条件单状态
         
+        功能：
+        1. 检测已触发的条件单（不在 API 中）
+        2. 检测在 Binance 上被取消的条件单（状态为 CANCELLED）
+        3. 清理本地不存在于 API 的条件单
+        
         Returns:
             已触发的条件单列表（需要后续处理创建持仓）
         """
@@ -348,19 +353,37 @@ class AlgoOrderService:
         
         try:
             api_orders = self.rest_client.get_algo_open_orders()
-            api_order_ids = {str(o.get('algoId')) for o in api_orders}
+            
+            api_order_map = {}
+            for o in api_orders:
+                algo_id = str(o.get('algoId'))
+                api_order_map[algo_id] = o
             
             with self._lock:
+                to_remove = []
+                
                 for algo_id in list(self.pending_orders.keys()):
-                    if algo_id not in api_order_ids:
-                        order = self.pending_orders[algo_id]
+                    order = self.pending_orders[algo_id]
+                    
+                    if algo_id in api_order_map:
+                        api_status = api_order_map[algo_id].get('algoStatus', '')
+                        if api_status == 'CANCELLED':
+                            logger.info(f"[反向] 🚫 条件单 {algo_id} ({order.symbol}) 在 Binance 上已取消")
+                            to_remove.append(algo_id)
+                    else:
                         if order.status == AlgoOrderStatus.NEW:
                             logger.info(f"[反向] ⚡ 检测到条件单 {algo_id} ({order.symbol}) 已不在API中，可能已触发")
                             triggered_orders.append(order)
+                            to_remove.append(algo_id)
+                
+                for algo_id in to_remove:
+                    if algo_id in self.pending_orders and algo_id not in [o.algo_id for o in triggered_orders]:
+                        del self.pending_orders[algo_id]
                 
                 self._save_state()
                 
-            logger.debug(f"[反向] 条件单同步完成: API={len(api_orders)}, 本地={len(self.pending_orders)}, 触发={len(triggered_orders)}")
+            logger.info(f"[反向] 条件单同步: API={len(api_orders)}, 本地={len(self.pending_orders)}, "
+                       f"触发={len(triggered_orders)}, 清理={len(to_remove) - len(triggered_orders)}")
             
         except Exception as e:
             logger.error(f"[反向] 同步条件单失败: {e}")

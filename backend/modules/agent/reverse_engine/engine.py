@@ -197,8 +197,9 @@ class ReverseEngine:
         作为 WebSocket 的兜底机制：
         - 定期检查条件单是否已触发
         - 如果 WebSocket 没有收到事件，通过 API 同步来补偿
+        - 同步 Binance 上被取消的条件单
         """
-        sync_interval = 30
+        sync_interval = 5
         logger.info(f"[反向] 定时同步线程已启动（间隔={sync_interval}秒）")
         
         while self._running:

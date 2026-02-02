@@ -8,6 +8,9 @@ from urllib.parse import urlencode
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from ..utils.helpers import retry_on_exception
+from ..utils.logger import get_logger
+
+logger = get_logger('binance_rest')
 
 
 class BinanceRestClient:
@@ -801,8 +804,9 @@ class BinanceRestClient:
             
         Note:
             参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/Query-Current-Algo-Open-Orders
+            正确端点：GET /fapi/v1/openAlgoOrders
         """
-        url = f"{self.base_url}/fapi/v1/algo/openOrders"
+        url = f"{self.base_url}/fapi/v1/openAlgoOrders"
         
         params = {
             'timestamp': int(time.time() * 1000)
@@ -813,10 +817,14 @@ class BinanceRestClient:
         
         params['signature'] = self._sign_request(params)
         
-        response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-        response.raise_for_status()
-        result = response.json()
-        return result.get('orders', [])
+        try:
+            response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)
+            response.raise_for_status()
+            result = response.json()
+            return result if isinstance(result, list) else []
+        except Exception as e:
+            logger.error(f"[Algo Order] 查询条件单失败: {e}")
+            return []
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
     def get_algo_order_history(self, symbol: Optional[str] = None,
