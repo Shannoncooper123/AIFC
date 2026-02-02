@@ -142,7 +142,7 @@ class ConfigManager:
                     if key == 'enabled':
                         current[key] = bool(value)
                     elif key == 'fixed_margin_usdt':
-                        current[key] = max(10.0, min(float(value), 10000.0))
+                        current[key] = max(1.0, min(float(value), 100000.0))
                     elif key == 'fixed_leverage':
                         current[key] = max(1, min(int(value), 125))
                     elif key == 'expiration_days':
