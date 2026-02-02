@@ -167,7 +167,12 @@ class ReverseEngine:
                 logger.error(f"[反向] 停止引擎时出错: {e}")
     
     def _periodic_sync_loop(self):
-        """定时同步线程"""
+        """定时同步线程
+        
+        作为 WebSocket 的兜底机制：
+        - 定期检查条件单是否已触发
+        - 如果 WebSocket 没有收到事件，通过 API 同步来补偿
+        """
         sync_interval = 30
         logger.info(f"[反向] 定时同步线程已启动（间隔={sync_interval}秒）")
         
@@ -178,11 +183,46 @@ class ReverseEngine:
                 if not self._running:
                     break
                 
-                self.algo_order_service.sync_from_api()
+                # 同步条件单状态，获取已触发的条件单
+                triggered_orders = self.algo_order_service.sync_from_api()
+                
+                # 处理已触发的条件单（WebSocket 兜底）
+                for order in triggered_orders:
+                    logger.info(f"[反向] 🔄 通过定时同步检测到条件单触发: {order.symbol} algoId={order.algo_id}")
+                    
+                    # 检查是否已有持仓（避免重复处理）
+                    if order.symbol in self.position_service.positions:
+                        logger.info(f"[反向] {order.symbol} 已有持仓，跳过")
+                        self.algo_order_service.remove_order(order.algo_id)
+                        continue
+                    
+                    # 获取当前价格作为成交价（近似）
+                    try:
+                        ticker = self.rest_client.get_ticker_price(order.symbol)
+                        filled_price = float(ticker.get('price', order.trigger_price))
+                    except:
+                        filled_price = order.trigger_price
+                    
+                    logger.info(f"[反向] 创建持仓: {order.symbol} @ {filled_price}")
+                    
+                    # 标记条件单已触发
+                    self.algo_order_service.mark_order_triggered(order.algo_id, filled_price)
+                    
+                    # 创建持仓并下 TP/SL
+                    position = self.position_service.create_position_from_algo_order(order, filled_price)
+                    
+                    if position:
+                        logger.info(f"[反向] ✅ 持仓已创建: {order.symbol} {position.side} @ {filled_price}")
+                        logger.info(f"[反向]    TP={position.tp_price} SL={position.sl_price}")
+                    
+                    # 移除已处理的条件单
+                    self.algo_order_service.remove_order(order.algo_id)
+                
+                # 同步持仓状态
                 self.position_service.sync_from_api()
                 
             except Exception as e:
-                logger.error(f"[反向] 定时同步失败: {e}")
+                logger.error(f"[反向] 定时同步失败: {e}", exc_info=True)
         
         logger.info("[反向] 定时同步线程已退出")
     

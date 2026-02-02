@@ -388,7 +388,7 @@ class BinanceUserDataWSClient:
     
     def _on_open(self, ws):
         """连接建立回调"""
-        logger.info("用户数据流 WebSocket 连接建立")
+        logger.info(f"[UserDataWS] ✅ WebSocket 连接建立成功 (listenKey={self.listen_key[:20]}...)")
     
     def _on_message(self, ws, message):
         """消息接收回调"""
@@ -396,14 +396,24 @@ class BinanceUserDataWSClient:
             data = json.loads(message)
             event_type = data.get('e')
             
+            # 打印所有收到的消息（便于调试）
+            if event_type:
+                logger.info(f"[UserDataWS] 📥 收到事件: {event_type}")
+            
             if event_type == 'ACCOUNT_UPDATE':
-                # 账户更新事件
+                logger.info(f"[UserDataWS] ACCOUNT_UPDATE 事件")
                 self.on_event_callback('ACCOUNT_UPDATE', data)
             elif event_type == 'ORDER_TRADE_UPDATE':
-                # 订单更新事件
+                order_info = data.get('o', {})
+                symbol = order_info.get('s', '')
+                status = order_info.get('X', '')
+                order_type = order_info.get('ot', '')
+                logger.info(f"[UserDataWS] ORDER_TRADE_UPDATE: {symbol} type={order_type} status={status}")
                 self.on_event_callback('ORDER_TRADE_UPDATE', data)
+            elif event_type == 'listenKeyExpired':
+                logger.warning(f"[UserDataWS] ⚠️ listenKey 已过期！需要重新连接")
             else:
-                logger.debug(f"收到其他事件类型: {event_type}")
+                logger.debug(f"[UserDataWS] 收到其他事件类型: {event_type}")
         
         except json.JSONDecodeError:
             logger.error(f"用户数据流 JSON 解析失败: {message[:100]}")
@@ -412,11 +422,11 @@ class BinanceUserDataWSClient:
     
     def _on_error(self, ws, error):
         """错误回调"""
-        logger.error(f"用户数据流 WebSocket 错误: {error}")
+        logger.error(f"[UserDataWS] ❌ WebSocket 错误: {error}")
     
     def _on_close(self, ws, close_status_code, close_msg):
         """连接关闭回调"""
-        logger.warning(f"用户数据流 WebSocket 关闭: {close_status_code} - {close_msg}")
+        logger.warning(f"[UserDataWS] ⚠️ WebSocket 关闭: code={close_status_code} msg={close_msg}")
     
     def stop(self):
         """停止用户数据流"""

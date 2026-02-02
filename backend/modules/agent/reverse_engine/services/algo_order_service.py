@@ -326,8 +326,14 @@ class AlgoOrderService:
                 del self.pending_orders[algo_id]
                 self._save_state()
     
-    def sync_from_api(self):
-        """从 API 同步条件单状态"""
+    def sync_from_api(self) -> List[ReverseAlgoOrder]:
+        """从 API 同步条件单状态
+        
+        Returns:
+            已触发的条件单列表（需要后续处理创建持仓）
+        """
+        triggered_orders = []
+        
         try:
             api_orders = self.rest_client.get_algo_open_orders()
             api_order_ids = {str(o.get('algoId')) for o in api_orders}
@@ -337,14 +343,17 @@ class AlgoOrderService:
                     if algo_id not in api_order_ids:
                         order = self.pending_orders[algo_id]
                         if order.status == AlgoOrderStatus.NEW:
-                            logger.info(f"[反向] 条件单 {algo_id} 已不在API中，可能已触发或过期")
+                            logger.info(f"[反向] ⚡ 检测到条件单 {algo_id} ({order.symbol}) 已不在API中，可能已触发")
+                            triggered_orders.append(order)
                 
                 self._save_state()
                 
-            logger.debug(f"[反向] 条件单同步完成: API={len(api_orders)}, 本地={len(self.pending_orders)}")
+            logger.debug(f"[反向] 条件单同步完成: API={len(api_orders)}, 本地={len(self.pending_orders)}, 触发={len(triggered_orders)}")
             
         except Exception as e:
             logger.error(f"[反向] 同步条件单失败: {e}")
+        
+        return triggered_orders
     
     def get_summary(self) -> Dict[str, Any]:
         """获取条件单汇总"""
