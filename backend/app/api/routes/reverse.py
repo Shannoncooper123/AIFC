@@ -297,20 +297,26 @@ async def stop_reverse_engine_api() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _get_or_init_reverse_engine():
+def _get_or_init_reverse_engine(auto_start: bool = False):
     """获取或初始化反向交易引擎实例
     
     自动初始化 live_engine（如果未初始化），然后初始化 reverse_engine。
+    
+    Args:
+        auto_start: 是否自动启动引擎（注册 WebSocket 监听器等）
     """
-    from modules.agent.engine import get_reverse_engine, init_reverse_engine
+    from modules.agent.engine import get_reverse_engine, init_reverse_engine, start_reverse_engine
     from modules.config.settings import get_config
     
     engine = get_reverse_engine()
     if engine is None:
-        # 确保 live_engine 先初始化
         live_engine = _ensure_live_engine_initialized()
         config = get_config()
         engine = init_reverse_engine(live_engine, config)
+    
+    if auto_start and engine and not engine._running:
+        start_reverse_engine()
+    
     return engine
 
 
@@ -319,13 +325,14 @@ async def start_symbol_workflow(symbol: str, interval: str = "15m") -> Dict[str,
     """启动指定币种的 workflow 分析
     
     每根K线收盘时触发 workflow 分析，Agent 开仓后自动创建反向条件单。
+    会自动启动反向交易引擎（注册 WebSocket 监听器）。
     
     Args:
         symbol: 交易对（如 BTCUSDT）
         interval: K线周期（如 15m, 1h, 4h）
     """
     try:
-        engine = _get_or_init_reverse_engine()
+        engine = _get_or_init_reverse_engine(auto_start=True)
         if engine is None:
             raise HTTPException(status_code=503, detail="反向交易引擎初始化失败")
         
