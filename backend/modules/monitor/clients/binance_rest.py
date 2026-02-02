@@ -909,6 +909,14 @@ class BinanceRestClient:
             if tp_result and tp_result.get('algoId'):
                 result['tp_algo_id'] = str(tp_result['algoId'])
                 logger.info(f"[TP/SL] ✅ 止盈单创建成功: {symbol} algoId={result['tp_algo_id']} price={tp_price}")
+        except requests.HTTPError as e:
+            error_detail = ""
+            if e.response is not None:
+                try:
+                    error_detail = e.response.json()
+                except:
+                    error_detail = e.response.text
+            logger.error(f"[TP/SL] ❌ 止盈单创建失败: {symbol} price={tp_price} error={error_detail}")
         except Exception as e:
             logger.error(f"[TP/SL] ❌ 止盈单创建失败: {symbol} price={tp_price} error={e}")
         
@@ -925,6 +933,14 @@ class BinanceRestClient:
             if sl_result and sl_result.get('algoId'):
                 result['sl_algo_id'] = str(sl_result['algoId'])
                 logger.info(f"[TP/SL] ✅ 止损单创建成功: {symbol} algoId={result['sl_algo_id']} price={sl_price}")
+        except requests.HTTPError as e:
+            error_detail = ""
+            if e.response is not None:
+                try:
+                    error_detail = e.response.json()
+                except:
+                    error_detail = e.response.text
+            logger.error(f"[TP/SL] ❌ 止损单创建失败: {symbol} price={sl_price} error={error_detail}")
         except Exception as e:
             logger.error(f"[TP/SL] ❌ 止损单创建失败: {symbol} price={sl_price} error={e}")
         
@@ -948,6 +964,12 @@ class BinanceRestClient:
         Returns:
             API 响应
         """
+        price_precision = self._get_price_precision(symbol)
+        qty_precision = self._get_quantity_precision(symbol)
+        
+        formatted_price = round(trigger_price, price_precision)
+        formatted_qty = round(quantity, qty_precision)
+        
         url = f"{self.base_url}/fapi/v1/algoOrder"
         
         params = {
@@ -956,8 +978,8 @@ class BinanceRestClient:
             'side': side,
             'positionSide': position_side,
             'type': order_type,
-            'quantity': str(quantity),
-            'triggerPrice': str(trigger_price),
+            'quantity': str(formatted_qty),
+            'triggerPrice': str(formatted_price),
             'workingType': working_type,
             'reduceOnly': 'true',
             'timestamp': int(time.time() * 1000)
@@ -968,6 +990,28 @@ class BinanceRestClient:
         response = self.session.post(url, params=params, headers=self._get_headers(), timeout=self.timeout)
         response.raise_for_status()
         return response.json()
+    
+    def _get_price_precision(self, symbol: str) -> int:
+        """获取交易对的价格精度"""
+        try:
+            exchange_info = self.get_exchange_info()
+            for s in exchange_info.get('symbols', []):
+                if s.get('symbol') == symbol:
+                    return s.get('pricePrecision', 4)
+        except:
+            pass
+        return 4
+    
+    def _get_quantity_precision(self, symbol: str) -> int:
+        """获取交易对的数量精度"""
+        try:
+            exchange_info = self.get_exchange_info()
+            for s in exchange_info.get('symbols', []):
+                if s.get('symbol') == symbol:
+                    return s.get('quantityPrecision', 3)
+        except:
+            pass
+        return 3
     
     def cancel_algo_order(self, symbol: str, algo_id: str) -> bool:
         """取消条件单
