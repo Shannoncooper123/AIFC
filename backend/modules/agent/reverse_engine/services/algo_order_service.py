@@ -213,13 +213,21 @@ class AlgoOrderService:
                            f"expires_in={expiration_days}days")
                 
                 # 根据方向选择正确的条件单类型
-                # STOP_MARKET: 买入时价格≥trigger触发，卖出时价格≤trigger触发
-                # TAKE_PROFIT_MARKET: 买入时价格≤trigger触发，卖出时价格≥trigger触发
+                # 
+                # Binance 条件单触发规则：
+                # - STOP_MARKET (BUY): 价格 ≥ trigger 时触发（追涨）
+                # - STOP_MARKET (SELL): 价格 ≤ trigger 时触发（杀跌）
+                # - TAKE_PROFIT_MARKET (BUY): 价格 ≤ trigger 时触发（抄底）
+                # - TAKE_PROFIT_MARKET (SELL): 价格 ≥ trigger 时触发（止盈）
                 # 
                 # 反向交易逻辑：
-                # - Agent做多 → 反向做空 → 需要价格上涨到trigger时做空 → TAKE_PROFIT_MARKET (SELL)
-                # - Agent做空 → 反向做多 → 需要价格下跌到trigger时做多 → TAKE_PROFIT_MARKET (BUY)
-                order_type = 'TAKE_PROFIT_MARKET'
+                # - Agent做多 → 反向做空 → Agent限价买入 → 价格下跌到trigger时做空
+                #   → 需要 SELL + 价格≤trigger → STOP_MARKET (SELL)
+                # - Agent做空 → 反向做多 → Agent限价卖出 → 价格上涨到trigger时做多
+                #   → 需要 BUY + 价格≥trigger → STOP_MARKET (BUY)
+                #
+                # 简化：反向开仓条件单统一使用 STOP_MARKET
+                order_type = 'STOP_MARKET'
                 
                 logger.info(f"[反向] 条件单类型: {order_type} (触发后{side})")
                 

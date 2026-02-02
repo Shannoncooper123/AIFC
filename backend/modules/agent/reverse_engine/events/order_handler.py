@@ -290,6 +290,8 @@ class ReverseOrderHandler:
     def _handle_account_update(self, data: Dict[str, Any]):
         """处理账户更新事件
         
+        当检测到持仓清零时，自动关闭对应的本地记录。
+        
         Args:
             data: 账户更新数据
         """
@@ -298,12 +300,31 @@ class ReverseOrderHandler:
         
         for pos_data in positions:
             symbol = pos_data.get('s', '')
+            position_side = pos_data.get('ps', 'BOTH')
             position_amt = float(pos_data.get('pa', 0))
             mark_price = float(pos_data.get('mp', 0))
+            entry_price = float(pos_data.get('ep', 0))
             
             open_records = self.trade_record_service.get_open_records_by_symbol(symbol)
-            if open_records:
+            if not open_records:
+                continue
+            
+            if mark_price > 0:
                 self.trade_record_service.update_mark_price(symbol, mark_price)
+            
+            if position_amt == 0:
+                logger.info(f"[反向] 📢 {symbol} {position_side} Binance 持仓已清零（ACCOUNT_UPDATE）")
                 
-                if position_amt == 0:
-                    logger.info(f"[反向] {symbol} Binance 持仓已清零（账户更新检测）")
+                for record in open_records:
+                    record_side = 'SHORT' if record.side.upper() in ('SELL', 'SHORT') else 'LONG'
+                    
+                    if position_side == 'BOTH' or position_side == record_side:
+                        close_price = mark_price if mark_price > 0 else record.entry_price
+                        
+                        logger.info(f"[反向] 📕 自动关闭记录: {symbol} {record_side} @ {close_price}")
+                        
+                        self.trade_record_service.close_record(
+                            record_id=record.id,
+                            close_price=close_price,
+                            close_reason='POSITION_CLOSED_EXTERNALLY'
+                        )

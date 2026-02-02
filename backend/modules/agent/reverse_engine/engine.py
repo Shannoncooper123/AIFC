@@ -164,9 +164,13 @@ class ReverseEngine:
         - 定期检查条件单是否已触发
         - 如果 WebSocket 没有收到事件，通过 API 同步来补偿
         - 同步 Binance 上被取消的条件单
+        - 同步 Binance 持仓，关闭本地不存在的记录
         """
         sync_interval = 5
-        logger.info(f"[反向] 定时同步线程已启动（间隔={sync_interval}秒）")
+        position_sync_counter = 0
+        position_sync_interval = 6
+        
+        logger.info(f"[反向] 定时同步线程已启动（间隔={sync_interval}秒，持仓同步间隔={position_sync_interval * sync_interval}秒）")
         
         while self._running:
             try:
@@ -199,10 +203,82 @@ class ReverseEngine:
                     
                     self.algo_order_service.remove_order(order.algo_id)
                 
+                position_sync_counter += 1
+                if position_sync_counter >= position_sync_interval:
+                    position_sync_counter = 0
+                    self._sync_positions_with_binance()
+                
             except Exception as e:
                 logger.error(f"[反向] 定时同步失败: {e}", exc_info=True)
         
         logger.info("[反向] 定时同步线程已退出")
+    
+    def _sync_positions_with_binance(self):
+        """同步本地记录与 Binance 实际持仓
+        
+        检查本地开仓记录对应的 Binance 持仓是否还存在，
+        如果不存在则关闭本地记录。
+        """
+        try:
+            open_records = self.trade_record_service.get_open_records()
+            if not open_records:
+                return
+            
+            account_info = self.rest_client.get_account_info()
+            positions = account_info.get('positions', [])
+            
+            bn_positions = {}
+            for pos in positions:
+                symbol = pos.get('symbol', '')
+                position_side = pos.get('positionSide', 'BOTH')
+                position_amt = float(pos.get('positionAmt', 0))
+                
+                if position_amt != 0:
+                    key = f"{symbol}_{position_side}"
+                    bn_positions[key] = {
+                        'symbol': symbol,
+                        'position_side': position_side,
+                        'position_amt': position_amt,
+                        'mark_price': float(pos.get('markPrice', 0))
+                    }
+            
+            for record in open_records:
+                position_side = 'SHORT' if record.side.upper() in ('SELL', 'SHORT') else 'LONG'
+                key = f"{record.symbol}_{position_side}"
+                
+                if key in bn_positions:
+                    bn_pos = bn_positions[key]
+                    if bn_pos['mark_price'] > 0:
+                        self.trade_record_service.update_mark_price(record.symbol, bn_pos['mark_price'])
+                else:
+                    logger.warning(f"[反向] ⚠️ 本地记录 {record.symbol} {position_side} 在 Binance 上无对应持仓，自动关闭")
+                    
+                    try:
+                        ticker = self.rest_client.get_ticker_price(record.symbol)
+                        close_price = float(ticker.get('price', record.entry_price))
+                    except:
+                        close_price = record.entry_price
+                    
+                    if record.tp_algo_id:
+                        try:
+                            self.rest_client.cancel_algo_order(record.symbol, record.tp_algo_id)
+                        except:
+                            pass
+                    if record.sl_algo_id:
+                        try:
+                            self.rest_client.cancel_algo_order(record.symbol, record.sl_algo_id)
+                        except:
+                            pass
+                    
+                    self.trade_record_service.close_record(
+                        record_id=record.id,
+                        close_price=close_price,
+                        close_reason='POSITION_CLOSED_EXTERNALLY'
+                    )
+                    logger.info(f"[反向] 📕 记录已关闭: {record.symbol} @ {close_price} (外部平仓)")
+            
+        except Exception as e:
+            logger.error(f"[反向] 同步持仓失败: {e}")
     
     def on_agent_limit_order(self, symbol: str, side: str, limit_price: float,
                               tp_price: float, sl_price: float,
