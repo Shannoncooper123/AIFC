@@ -365,7 +365,7 @@ class AlgoOrderService:
         """从 API 同步条件单状态
         
         功能：
-        1. 检测已触发的条件单（不在 API 中）
+        1. 检测已触发的条件单（不在 API 中且有成交记录）
         2. 检测在 Binance 上被取消的条件单（状态为 CANCELLED）
         3. 清理本地不存在于 API 的条件单
         
@@ -395,8 +395,14 @@ class AlgoOrderService:
                             to_remove.append(algo_id)
                     else:
                         if order.status == AlgoOrderStatus.NEW:
-                            logger.info(f"[反向] ⚡ 检测到条件单 {algo_id} ({order.symbol}) 已不在API中，可能已触发")
-                            triggered_orders.append(order)
+                            logger.info(f"[反向] ⚡ 检测到条件单 {algo_id} ({order.symbol}) 已不在API中，验证是否有成交...")
+                            
+                            if self._verify_order_filled(order):
+                                logger.info(f"[反向] ✅ 确认条件单 {algo_id} 已触发（有成交记录）")
+                                triggered_orders.append(order)
+                            else:
+                                logger.warning(f"[反向] ⚠️ 条件单 {algo_id} 消失但无成交记录，可能已取消/过期")
+                            
                             to_remove.append(algo_id)
                 
                 for algo_id in to_remove:
@@ -412,6 +418,49 @@ class AlgoOrderService:
             logger.error(f"[反向] 同步条件单失败: {e}")
         
         return triggered_orders
+    
+    def _verify_order_filled(self, order: ReverseAlgoOrder) -> bool:
+        """验证条件单是否真的触发成交
+        
+        通过查询 Binance 的成交记录来确认条件单是否真的触发了。
+        
+        Args:
+            order: 条件单对象
+            
+        Returns:
+            是否有成交记录
+        """
+        try:
+            from datetime import datetime
+            
+            created_time = datetime.fromisoformat(order.created_at)
+            start_time_ms = int(created_time.timestamp() * 1000)
+            
+            trades = self.rest_client.get_user_trades(
+                symbol=order.symbol,
+                start_time=start_time_ms,
+                limit=50
+            )
+            
+            if not trades:
+                return False
+            
+            is_buy = order.side.upper() in ('BUY', 'LONG')
+            expected_side = 'BUY' if is_buy else 'SELL'
+            
+            for trade in trades:
+                trade_side = trade.get('side', '')
+                trade_qty = float(trade.get('qty', 0))
+                
+                if trade_side == expected_side and abs(trade_qty - order.quantity) < order.quantity * 0.1:
+                    logger.info(f"[反向] 找到匹配的成交记录: {order.symbol} {trade_side} qty={trade_qty}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"[反向] 验证成交记录失败: {order.symbol} error={e}")
+            return False
     
     def get_summary(self) -> Dict[str, Any]:
         """获取条件单汇总"""
