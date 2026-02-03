@@ -164,6 +164,7 @@ class ReverseEngine:
         - 定期检查条件单是否已触发
         - 如果 WebSocket 没有收到事件，通过 API 同步来补偿
         - 同步 Binance 上被取消的条件单
+        - 同步止盈止损条件单的触发情况
         - 同步 Binance 持仓，关闭本地不存在的记录
         """
         sync_interval = 5
@@ -185,8 +186,8 @@ class ReverseEngine:
                     logger.info(f"[反向] 🔄 通过定时同步检测到条件单触发: {order.symbol} algoId={order.algo_id}")
                     
                     try:
-                        ticker = self.rest_client.get_ticker_price(order.symbol)
-                        filled_price = float(ticker.get('price', order.trigger_price))
+                        mark_price_data = self.rest_client.get_mark_price(order.symbol)
+                        filled_price = float(mark_price_data.get('markPrice', order.trigger_price))
                     except:
                         filled_price = order.trigger_price
                     
@@ -203,6 +204,8 @@ class ReverseEngine:
                     
                     self.algo_order_service.remove_order(order.algo_id)
                 
+                self._sync_tp_sl_orders()
+                
                 position_sync_counter += 1
                 if position_sync_counter >= position_sync_interval:
                     position_sync_counter = 0
@@ -212,6 +215,82 @@ class ReverseEngine:
                 logger.error(f"[反向] 定时同步失败: {e}", exc_info=True)
         
         logger.info("[反向] 定时同步线程已退出")
+    
+    def _sync_tp_sl_orders(self):
+        """同步止盈止损条件单状态
+        
+        作为 WebSocket 的兜底机制，检查止盈止损条件单是否已触发。
+        如果某个止盈/止损单不在 API 返回的活跃条件单中，说明已触发或被取消。
+        """
+        try:
+            open_records = self.trade_record_service.get_open_records()
+            if not open_records:
+                return
+            
+            api_orders = self.rest_client.get_algo_open_orders()
+            active_algo_ids = {str(o.get('algoId')) for o in api_orders}
+            
+            for record in open_records:
+                tp_triggered = False
+                sl_triggered = False
+                
+                if record.tp_algo_id and record.tp_algo_id not in active_algo_ids:
+                    logger.info(f"[反向] 🔄 通过定时同步检测到止盈单已触发/取消: {record.symbol} algoId={record.tp_algo_id}")
+                    tp_triggered = True
+                
+                if record.sl_algo_id and record.sl_algo_id not in active_algo_ids:
+                    logger.info(f"[反向] 🔄 通过定时同步检测到止损单已触发/取消: {record.symbol} algoId={record.sl_algo_id}")
+                    sl_triggered = True
+                
+                if tp_triggered and not sl_triggered:
+                    try:
+                        mark_price_data = self.rest_client.get_mark_price(record.symbol)
+                        close_price = float(mark_price_data.get('markPrice', record.tp_price))
+                    except:
+                        close_price = record.tp_price
+                    
+                    logger.info(f"[反向] 🎯 止盈单已触发（定时同步）: {record.symbol} @ {close_price}")
+                    
+                    if record.sl_algo_id:
+                        try:
+                            self.rest_client.cancel_algo_order(record.symbol, record.sl_algo_id)
+                            logger.info(f"[反向] 🚫 取消止损单: {record.symbol} algoId={record.sl_algo_id}")
+                        except:
+                            pass
+                    
+                    self.trade_record_service.close_record(
+                        record_id=record.id,
+                        close_price=close_price,
+                        close_reason='TP_CLOSED'
+                    )
+                
+                elif sl_triggered and not tp_triggered:
+                    try:
+                        mark_price_data = self.rest_client.get_mark_price(record.symbol)
+                        close_price = float(mark_price_data.get('markPrice', record.sl_price))
+                    except:
+                        close_price = record.sl_price
+                    
+                    logger.info(f"[反向] 🛑 止损单已触发（定时同步）: {record.symbol} @ {close_price}")
+                    
+                    if record.tp_algo_id:
+                        try:
+                            self.rest_client.cancel_algo_order(record.symbol, record.tp_algo_id)
+                            logger.info(f"[反向] 🚫 取消止盈单: {record.symbol} algoId={record.tp_algo_id}")
+                        except:
+                            pass
+                    
+                    self.trade_record_service.close_record(
+                        record_id=record.id,
+                        close_price=close_price,
+                        close_reason='SL_CLOSED'
+                    )
+                
+                elif tp_triggered and sl_triggered:
+                    logger.warning(f"[反向] ⚠️ 止盈止损单同时消失: {record.symbol}，可能已被外部平仓")
+                    
+        except Exception as e:
+            logger.error(f"[反向] 同步止盈止损单失败: {e}")
     
     def _sync_positions_with_binance(self):
         """同步本地记录与 Binance 实际持仓
@@ -254,8 +333,8 @@ class ReverseEngine:
                     logger.warning(f"[反向] ⚠️ 本地记录 {record.symbol} {position_side} 在 Binance 上无对应持仓，自动关闭")
                     
                     try:
-                        ticker = self.rest_client.get_ticker_price(record.symbol)
-                        close_price = float(ticker.get('price', record.entry_price))
+                        mark_price_data = self.rest_client.get_mark_price(record.symbol)
+                        close_price = float(mark_price_data.get('markPrice', record.entry_price))
                     except:
                         close_price = record.entry_price
                     
