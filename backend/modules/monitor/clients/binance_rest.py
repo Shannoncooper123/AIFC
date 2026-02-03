@@ -652,23 +652,25 @@ class BinanceRestClient:
         return response.json()
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
-    def get_user_trades(self, symbol: str, start_time: Optional[int] = None,
-                        end_time: Optional[int] = None, from_id: Optional[int] = None,
-                        limit: int = 500) -> List[Dict[str, Any]]:
+    def get_user_trades(self, symbol: str, order_id: Optional[int] = None,
+                        start_time: Optional[int] = None, end_time: Optional[int] = None, 
+                        from_id: Optional[int] = None, limit: int = 500) -> List[Dict[str, Any]]:
         """查询账户成交历史
         
         Args:
             symbol: 交易对
+            order_id: 订单ID，查询特定订单的成交记录（推荐使用，更精确）
             start_time: 起始时间戳（毫秒）
             end_time: 结束时间戳（毫秒）
-            from_id: 起始成交ID
+            from_id: 起始成交ID（不能与 startTime/endTime 一起使用）
             limit: 返回数量限制（默认500，最大1000）
             
         Returns:
-            成交记录列表
+            成交记录列表，每条包含 orderId, price, qty, commission, realizedPnl 等
             
         Note:
             - 查询时间范围不能超过7天
+            - 使用 orderId 可以精确查询特定订单的所有成交记录
         """
         url = f"{self.base_url}/fapi/v1/userTrades"
         
@@ -678,6 +680,8 @@ class BinanceRestClient:
             'timestamp': int(time.time() * 1000)
         }
         
+        if order_id is not None:
+            params['orderId'] = order_id
         if start_time is not None:
             params['startTime'] = start_time
         if end_time is not None:
@@ -685,7 +689,6 @@ class BinanceRestClient:
         if from_id is not None:
             params['fromId'] = from_id
         
-        # 签名
         params['signature'] = self._sign_request(params)
         
         response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)

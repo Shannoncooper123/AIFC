@@ -9,12 +9,14 @@
 - 独立管理：条件单状态、开仓记录
 - 使用 Binance 的 TAKE_PROFIT_MARKET 和 STOP_MARKET 条件单管理 TP/SL
 - 不再需要本地价格监控，更加可靠
+- 通过 MarkPriceWS 实时更新持仓盈亏
 """
 
 import threading
 import time
-from typing import Dict, Any, Optional, List, TYPE_CHECKING
+from typing import Dict, Any, Optional, List, Set, TYPE_CHECKING
 from modules.monitor.utils.logger import get_logger
+from modules.monitor.clients.binance_ws import BinanceMarkPriceWSClient
 
 from .config import ConfigManager
 from .services.algo_order_service import AlgoOrderService
@@ -87,6 +89,10 @@ class ReverseEngine:
         
         self.workflow_manager = ReverseWorkflowManager()
         
+        self.mark_price_ws: Optional[BinanceMarkPriceWSClient] = None
+        self._watched_symbols: Set[str] = set()
+        self._price_update_counter = 0
+        
         logger.info("[反向] 反向交易引擎已初始化（v3 - Binance 条件单管理 TP/SL）")
     
     def is_enabled(self) -> bool:
@@ -124,6 +130,8 @@ class ReverseEngine:
                 self._sync_thread = threading.Thread(target=self._periodic_sync_loop, daemon=True)
                 self._sync_thread.start()
                 
+                self._start_mark_price_ws()
+                
                 logger.info("[反向] 反向交易引擎启动完成")
                 logger.info(f"[反向] 待触发条件单: {len(self.algo_order_service.pending_orders)}")
                 logger.info(f"[反向] 当前开仓记录: {len(self.trade_record_service.get_open_records())}")
@@ -144,6 +152,8 @@ class ReverseEngine:
             
             try:
                 self.workflow_manager.stop_all()
+                
+                self._stop_mark_price_ws()
                 
                 if self.live_engine and hasattr(self.live_engine, 'event_dispatcher'):
                     self.live_engine.event_dispatcher.unregister_listener(self.order_handler.handle_event)
@@ -582,3 +592,77 @@ class ReverseEngine:
             'statistics': self.trade_record_service.get_statistics(),
             'tpsl_monitor_status': self.tpsl_monitor.get_status()
         }
+    
+    def _start_mark_price_ws(self):
+        """启动标记价格 WebSocket"""
+        try:
+            self._update_watched_symbols()
+            
+            if not self._watched_symbols:
+                logger.info("[反向] 无需监控的交易对，跳过 MarkPriceWS 启动")
+                return
+            
+            self.mark_price_ws = BinanceMarkPriceWSClient(
+                on_price_update=self._on_mark_price_update,
+                symbols_filter=self._watched_symbols.copy()
+            )
+            self.mark_price_ws.start()
+            logger.info(f"[反向] MarkPriceWS 已启动，监控 {len(self._watched_symbols)} 个交易对")
+            
+        except Exception as e:
+            logger.error(f"[反向] 启动 MarkPriceWS 失败: {e}")
+    
+    def _stop_mark_price_ws(self):
+        """停止标记价格 WebSocket"""
+        if self.mark_price_ws:
+            try:
+                self.mark_price_ws.stop()
+                self.mark_price_ws = None
+                logger.info("[反向] MarkPriceWS 已停止")
+            except Exception as e:
+                logger.error(f"[反向] 停止 MarkPriceWS 失败: {e}")
+    
+    def _update_watched_symbols(self):
+        """更新需要监控的交易对列表"""
+        new_symbols = set()
+        
+        for record in self.trade_record_service.get_open_records():
+            new_symbols.add(record.symbol)
+        
+        for order in self.algo_order_service.pending_orders.values():
+            new_symbols.add(order.symbol)
+        
+        if new_symbols != self._watched_symbols:
+            self._watched_symbols = new_symbols
+            if self.mark_price_ws:
+                self.mark_price_ws.set_symbols_filter(new_symbols)
+                logger.info(f"[反向] 更新监控交易对: {len(new_symbols)} 个")
+    
+    def _on_mark_price_update(self, prices: Dict[str, float]):
+        """处理标记价格更新
+        
+        Args:
+            prices: {symbol: mark_price} 字典
+        """
+        try:
+            updated_symbols = []
+            
+            for symbol, mark_price in prices.items():
+                if symbol in self._watched_symbols:
+                    self.trade_record_service.update_mark_price(symbol, mark_price)
+                    updated_symbols.append(symbol)
+            
+            if updated_symbols:
+                self._price_update_counter += 1
+                
+                if self._price_update_counter % 5 == 0:
+                    try:
+                        from app.core.events import emit_mark_price_update
+                        
+                        relevant_prices = {s: prices[s] for s in updated_symbols if s in prices}
+                        emit_mark_price_update(relevant_prices)
+                    except Exception as e:
+                        logger.debug(f"[反向] 发送价格更新事件失败: {e}")
+                        
+        except Exception as e:
+            logger.error(f"[反向] 处理标记价格更新失败: {e}")

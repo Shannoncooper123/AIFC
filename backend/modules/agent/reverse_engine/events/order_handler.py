@@ -93,8 +93,7 @@ class ReverseOrderHandler:
         side = order_info.get('S', '')
         order_type = order_info.get('o', '')
         
-        logger.info(f"[反向] 📥 ALGO_UPDATE: {symbol} | status={status} | "
-                   f"algoId={algo_id} | side={side} | type={order_type}")
+        logger.debug(f"[反向] ALGO_UPDATE: {symbol} {status} algoId={algo_id}")
         
         algo_order = self.algo_order_service.get_order(algo_id)
         if algo_order:
@@ -113,6 +112,23 @@ class ReverseOrderHandler:
         
         logger.debug(f"[反向] algoId={algo_id} 不在任何跟踪列表中")
     
+    def _extract_order_id(self, order_info: Dict) -> int:
+        """从 ALGO_UPDATE 事件中提取触发后生成的市价单 ID
+        
+        Args:
+            order_info: ALGO_UPDATE 事件的订单信息
+            
+        Returns:
+            订单ID，如果无法获取则返回 None
+        """
+        ai = order_info.get('ai', '')
+        if ai and ai != '':
+            try:
+                return int(ai)
+            except (ValueError, TypeError):
+                pass
+        return None
+    
     def _handle_entry_order_update(self, algo_id: str, algo_order, status: str, order_info: Dict):
         """处理开仓条件单状态更新
         
@@ -129,11 +145,12 @@ class ReverseOrderHandler:
             if avg_price == 0:
                 avg_price = algo_order.trigger_price
             
-            logger.info(f"[反向] ✅ 开仓条件单已触发: {symbol} algoId={algo_id} price={avg_price}")
+            order_id = self._extract_order_id(order_info)
+            logger.info(f"[反向] ✅ 开仓条件单已触发: {symbol} algoId={algo_id} price={avg_price} orderId={order_id}")
             
             self.algo_order_service.mark_order_triggered(algo_id, avg_price)
             
-            record = self.trade_record_service.create_record(algo_order, avg_price)
+            record = self.trade_record_service.create_record(algo_order, avg_price, order_id=order_id)
             
             if record:
                 logger.info(f"[反向] 📗 开仓记录已创建: {symbol} {record.side} @ {avg_price}")
@@ -145,14 +162,15 @@ class ReverseOrderHandler:
         elif status == 'FINISHED':
             avg_price = float(order_info.get('ap', 0))
             aq = float(order_info.get('aq', 0))
+            order_id = self._extract_order_id(order_info)
             
             logger.info(f"[反向] 开仓条件单已完成: {symbol} algoId={algo_id} "
-                       f"avgPrice={avg_price} filledQty={aq}")
+                       f"avgPrice={avg_price} filledQty={aq} orderId={order_id}")
             
             if algo_id in self.algo_order_service.pending_orders:
                 if avg_price > 0:
                     self.algo_order_service.mark_order_triggered(algo_id, avg_price)
-                    record = self.trade_record_service.create_record(algo_order, avg_price)
+                    record = self.trade_record_service.create_record(algo_order, avg_price, order_id=order_id)
                     if record:
                         logger.info(f"[反向] 📗 开仓记录已创建 (FINISHED): {symbol} @ {avg_price}")
                 
@@ -193,17 +211,17 @@ class ReverseOrderHandler:
             if avg_price == 0:
                 avg_price = record.tp_price
             
-            logger.info(f"[反向] 🎯 止盈单已触发: {symbol} algoId={algo_id} price={avg_price}")
+            order_id = self._extract_order_id(order_info)
+            logger.info(f"[反向] 🎯 {symbol} 止盈触发 @ {avg_price} orderId={order_id}")
             
             self.trade_record_service.cancel_remaining_tp_sl(record, 'TP')
             
             self.trade_record_service.close_record(
                 record_id=record.id,
                 close_price=avg_price,
-                close_reason='TP_CLOSED'
+                close_reason='TP_CLOSED',
+                order_id=order_id
             )
-            
-            logger.info(f"[反向] ✅ 止盈平仓完成: {symbol} @ {avg_price}")
         
         elif status == 'CANCELED':
             logger.info(f"[反向] 止盈单已取消: {symbol} algoId={algo_id}")
@@ -237,17 +255,17 @@ class ReverseOrderHandler:
             if avg_price == 0:
                 avg_price = record.sl_price
             
-            logger.info(f"[反向] 🛑 止损单已触发: {symbol} algoId={algo_id} price={avg_price}")
+            order_id = self._extract_order_id(order_info)
+            logger.info(f"[反向] 🛑 {symbol} 止损触发 @ {avg_price} orderId={order_id}")
             
             self.trade_record_service.cancel_remaining_tp_sl(record, 'SL')
             
             self.trade_record_service.close_record(
                 record_id=record.id,
                 close_price=avg_price,
-                close_reason='SL_CLOSED'
+                close_reason='SL_CLOSED',
+                order_id=order_id
             )
-            
-            logger.info(f"[反向] ✅ 止损平仓完成: {symbol} @ {avg_price}")
         
         elif status == 'CANCELED':
             logger.info(f"[反向] 止损单已取消: {symbol} algoId={algo_id}")
@@ -269,28 +287,20 @@ class ReverseOrderHandler:
         """处理普通订单更新事件 (ORDER_TRADE_UPDATE)
         
         主要用于调试和日志记录。
-        
-        Args:
-            data: 订单更新数据
         """
         order_info = data.get('o', {})
-        
-        order_type = order_info.get('ot', '')
+        symbol = order_info.get('s', '')
         order_status = order_info.get('X', '')
         execution_type = order_info.get('x', '')
-        symbol = order_info.get('s', '')
-        order_id = str(order_info.get('i', ''))
-        side = order_info.get('S', '')
-        position_side = order_info.get('ps', '')
         
-        logger.info(f"[反向] 📥 ORDER_TRADE_UPDATE: {symbol} | type={order_type} | "
-                   f"status={order_status} | exec={execution_type} | "
-                   f"side={side} | positionSide={position_side} | orderId={order_id}")
+        logger.debug(f"[反向] ORDER_TRADE_UPDATE: {symbol} {order_status} exec={execution_type}")
     
     def _handle_account_update(self, data: Dict[str, Any]):
         """处理账户更新事件
         
         当检测到持仓清零时，自动关闭对应的本地记录。
+        注意：如果记录有 TP/SL 条件单，应该等待 ALGO_UPDATE 事件来关闭，
+        以便正确标记关闭原因（TP_CLOSED/SL_CLOSED）。
         
         Args:
             data: 账户更新数据
@@ -303,7 +313,6 @@ class ReverseOrderHandler:
             position_side = pos_data.get('ps', 'BOTH')
             position_amt = float(pos_data.get('pa', 0))
             mark_price = float(pos_data.get('mp', 0))
-            entry_price = float(pos_data.get('ep', 0))
             
             open_records = self.trade_record_service.get_open_records_by_symbol(symbol)
             if not open_records:
@@ -313,15 +322,16 @@ class ReverseOrderHandler:
                 self.trade_record_service.update_mark_price(symbol, mark_price)
             
             if position_amt == 0:
-                logger.info(f"[反向] 📢 {symbol} {position_side} Binance 持仓已清零（ACCOUNT_UPDATE）")
-                
                 for record in open_records:
                     record_side = 'SHORT' if record.side.upper() in ('SELL', 'SHORT') else 'LONG'
                     
                     if position_side == 'BOTH' or position_side == record_side:
-                        close_price = mark_price if mark_price > 0 else record.entry_price
+                        if record.tp_algo_id or record.sl_algo_id:
+                            logger.debug(f"[反向] {symbol} 持仓清零，等待 TP/SL 条件单事件处理")
+                            continue
                         
-                        logger.info(f"[反向] 📕 自动关闭记录: {symbol} {record_side} @ {close_price}")
+                        close_price = mark_price if mark_price > 0 else record.entry_price
+                        logger.info(f"[反向] 📕 外部平仓: {symbol} {record_side} @ {close_price}")
                         
                         self.trade_record_service.close_record(
                             record_id=record.id,

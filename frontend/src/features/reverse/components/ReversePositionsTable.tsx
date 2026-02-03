@@ -1,11 +1,69 @@
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { TrendingUp, TrendingDown, CheckCircle, XCircle, AlertCircle, Target, Shield, Zap } from 'lucide-react';
 import type { ReversePosition } from '../../../types/reverse';
 import { formatPrice, formatPriceChange, calcPriceDistance, formatNumber } from '../../../utils';
+import { useWebSocket } from '../../../hooks/useWebSocket';
 
 interface ReversePositionsTableProps {
   positions: ReversePosition[];
   loading?: boolean;
   onClosePosition?: (recordId: string) => void;
+}
+
+function useRealtimePrices(positions: ReversePosition[]) {
+  const [prices, setPrices] = useState<Record<string, number>>({});
+  
+  const handleMessage = useCallback((event: { type: string; data: Record<string, unknown> }) => {
+    if (event.type === 'mark_price_update') {
+      const newPrices = event.data.prices as Record<string, number>;
+      if (newPrices) {
+        setPrices(prev => ({ ...prev, ...newPrices }));
+      }
+    }
+  }, []);
+  
+  useWebSocket('/ws/events', {
+    onMessage: handleMessage,
+  });
+  
+  useEffect(() => {
+    const initialPrices: Record<string, number> = {};
+    positions.forEach(pos => {
+      if (pos.mark_price) {
+        initialPrices[pos.symbol] = pos.mark_price;
+      }
+    });
+    setPrices(prev => ({ ...initialPrices, ...prev }));
+  }, [positions]);
+  
+  const positionsWithRealtimePrices = useMemo(() => {
+    return positions.map(pos => {
+      const realtimePrice = prices[pos.symbol];
+      if (realtimePrice && realtimePrice !== pos.mark_price) {
+        const newMarkPrice = realtimePrice;
+        const isLong = pos.side === 'LONG' || pos.side.toUpperCase() === 'BUY';
+        
+        let unrealizedPnl: number;
+        if (isLong) {
+          unrealizedPnl = (newMarkPrice - pos.entry_price) * pos.size;
+        } else {
+          unrealizedPnl = (pos.entry_price - newMarkPrice) * pos.size;
+        }
+        
+        const roe = pos.margin > 0 ? (unrealizedPnl / pos.margin) * 100 : 0;
+        
+        return {
+          ...pos,
+          mark_price: newMarkPrice,
+          unrealized_pnl: unrealizedPnl,
+          roe: roe,
+        };
+      }
+      return pos;
+    });
+  }, [positions, prices]);
+  
+  return positionsWithRealtimePrices;
 }
 
 function TPSLStatus({ tpAlgoId, slAlgoId }: { tpAlgoId?: string; slAlgoId?: string }) {
@@ -83,6 +141,8 @@ function PriceDistanceBar({
 }
 
 export function ReversePositionsTable({ positions, loading, onClosePosition }: ReversePositionsTableProps) {
+  const realtimePositions = useRealtimePrices(positions);
+  
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -102,7 +162,7 @@ export function ReversePositionsTable({ positions, loading, onClosePosition }: R
 
   return (
     <div className="space-y-4">
-      {positions.map((pos) => {
+      {realtimePositions.map((pos) => {
         const isLong = pos.side === 'LONG' || pos.side.toUpperCase() === 'BUY';
         const pnl = pos.unrealized_pnl ?? 0;
         const roe = pos.roe ?? 0;

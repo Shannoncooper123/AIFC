@@ -22,6 +22,7 @@ class EventType(str, Enum):
     NEW_ALERT = "new_alert"
     POSITION_UPDATE = "position_update"
     TRADE_EXECUTED = "trade_executed"
+    MARK_PRICE_UPDATE = "mark_price_update"
     
     CONFIG_UPDATED = "config_updated"
     
@@ -207,5 +208,18 @@ def emit_error(error: str, details: Optional[Dict[str, Any]] = None) -> None:
     event = Event(
         type=EventType.ERROR,
         data={"error": error, "details": details or {}}
+    )
+    event_bus.publish_sync(event)
+
+
+def emit_mark_price_update(prices: Dict[str, float]) -> None:
+    """发送标记价格更新事件
+    
+    Args:
+        prices: {symbol: mark_price} 字典
+    """
+    event = Event(
+        type=EventType.MARK_PRICE_UPDATE,
+        data={"prices": prices}
     )
     event_bus.publish_sync(event)
