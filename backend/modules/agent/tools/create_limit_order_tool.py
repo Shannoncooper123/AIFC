@@ -181,11 +181,11 @@ def create_limit_order_tool(
             available_balance = account_balance - reserved_margin
             max_margin_for_new_position = available_balance * 0.05
             if margin_usdt > max_margin_for_new_position:
-                logger.error(
-                    f"create_limit_order_tool: 保证金超限！请求={margin_usdt:.2f}U，上限={max_margin_for_new_position:.2f}U (可用={available_balance:.2f}U × 5%)"
-                )
-                return make_input_error(
-                    f"保证金超限：当前可用保证金={available_balance:.2f}U，单仓上限={max_margin_for_new_position:.2f}U（5%）"
+                original_margin = margin_usdt
+                margin_usdt = max_margin_for_new_position
+                logger.warning(
+                    f"create_limit_order_tool: 保证金超限，自动调整！"
+                    f"请求={original_margin:.2f}U → 调整为={margin_usdt:.2f}U (可用={available_balance:.2f}U × 5%)"
                 )
         except Exception as e:
             logger.warning(f"保证金上限校验时出错（继续执行）: {e}")

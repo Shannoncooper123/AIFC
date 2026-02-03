@@ -1,16 +1,62 @@
-import { useState } from 'react';
-import { Clock, X, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Clock, X, TrendingUp, TrendingDown, RefreshCw, Target, Shield, Zap, ArrowRight } from 'lucide-react';
 import type { ReversePendingOrder } from '../../../types/reverse';
-import { formatCurrency, formatNumber, formatTime } from '../../../utils';
+import { formatPrice, formatPriceChange, formatNumber, formatTime } from '../../../utils';
 import { cancelReversePendingOrder } from '../../../services/api/reverse';
 
 interface ReversePendingOrdersTableProps {
   orders: ReversePendingOrder[];
   loading?: boolean;
   onOrderCancelled?: () => void;
+  currentPrices?: Record<string, number>;
 }
 
-export function ReversePendingOrdersTable({ orders, loading, onOrderCancelled }: ReversePendingOrdersTableProps) {
+function TimeRemaining({ expiresAt }: { expiresAt?: string }) {
+  const [remaining, setRemaining] = useState<string>('');
+  
+  useEffect(() => {
+    if (!expiresAt) {
+      setRemaining('—');
+      return;
+    }
+    
+    const updateRemaining = () => {
+      const now = new Date().getTime();
+      const expiry = new Date(expiresAt).getTime();
+      const diff = expiry - now;
+      
+      if (diff <= 0) {
+        setRemaining('Expired');
+        return;
+      }
+      
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      
+      if (days > 0) {
+        setRemaining(`${days}d ${hours}h`);
+      } else if (hours > 0) {
+        setRemaining(`${hours}h ${minutes}m`);
+      } else {
+        setRemaining(`${minutes}m`);
+      }
+    };
+    
+    updateRemaining();
+    const interval = setInterval(updateRemaining, 60000);
+    return () => clearInterval(interval);
+  }, [expiresAt]);
+  
+  return <span>{remaining}</span>;
+}
+
+export function ReversePendingOrdersTable({ 
+  orders, 
+  loading, 
+  onOrderCancelled,
+  currentPrices = {}
+}: ReversePendingOrdersTableProps) {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const handleCancel = async (algoId: string) => {
@@ -43,93 +89,141 @@ export function ReversePendingOrdersTable({ orders, loading, onOrderCancelled }:
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-neutral-800 text-left text-sm text-neutral-400">
-            <th className="pb-3 font-medium">Symbol</th>
-            <th className="pb-3 font-medium">Side</th>
-            <th className="pb-3 font-medium text-right">Trigger</th>
-            <th className="pb-3 font-medium text-right">Qty</th>
-            <th className="pb-3 font-medium text-right">TP</th>
-            <th className="pb-3 font-medium text-right">SL</th>
-            <th className="pb-3 font-medium text-right">Margin</th>
-            <th className="pb-3 font-medium">Status</th>
-            <th className="pb-3 font-medium">Created</th>
-            <th className="pb-3 font-medium">Expires</th>
-            <th className="pb-3 font-medium text-right">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order) => {
-            const isLong = order.side.toUpperCase() === 'BUY';
+    <div className="space-y-3">
+      {orders.map((order) => {
+        const isLong = order.side.toUpperCase() === 'BUY';
+        const currentPrice = currentPrices[order.symbol];
+        const distancePercent = currentPrice 
+          ? ((order.trigger_price - currentPrice) / currentPrice) * 100 
+          : null;
 
-            return (
-              <tr
-                key={order.algo_id}
-                className="border-b border-neutral-800/50 hover:bg-neutral-800/30 transition-colors"
+        return (
+          <div
+            key={order.algo_id}
+            className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 hover:border-neutral-700 transition-colors"
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-semibold text-white">{order.symbol}</span>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${
+                        isLong
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : 'bg-rose-500/20 text-rose-400'
+                      }`}
+                    >
+                      {isLong ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                      {isLong ? 'LONG' : 'SHORT'}
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded bg-blue-500/20 px-2 py-0.5 text-xs font-medium text-blue-400">
+                      <Zap className="h-3 w-3" />
+                      {order.leverage}x
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-400">
+                      <Clock className="h-3 w-3" />
+                      {order.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1 text-xs text-neutral-500">
+                    <span>Qty: {formatNumber(order.quantity, 4)}</span>
+                    <span>•</span>
+                    <span>Margin: {formatPrice(order.margin_usdt)}</span>
+                    <span>•</span>
+                    <span>ID: #{order.algo_id.slice(-8)}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <button
+                onClick={() => handleCancel(order.algo_id)}
+                disabled={cancellingId === order.algo_id}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/20 px-3 py-1.5 text-sm font-medium text-rose-400 hover:bg-rose-500/30 transition-colors disabled:opacity-50"
               >
-                <td className="py-4">
-                  <span className="font-medium text-white">{order.symbol}</span>
-                </td>
-                <td className="py-4">
-                  <span
-                    className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${
-                      isLong
-                        ? 'bg-emerald-500/20 text-emerald-400'
-                        : 'bg-rose-500/20 text-rose-400'
-                    }`}
-                  >
-                    {isLong ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                    {isLong ? 'LONG' : 'SHORT'}
+                {cancellingId === order.algo_id ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <X className="h-4 w-4" />
+                )}
+                Cancel
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-lg bg-neutral-800/50 p-3">
+                <div className="flex items-center gap-1 text-xs text-amber-500 mb-1">
+                  <ArrowRight className="h-3 w-3" />
+                  Trigger Price
+                </div>
+                <div className="text-sm font-medium text-amber-400">
+                  {formatPrice(order.trigger_price)}
+                </div>
+                {distancePercent !== null && (
+                  <div className={`text-xs ${distancePercent >= 0 ? 'text-neutral-500' : 'text-amber-500'}`}>
+                    {distancePercent >= 0 ? '+' : ''}{distancePercent.toFixed(2)}% from current
+                  </div>
+                )}
+              </div>
+              
+              <div className="rounded-lg bg-neutral-800/50 p-3">
+                <div className="flex items-center gap-1 text-xs text-emerald-500 mb-1">
+                  <Target className="h-3 w-3" />
+                  Take Profit
+                </div>
+                <div className="text-sm font-medium text-emerald-400">
+                  {order.tp_price ? formatPrice(order.tp_price) : '—'}
+                </div>
+                {order.tp_price && (
+                  <div className="text-xs text-neutral-500">
+                    {formatPriceChange(order.trigger_price, order.tp_price)}
+                  </div>
+                )}
+              </div>
+              
+              <div className="rounded-lg bg-neutral-800/50 p-3">
+                <div className="flex items-center gap-1 text-xs text-rose-500 mb-1">
+                  <Shield className="h-3 w-3" />
+                  Stop Loss
+                </div>
+                <div className="text-sm font-medium text-rose-400">
+                  {order.sl_price ? formatPrice(order.sl_price) : '—'}
+                </div>
+                {order.sl_price && (
+                  <div className="text-xs text-neutral-500">
+                    {formatPriceChange(order.trigger_price, order.sl_price)}
+                  </div>
+                )}
+              </div>
+              
+              <div className="rounded-lg bg-neutral-800/50 p-3">
+                <div className="text-xs text-neutral-500 mb-1">Expires In</div>
+                <div className="text-sm font-medium text-white">
+                  <TimeRemaining expiresAt={order.expires_at} />
+                </div>
+                <div className="text-xs text-neutral-600">
+                  {order.expires_at ? formatTime(order.expires_at) : '—'}
+                </div>
+              </div>
+            </div>
+            
+            {order.agent_side && (
+              <div className="mt-3 pt-3 border-t border-neutral-800">
+                <div className="flex items-center gap-2 text-xs text-neutral-500">
+                  <span>Agent Signal:</span>
+                  <span className={order.agent_side.toUpperCase() === 'BUY' || order.agent_side.toUpperCase() === 'LONG' ? 'text-emerald-400' : 'text-rose-400'}>
+                    {order.agent_side.toUpperCase()}
                   </span>
-                </td>
-                <td className="py-4 text-right text-neutral-300">
-                  {formatCurrency(order.trigger_price)}
-                </td>
-                <td className="py-4 text-right text-neutral-300">
-                  {formatNumber(order.quantity, 4)}
-                </td>
-                <td className="py-4 text-right text-emerald-400">
-                  {order.tp_price ? formatCurrency(order.tp_price) : '-'}
-                </td>
-                <td className="py-4 text-right text-rose-400">
-                  {order.sl_price ? formatCurrency(order.sl_price) : '-'}
-                </td>
-                <td className="py-4 text-right text-neutral-300">
-                  {formatCurrency(order.margin_usdt)}
-                </td>
-                <td className="py-4">
-                  <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-400">
-                    <Clock className="h-3 w-3" />
-                    {order.status}
+                  <span>→</span>
+                  <span className={isLong ? 'text-emerald-400' : 'text-rose-400'}>
+                    Reverse {isLong ? 'LONG' : 'SHORT'}
                   </span>
-                </td>
-                <td className="py-4 text-sm text-neutral-400">
-                  {formatTime(order.created_at)}
-                </td>
-                <td className="py-4 text-sm text-neutral-400">
-                  {order.expires_at ? formatTime(order.expires_at) : '-'}
-                </td>
-                <td className="py-4 text-right">
-                  <button
-                    onClick={() => handleCancel(order.algo_id)}
-                    disabled={cancellingId === order.algo_id}
-                    className="inline-flex items-center gap-1 rounded bg-rose-500/20 px-2 py-1 text-xs font-medium text-rose-400 hover:bg-rose-500/30 transition-colors disabled:opacity-50"
-                  >
-                    {cancellingId === order.algo_id ? (
-                      <RefreshCw className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <X className="h-3 w-3" />
-                    )}
-                    Cancel
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

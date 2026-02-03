@@ -1,6 +1,6 @@
-import { TrendingUp, TrendingDown, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, CheckCircle, XCircle, AlertCircle, Target, Shield, Zap } from 'lucide-react';
 import type { ReversePosition } from '../../../types/reverse';
-import { formatCurrency, formatNumber } from '../../../utils';
+import { formatPrice, formatPriceChange, calcPriceDistance, formatNumber } from '../../../utils';
 
 interface ReversePositionsTableProps {
   positions: ReversePosition[];
@@ -14,26 +14,72 @@ function TPSLStatus({ tpAlgoId, slAlgoId }: { tpAlgoId?: string; slAlgoId?: stri
   
   if (hasTP && hasSL) {
     return (
-      <div className="flex items-center gap-1 text-emerald-400">
-        <CheckCircle className="h-3.5 w-3.5" />
-        <span className="text-xs">Active</span>
+      <div className="flex items-center gap-1.5 text-emerald-400">
+        <CheckCircle className="h-4 w-4" />
+        <span className="text-xs font-medium">Protected</span>
       </div>
     );
   } else if (hasTP || hasSL) {
     return (
-      <div className="flex items-center gap-1 text-amber-400">
-        <AlertCircle className="h-3.5 w-3.5" />
-        <span className="text-xs">{hasTP ? 'TP Only' : 'SL Only'}</span>
+      <div className="flex items-center gap-1.5 text-amber-400">
+        <AlertCircle className="h-4 w-4" />
+        <span className="text-xs font-medium">{hasTP ? 'TP Only' : 'SL Only'}</span>
       </div>
     );
   } else {
     return (
-      <div className="flex items-center gap-1 text-rose-400">
-        <XCircle className="h-3.5 w-3.5" />
-        <span className="text-xs">None</span>
+      <div className="flex items-center gap-1.5 text-rose-400">
+        <XCircle className="h-4 w-4" />
+        <span className="text-xs font-medium">Unprotected</span>
       </div>
     );
   }
+}
+
+function PriceDistanceBar({ 
+  entryPrice, 
+  currentPrice, 
+  tpPrice, 
+  slPrice,
+  isLong 
+}: { 
+  entryPrice: number;
+  currentPrice: number;
+  tpPrice?: number;
+  slPrice?: number;
+  isLong: boolean;
+}) {
+  if (!tpPrice || !slPrice || !currentPrice) return null;
+  
+  const totalRange = Math.abs(tpPrice - slPrice);
+  const currentFromEntry = currentPrice - entryPrice;
+  const progressPercent = isLong 
+    ? ((currentPrice - slPrice) / totalRange) * 100
+    : ((tpPrice - currentPrice) / totalRange) * 100;
+  
+  const clampedProgress = Math.max(0, Math.min(100, progressPercent));
+  
+  return (
+    <div className="mt-2">
+      <div className="flex justify-between text-[10px] text-neutral-500 mb-1">
+        <span>SL</span>
+        <span>Entry</span>
+        <span>TP</span>
+      </div>
+      <div className="relative h-1.5 bg-neutral-700 rounded-full overflow-hidden">
+        <div 
+          className={`absolute h-full rounded-full transition-all duration-300 ${
+            currentFromEntry >= 0 ? 'bg-emerald-500' : 'bg-rose-500'
+          }`}
+          style={{ width: `${clampedProgress}%` }}
+        />
+        <div 
+          className="absolute h-full w-0.5 bg-neutral-400"
+          style={{ left: `${isLong ? ((entryPrice - slPrice) / totalRange) * 100 : ((tpPrice - entryPrice) / totalRange) * 100}%` }}
+        />
+      </div>
+    </div>
+  );
 }
 
 export function ReversePositionsTable({ positions, loading, onClosePosition }: ReversePositionsTableProps) {
@@ -55,123 +101,158 @@ export function ReversePositionsTable({ positions, loading, onClosePosition }: R
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-neutral-800 text-left text-sm text-neutral-400">
-            <th className="pb-3 font-medium">Symbol</th>
-            <th className="pb-3 font-medium">Side</th>
-            <th className="pb-3 font-medium text-right">Size</th>
-            <th className="pb-3 font-medium text-right">Entry</th>
-            <th className="pb-3 font-medium text-right">Mark</th>
-            <th className="pb-3 font-medium text-right">TP</th>
-            <th className="pb-3 font-medium text-right">SL</th>
-            <th className="pb-3 font-medium text-center">TP/SL Orders</th>
-            <th className="pb-3 font-medium text-right">PnL</th>
-            <th className="pb-3 font-medium text-right">ROE</th>
-            <th className="pb-3 font-medium text-right">Margin</th>
-            {onClosePosition && <th className="pb-3 font-medium text-center">Action</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {positions.map((pos) => {
-            const isLong = pos.side === 'LONG';
-            const pnl = pos.unrealized_pnl ?? 0;
-            const roe = pos.roe ?? 0;
-            const isProfitable = pnl >= 0;
+    <div className="space-y-4">
+      {positions.map((pos) => {
+        const isLong = pos.side === 'LONG' || pos.side.toUpperCase() === 'BUY';
+        const pnl = pos.unrealized_pnl ?? 0;
+        const roe = pos.roe ?? 0;
+        const isProfitable = pnl >= 0;
+        
+        const tpDistance = pos.take_profit && pos.mark_price 
+          ? calcPriceDistance(pos.mark_price, pos.take_profit) 
+          : null;
+        const slDistance = pos.stop_loss && pos.mark_price 
+          ? calcPriceDistance(pos.mark_price, pos.stop_loss) 
+          : null;
 
-            return (
-              <tr
-                key={pos.id}
-                className="border-b border-neutral-800/50 hover:bg-neutral-800/30 transition-colors"
-              >
-                <td className="py-4">
-                  <span className="font-medium text-white">{pos.symbol}</span>
-                </td>
-                <td className="py-4">
-                  <span
-                    className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${
-                      isLong
-                        ? 'bg-emerald-500/20 text-emerald-400'
-                        : 'bg-rose-500/20 text-rose-400'
-                    }`}
-                  >
-                    {isLong ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                    {pos.side}
-                  </span>
-                </td>
-                <td className="py-4 text-right text-neutral-300">
-                  {formatNumber(pos.size, 4)}
-                </td>
-                <td className="py-4 text-right text-neutral-300">
-                  {formatCurrency(pos.entry_price)}
-                </td>
-                <td className="py-4 text-right text-neutral-300">
-                  {pos.mark_price ? formatCurrency(pos.mark_price) : '-'}
-                </td>
-                <td className="py-4 text-right">
-                  <div className="flex flex-col items-end">
-                    <span className="text-emerald-400">
-                      {pos.take_profit ? formatCurrency(pos.take_profit) : '-'}
-                    </span>
-                    {pos.tp_algo_id && (
-                      <span className="text-xs text-neutral-500 font-mono">
-                        #{pos.tp_algo_id.slice(-6)}
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td className="py-4 text-right">
-                  <div className="flex flex-col items-end">
-                    <span className="text-rose-400">
-                      {pos.stop_loss ? formatCurrency(pos.stop_loss) : '-'}
-                    </span>
-                    {pos.sl_algo_id && (
-                      <span className="text-xs text-neutral-500 font-mono">
-                        #{pos.sl_algo_id.slice(-6)}
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td className="py-4 text-center">
-                  <TPSLStatus tpAlgoId={pos.tp_algo_id} slAlgoId={pos.sl_algo_id} />
-                </td>
-                <td className={`py-4 text-right font-medium ${isProfitable ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {isProfitable ? '+' : ''}{formatCurrency(pnl)}
-                </td>
-                <td className={`py-4 text-right font-medium ${isProfitable ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {isProfitable ? '+' : ''}{roe.toFixed(2)}%
-                </td>
-                <td className="py-4 text-right text-neutral-300">
-                  {formatCurrency(pos.margin)}
-                </td>
-                {onClosePosition && (
-                  <td className="py-4 text-center">
-                    <button
-                      onClick={() => onClosePosition(pos.id)}
-                      className="rounded bg-rose-500/20 px-3 py-1 text-xs font-medium text-rose-400 hover:bg-rose-500/30 transition-colors"
+        return (
+          <div
+            key={pos.id}
+            className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 hover:border-neutral-700 transition-colors"
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-semibold text-white">{pos.symbol}</span>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${
+                        isLong
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : 'bg-rose-500/20 text-rose-400'
+                      }`}
                     >
-                      Close
-                    </button>
-                  </td>
+                      {isLong ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                      {isLong ? 'LONG' : 'SHORT'}
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded bg-blue-500/20 px-2 py-0.5 text-xs font-medium text-blue-400">
+                      <Zap className="h-3 w-3" />
+                      {pos.leverage}x
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1 text-xs text-neutral-500">
+                    <span>Size: {formatNumber(pos.size, 4)}</span>
+                    <span>•</span>
+                    <span>Margin: {formatPrice(pos.margin)}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-3">
+                <div className={`text-right ${isProfitable ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  <div className="text-lg font-semibold">
+                    {isProfitable ? '+' : ''}{formatPrice(pnl)}
+                  </div>
+                  <div className="text-xs">
+                    ROE: {isProfitable ? '+' : ''}{roe.toFixed(2)}%
+                  </div>
+                </div>
+                {onClosePosition && (
+                  <button
+                    onClick={() => onClosePosition(pos.id)}
+                    className="rounded-lg bg-rose-500/20 px-4 py-2 text-sm font-medium text-rose-400 hover:bg-rose-500/30 transition-colors"
+                  >
+                    Close
+                  </button>
                 )}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <div className="rounded-lg bg-neutral-800/50 p-3">
+                <div className="text-xs text-neutral-500 mb-1">Entry Price</div>
+                <div className="text-sm font-medium text-white">{formatPrice(pos.entry_price)}</div>
+              </div>
+              
+              <div className="rounded-lg bg-neutral-800/50 p-3">
+                <div className="text-xs text-neutral-500 mb-1">Mark Price</div>
+                <div className="text-sm font-medium text-white">
+                  {pos.mark_price ? formatPrice(pos.mark_price) : '—'}
+                </div>
+                {pos.mark_price && pos.entry_price && (
+                  <div className={`text-xs ${pos.mark_price >= pos.entry_price ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {formatPriceChange(pos.entry_price, pos.mark_price)}
+                  </div>
+                )}
+              </div>
+              
+              <div className="rounded-lg bg-neutral-800/50 p-3">
+                <div className="flex items-center gap-1 text-xs text-emerald-500 mb-1">
+                  <Target className="h-3 w-3" />
+                  Take Profit
+                </div>
+                <div className="text-sm font-medium text-emerald-400">
+                  {pos.take_profit ? formatPrice(pos.take_profit) : '—'}
+                </div>
+                {tpDistance !== null && (
+                  <div className="text-xs text-neutral-500">
+                    {tpDistance >= 0 ? '+' : ''}{tpDistance.toFixed(2)}% away
+                  </div>
+                )}
+                {pos.tp_algo_id && (
+                  <div className="text-[10px] text-neutral-600 font-mono mt-1">
+                    #{pos.tp_algo_id.slice(-8)}
+                  </div>
+                )}
+              </div>
+              
+              <div className="rounded-lg bg-neutral-800/50 p-3">
+                <div className="flex items-center gap-1 text-xs text-rose-500 mb-1">
+                  <Shield className="h-3 w-3" />
+                  Stop Loss
+                </div>
+                <div className="text-sm font-medium text-rose-400">
+                  {pos.stop_loss ? formatPrice(pos.stop_loss) : '—'}
+                </div>
+                {slDistance !== null && (
+                  <div className="text-xs text-neutral-500">
+                    {slDistance >= 0 ? '+' : ''}{slDistance.toFixed(2)}% away
+                  </div>
+                )}
+                {pos.sl_algo_id && (
+                  <div className="text-[10px] text-neutral-600 font-mono mt-1">
+                    #{pos.sl_algo_id.slice(-8)}
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="flex items-center justify-between pt-3 border-t border-neutral-800">
+              <TPSLStatus tpAlgoId={pos.tp_algo_id} slAlgoId={pos.sl_algo_id} />
+              
+              <PriceDistanceBar
+                entryPrice={pos.entry_price}
+                currentPrice={pos.mark_price ?? pos.entry_price}
+                tpPrice={pos.take_profit}
+                slPrice={pos.stop_loss}
+                isLong={isLong}
+              />
+            </div>
+          </div>
+        );
+      })}
       
-      <div className="mt-4 flex items-center gap-4 text-xs text-neutral-500">
-        <div className="flex items-center gap-1">
-          <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+      <div className="flex items-center gap-6 text-xs text-neutral-500 pt-2">
+        <div className="flex items-center gap-1.5">
+          <CheckCircle className="h-4 w-4 text-emerald-400" />
           <span>TP/SL orders active on Binance</span>
         </div>
-        <div className="flex items-center gap-1">
-          <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
+        <div className="flex items-center gap-1.5">
+          <AlertCircle className="h-4 w-4 text-amber-400" />
           <span>Partial TP/SL</span>
         </div>
-        <div className="flex items-center gap-1">
-          <XCircle className="h-3.5 w-3.5 text-rose-400" />
+        <div className="flex items-center gap-1.5">
+          <XCircle className="h-4 w-4 text-rose-400" />
           <span>No TP/SL orders</span>
         </div>
       </div>

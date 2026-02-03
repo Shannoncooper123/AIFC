@@ -62,6 +62,67 @@ export function formatCurrency(value: number, currency = 'USD'): string {
 }
 
 /**
+ * 智能格式化价格，根据价格大小自动调整小数位数
+ * 适用于加密货币价格显示，如 BTC ($50000) 和 DOGE ($0.10952)
+ * @param value - 价格数值
+ * @param showDollar - 是否显示美元符号，默认 true
+ * @returns 格式化后的价格字符串
+ */
+export function formatPrice(value: number | undefined | null, showDollar = true): string {
+  if (value === undefined || value === null || isNaN(value)) return '—';
+  
+  let decimals: number;
+  const absValue = Math.abs(value);
+  
+  if (absValue === 0) {
+    decimals = 2;
+  } else if (absValue >= 1000) {
+    decimals = 2;
+  } else if (absValue >= 100) {
+    decimals = 3;
+  } else if (absValue >= 10) {
+    decimals = 4;
+  } else if (absValue >= 1) {
+    decimals = 4;
+  } else if (absValue >= 0.1) {
+    decimals = 5;
+  } else if (absValue >= 0.01) {
+    decimals = 6;
+  } else if (absValue >= 0.001) {
+    decimals = 7;
+  } else {
+    decimals = 8;
+  }
+  
+  const formatted = value.toFixed(decimals);
+  return showDollar ? `$${formatted}` : formatted;
+}
+
+/**
+ * 格式化价格变化百分比
+ * @param current - 当前价格
+ * @param target - 目标价格
+ * @returns 格式化后的百分比字符串，带正负号
+ */
+export function formatPriceChange(current: number, target: number): string {
+  if (!current || !target) return '—';
+  const change = ((target - current) / current) * 100;
+  const sign = change >= 0 ? '+' : '';
+  return `${sign}${change.toFixed(2)}%`;
+}
+
+/**
+ * 计算距离目标价格的百分比
+ * @param current - 当前价格
+ * @param target - 目标价格
+ * @returns 百分比数值
+ */
+export function calcPriceDistance(current: number, target: number): number {
+  if (!current || !target) return 0;
+  return ((target - current) / current) * 100;
+}
+
+/**
  * 格式化百分比
  * @param value - 小数形式的百分比值
  * @param decimals - 小数位数
