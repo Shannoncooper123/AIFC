@@ -146,6 +146,11 @@ export function ReverseHistoryTable({ history, loading }: ReverseHistoryTablePro
                 <div className="text-sm">
                   ROE: {isProfitable ? '+' : ''}{entry.pnl_percent.toFixed(2)}%
                 </div>
+                {(entry.total_commission ?? 0) > 0 && (
+                  <div className="text-xs text-neutral-500 mt-1">
+                    Fee: ${entry.total_commission?.toFixed(4)}
+                  </div>
+                )}
               </div>
             </div>
             

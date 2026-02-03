@@ -94,20 +94,106 @@ class TradeRecordService:
         except Exception as e:
             logger.error(f"[TradeRecord] 保存状态失败: {e}")
     
+    def _fetch_recent_trades(self, symbol: str, start_time_ms: int = None, 
+                             limit: int = 100) -> List[Dict]:
+        """从 Binance API 获取最近的成交记录
+        
+        Args:
+            symbol: 交易对
+            start_time_ms: 起始时间戳（毫秒），默认为当前时间前5分钟
+            limit: 返回数量限制
+            
+        Returns:
+            成交记录列表，每条包含 price, qty, commission, realizedPnl 等
+        """
+        if not self.rest_client:
+            return []
+        
+        try:
+            if start_time_ms is None:
+                start_time_ms = int((datetime.now().timestamp() - 300) * 1000)
+            
+            trades = self.rest_client.get_user_trades(
+                symbol=symbol,
+                start_time=start_time_ms,
+                limit=limit
+            )
+            return trades
+        except Exception as e:
+            logger.warning(f"[TradeRecord] 获取成交记录失败: {symbol} error={e}")
+            return []
+    
+    def _calculate_trade_summary(self, trades: List[Dict], side: str) -> Dict:
+        """计算成交汇总（加权平均价格、总手续费、已实现盈亏）
+        
+        Args:
+            trades: 成交记录列表
+            side: 交易方向 (BUY/SELL/LONG/SHORT)
+            
+        Returns:
+            汇总信息 {avg_price, total_commission, realized_pnl, total_qty}
+        """
+        if not trades:
+            return {'avg_price': None, 'total_commission': 0.0, 'realized_pnl': 0.0, 'total_qty': 0.0}
+        
+        is_buy = side.upper() in ('BUY', 'LONG')
+        
+        relevant_trades = []
+        for t in trades:
+            trade_side = t.get('side', '')
+            if is_buy and trade_side == 'BUY':
+                relevant_trades.append(t)
+            elif not is_buy and trade_side == 'SELL':
+                relevant_trades.append(t)
+        
+        if not relevant_trades:
+            return {'avg_price': None, 'total_commission': 0.0, 'realized_pnl': 0.0, 'total_qty': 0.0}
+        
+        total_qty = sum(float(t.get('qty', 0)) for t in relevant_trades)
+        total_value = sum(float(t.get('price', 0)) * float(t.get('qty', 0)) for t in relevant_trades)
+        total_commission = sum(float(t.get('commission', 0)) for t in relevant_trades)
+        realized_pnl = sum(float(t.get('realizedPnl', 0)) for t in relevant_trades)
+        
+        avg_price = total_value / total_qty if total_qty > 0 else None
+        
+        return {
+            'avg_price': avg_price,
+            'total_commission': total_commission,
+            'realized_pnl': realized_pnl,
+            'total_qty': total_qty
+        }
+    
     def create_record(self, algo_order: ReverseAlgoOrder, filled_price: float) -> ReverseTradeRecord:
         """从条件单创建开仓记录
         
         创建记录后会自动下止盈止损条件单到 Binance。
+        同时查询 Binance API 获取实际成交价格和手续费。
         
         Args:
             algo_order: 触发的条件单
-            filled_price: 成交价格
+            filled_price: 成交价格（WebSocket 事件中的价格，可能不精确）
             
         Returns:
             创建的开仓记录
         """
         with self._lock:
-            notional = algo_order.quantity * filled_price
+            actual_entry_price = filled_price
+            entry_commission = 0.0
+            
+            trades = self._fetch_recent_trades(algo_order.symbol)
+            if trades:
+                entry_side = 'BUY' if algo_order.side.upper() in ('BUY', 'LONG') else 'SELL'
+                summary = self._calculate_trade_summary(trades, entry_side)
+                
+                if summary['avg_price'] is not None:
+                    actual_entry_price = summary['avg_price']
+                    logger.info(f"[TradeRecord] 📊 从API获取实际开仓价格: {filled_price} -> {actual_entry_price}")
+                
+                entry_commission = summary['total_commission']
+                if entry_commission > 0:
+                    logger.info(f"[TradeRecord] 💰 开仓手续费: {entry_commission:.6f} USDT")
+            
+            notional = algo_order.quantity * actual_entry_price
             margin = notional / algo_order.leverage
             
             position_side = 'SHORT' if algo_order.side.upper() in ('SELL', 'SHORT') else 'LONG'
@@ -117,7 +203,7 @@ class TradeRecordService:
                 symbol=algo_order.symbol,
                 side=algo_order.side,
                 qty=algo_order.quantity,
-                entry_price=filled_price,
+                entry_price=actual_entry_price,
                 tp_price=algo_order.tp_price,
                 sl_price=algo_order.sl_price,
                 leverage=algo_order.leverage,
@@ -127,15 +213,17 @@ class TradeRecordService:
                 algo_order_id=algo_order.algo_id,
                 agent_order_id=algo_order.agent_order_id,
                 open_time=datetime.now().isoformat(),
-                latest_mark_price=filled_price
+                latest_mark_price=actual_entry_price,
+                entry_commission=entry_commission
             )
             
             self.records[record.id] = record
             self._save_state()
             
             logger.info(f"[TradeRecord] ✅ 创建开仓记录: {record.symbol} {record.side} "
-                       f"qty={record.qty} entry={filled_price} "
-                       f"TP={record.tp_price} SL={record.sl_price}")
+                       f"qty={record.qty} entry={actual_entry_price} "
+                       f"TP={record.tp_price} SL={record.sl_price} "
+                       f"commission={entry_commission:.6f}")
             
             if self.rest_client and algo_order.tp_price and algo_order.sl_price:
                 self._place_tp_sl_orders(record, position_side)
@@ -183,9 +271,11 @@ class TradeRecordService:
                      close_reason: str) -> Optional[ReverseTradeRecord]:
         """关闭开仓记录
         
+        同时查询 Binance API 获取实际平仓价格、手续费和已实现盈亏。
+        
         Args:
             record_id: 记录ID
-            close_price: 平仓价格
+            close_price: 平仓价格（WebSocket 事件中的价格，可能不精确）
             close_reason: 平仓原因（TP_CLOSED/SL_CLOSED/MANUAL_CLOSED/POSITION_CLOSED_EXTERNALLY）
             
         Returns:
@@ -201,15 +291,43 @@ class TradeRecordService:
                 logger.warning(f"[TradeRecord] 记录已关闭: {record_id}")
                 return record
             
-            if record.side.upper() in ('LONG', 'BUY'):
-                pnl = (close_price - record.entry_price) * record.qty
-            else:
-                pnl = (record.entry_price - close_price) * record.qty
+            actual_close_price = close_price
+            exit_commission = 0.0
+            api_realized_pnl = None
             
-            record.close_price = close_price
+            trades = self._fetch_recent_trades(record.symbol)
+            if trades:
+                exit_side = 'SELL' if record.side.upper() in ('BUY', 'LONG') else 'BUY'
+                summary = self._calculate_trade_summary(trades, exit_side)
+                
+                if summary['avg_price'] is not None:
+                    actual_close_price = summary['avg_price']
+                    logger.info(f"[TradeRecord] 📊 从API获取实际平仓价格: {close_price} -> {actual_close_price}")
+                
+                exit_commission = summary['total_commission']
+                if exit_commission > 0:
+                    logger.info(f"[TradeRecord] 💰 平仓手续费: {exit_commission:.6f} USDT")
+                
+                if summary['realized_pnl'] != 0:
+                    api_realized_pnl = summary['realized_pnl']
+                    logger.info(f"[TradeRecord] 📈 API返回已实现盈亏: {api_realized_pnl:.6f} USDT")
+            
+            total_commission = record.entry_commission + exit_commission
+            
+            if api_realized_pnl is not None:
+                pnl = api_realized_pnl
+            else:
+                if record.side.upper() in ('LONG', 'BUY'):
+                    pnl = (actual_close_price - record.entry_price) * record.qty - total_commission
+                else:
+                    pnl = (record.entry_price - actual_close_price) * record.qty - total_commission
+            
+            record.close_price = actual_close_price
             record.close_time = datetime.now().isoformat()
             record.realized_pnl = pnl
             record.close_reason = close_reason
+            record.exit_commission = exit_commission
+            record.total_commission = total_commission
             
             try:
                 record.status = TradeRecordStatus(close_reason)
@@ -221,8 +339,9 @@ class TradeRecordService:
             
             pnl_pct = (pnl / record.margin_usdt * 100) if record.margin_usdt > 0 else 0
             logger.info(f"[TradeRecord] 📕 关闭记录: {record.symbol} {record.side} "
-                       f"entry={record.entry_price} close={close_price} "
-                       f"PnL={pnl:.4f} ({pnl_pct:.2f}%) reason={close_reason}")
+                       f"entry={record.entry_price} close={actual_close_price} "
+                       f"PnL={pnl:.4f} ({pnl_pct:.2f}%) "
+                       f"commission={total_commission:.6f} reason={close_reason}")
             
             return record
     
@@ -397,7 +516,10 @@ class TradeRecordService:
                     'close_time': record.close_time,
                     'close_reason': record.close_reason,
                     'algo_order_id': record.algo_order_id,
-                    'agent_order_id': record.agent_order_id
+                    'agent_order_id': record.agent_order_id,
+                    'entry_commission': round(record.entry_commission, 6),
+                    'exit_commission': round(record.exit_commission, 6),
+                    'total_commission': round(record.total_commission, 6)
                 })
             
             return result
@@ -418,6 +540,8 @@ class TradeRecordService:
             win_count = sum(1 for pnl in pnl_list if pnl > 0)
             loss_count = sum(1 for pnl in pnl_list if pnl < 0)
             
+            total_commission = sum(r.total_commission for r in closed_records)
+            
             avg_pnl = total_pnl / len(closed_records) if closed_records else 0
             max_profit = max(pnl_list) if pnl_list else 0
             max_loss = min(pnl_list) if pnl_list else 0
@@ -431,7 +555,8 @@ class TradeRecordService:
                 'avg_pnl': round(avg_pnl, 4),
                 'max_profit': round(max_profit, 4),
                 'max_loss': round(max_loss, 4),
-                'open_count': len(open_records)
+                'open_count': len(open_records),
+                'total_commission': round(total_commission, 6)
             }
     
     def remove_record(self, record_id: str) -> bool:

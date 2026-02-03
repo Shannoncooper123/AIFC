@@ -63,6 +63,9 @@ export interface ReverseHistoryEntry {
   close_reason: string;
   algo_order_id?: string;
   agent_order_id?: string;
+  entry_commission?: number;
+  exit_commission?: number;
+  total_commission?: number;
 }
 
 export interface ReverseStatistics {
@@ -74,6 +77,7 @@ export interface ReverseStatistics {
   avg_pnl: number;
   max_profit: number;
   max_loss: number;
+  total_commission?: number;
 }
 
 export interface ReverseSummary {

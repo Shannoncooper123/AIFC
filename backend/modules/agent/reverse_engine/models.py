@@ -282,6 +282,10 @@ class ReverseTradeRecord:
     
     latest_mark_price: Optional[float] = None
     
+    entry_commission: float = 0.0
+    exit_commission: float = 0.0
+    total_commission: float = 0.0
+    
     def unrealized_pnl(self, mark_price: Optional[float] = None) -> float:
         """计算未实现盈亏"""
         price = mark_price or self.latest_mark_price or self.entry_price
@@ -354,7 +358,10 @@ class ReverseTradeRecord:
             'close_price': self.close_price,
             'realized_pnl': self.realized_pnl,
             'close_reason': self.close_reason,
-            'latest_mark_price': self.latest_mark_price
+            'latest_mark_price': self.latest_mark_price,
+            'entry_commission': self.entry_commission,
+            'exit_commission': self.exit_commission,
+            'total_commission': self.total_commission
         }
     
     @classmethod
@@ -385,5 +392,8 @@ class ReverseTradeRecord:
             close_price=data.get('close_price'),
             realized_pnl=data.get('realized_pnl'),
             close_reason=data.get('close_reason'),
-            latest_mark_price=data.get('latest_mark_price')
+            latest_mark_price=data.get('latest_mark_price'),
+            entry_commission=data.get('entry_commission', 0.0),
+            exit_commission=data.get('exit_commission', 0.0),
+            total_commission=data.get('total_commission', 0.0)
         )
