@@ -252,12 +252,13 @@ class ReverseEngine:
                     logger.info(f"[反向] 🎯 止盈单已触发（定时同步）: {record.symbol} @ {close_price}")
                     
                     if record.sl_algo_id:
-                        try:
-                            self.rest_client.cancel_algo_order(record.symbol, record.sl_algo_id)
-                            logger.info(f"[反向] 🚫 取消止损单: {record.symbol} algoId={record.sl_algo_id}")
-                        except:
-                            pass
+                        if self.rest_client.cancel_algo_order(record.symbol, record.sl_algo_id):
+                            logger.info(f"[反向] 🚫 取消止损单成功: {record.symbol} algoId={record.sl_algo_id}")
+                            record.sl_algo_id = None
+                        else:
+                            logger.warning(f"[反向] ⚠️ 取消止损单失败，将在下次同步时重试: {record.symbol}")
                     
+                    record.tp_algo_id = None
                     self.trade_record_service.close_record(
                         record_id=record.id,
                         close_price=close_price,
@@ -274,12 +275,13 @@ class ReverseEngine:
                     logger.info(f"[反向] 🛑 止损单已触发（定时同步）: {record.symbol} @ {close_price}")
                     
                     if record.tp_algo_id:
-                        try:
-                            self.rest_client.cancel_algo_order(record.symbol, record.tp_algo_id)
-                            logger.info(f"[反向] 🚫 取消止盈单: {record.symbol} algoId={record.tp_algo_id}")
-                        except:
-                            pass
+                        if self.rest_client.cancel_algo_order(record.symbol, record.tp_algo_id):
+                            logger.info(f"[反向] 🚫 取消止盈单成功: {record.symbol} algoId={record.tp_algo_id}")
+                            record.tp_algo_id = None
+                        else:
+                            logger.warning(f"[反向] ⚠️ 取消止盈单失败，将在下次同步时重试: {record.symbol}")
                     
+                    record.sl_algo_id = None
                     self.trade_record_service.close_record(
                         record_id=record.id,
                         close_price=close_price,
@@ -288,9 +290,51 @@ class ReverseEngine:
                 
                 elif tp_triggered and sl_triggered:
                     logger.warning(f"[反向] ⚠️ 止盈止损单同时消失: {record.symbol}，可能已被外部平仓")
+                    record.tp_algo_id = None
+                    record.sl_algo_id = None
+            
+            self._cleanup_orphan_algo_orders(active_algo_ids)
                     
         except Exception as e:
             logger.error(f"[反向] 同步止盈止损单失败: {e}")
+    
+    def _cleanup_orphan_algo_orders(self, active_algo_ids: set):
+        """清理孤儿条件单
+        
+        检查 Binance 上的活跃条件单，如果不在本地跟踪列表中，则取消。
+        
+        Args:
+            active_algo_ids: Binance 上活跃的条件单 ID 集合
+        """
+        try:
+            tracked_algo_ids = set()
+            
+            for algo_id in self.algo_order_service.pending_orders.keys():
+                tracked_algo_ids.add(algo_id)
+            
+            for record in self.trade_record_service.records.values():
+                if record.tp_algo_id:
+                    tracked_algo_ids.add(record.tp_algo_id)
+                if record.sl_algo_id:
+                    tracked_algo_ids.add(record.sl_algo_id)
+            
+            orphan_ids = active_algo_ids - tracked_algo_ids
+            
+            if orphan_ids:
+                logger.warning(f"[反向] 发现 {len(orphan_ids)} 个孤儿条件单，尝试清理...")
+                
+                api_orders = self.rest_client.get_algo_open_orders()
+                algo_id_to_symbol = {str(o.get('algoId')): o.get('symbol') for o in api_orders}
+                
+                for algo_id in orphan_ids:
+                    symbol = algo_id_to_symbol.get(algo_id, 'UNKNOWN')
+                    if self.rest_client.cancel_algo_order(symbol, algo_id):
+                        logger.info(f"[反向] 🗑️ 清理孤儿条件单成功: {symbol} algoId={algo_id}")
+                    else:
+                        logger.warning(f"[反向] ⚠️ 清理孤儿条件单失败: {symbol} algoId={algo_id}")
+                        
+        except Exception as e:
+            logger.error(f"[反向] 清理孤儿条件单失败: {e}")
     
     def _sync_positions_with_binance(self):
         """同步本地记录与 Binance 实际持仓
@@ -339,15 +383,18 @@ class ReverseEngine:
                         close_price = record.entry_price
                     
                     if record.tp_algo_id:
-                        try:
-                            self.rest_client.cancel_algo_order(record.symbol, record.tp_algo_id)
-                        except:
-                            pass
+                        if self.rest_client.cancel_algo_order(record.symbol, record.tp_algo_id):
+                            logger.info(f"[反向] 🚫 取消止盈单成功: {record.symbol} algoId={record.tp_algo_id}")
+                        else:
+                            logger.warning(f"[反向] ⚠️ 取消止盈单失败: {record.symbol} algoId={record.tp_algo_id}")
+                        record.tp_algo_id = None
+                        
                     if record.sl_algo_id:
-                        try:
-                            self.rest_client.cancel_algo_order(record.symbol, record.sl_algo_id)
-                        except:
-                            pass
+                        if self.rest_client.cancel_algo_order(record.symbol, record.sl_algo_id):
+                            logger.info(f"[反向] 🚫 取消止损单成功: {record.symbol} algoId={record.sl_algo_id}")
+                        else:
+                            logger.warning(f"[反向] ⚠️ 取消止损单失败: {record.symbol} algoId={record.sl_algo_id}")
+                        record.sl_algo_id = None
                     
                     self.trade_record_service.close_record(
                         record_id=record.id,
