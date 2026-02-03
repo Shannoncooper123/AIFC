@@ -369,6 +369,8 @@ class AlgoOrderService:
         2. 检测在 Binance 上被取消的条件单（状态为 CANCELLED）
         3. 清理本地不存在于 API 的条件单
         
+        注意：新创建的条件单有30秒保护期，避免因 API 延迟被误删
+        
         Returns:
             已触发的条件单列表（需要后续处理创建持仓）
         """
@@ -384,6 +386,7 @@ class AlgoOrderService:
             
             with self._lock:
                 to_remove = []
+                now = datetime.now()
                 
                 for algo_id in list(self.pending_orders.keys()):
                     order = self.pending_orders[algo_id]
@@ -395,6 +398,16 @@ class AlgoOrderService:
                             to_remove.append(algo_id)
                     else:
                         if order.status == AlgoOrderStatus.NEW:
+                            try:
+                                created_time = datetime.fromisoformat(order.created_at)
+                                age_seconds = (now - created_time).total_seconds()
+                            except:
+                                age_seconds = 999
+                            
+                            if age_seconds < 30:
+                                logger.debug(f"[反向] 条件单 {algo_id} 创建不足30秒，跳过同步检查")
+                                continue
+                            
                             logger.info(f"[反向] ⚡ 检测到条件单 {algo_id} ({order.symbol}) 已不在API中，验证是否有成交...")
                             
                             if self._verify_order_filled(order):
