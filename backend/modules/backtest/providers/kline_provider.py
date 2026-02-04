@@ -1,6 +1,7 @@
 """回测K线数据提供者 - 支持本地缓存和按时间切片返回"""
 import contextvars
 import os
+import bisect
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -102,6 +103,7 @@ class BacktestKlineProvider:
         self._default_time = start_time
         
         self._kline_cache: Dict[str, Dict[str, List[Kline]]] = {}
+        self._kline_index: Dict[str, Dict[str, List[int]]] = {}
         
         cfg = get_config()
         cache_dir = cfg.get('backtest', {}).get('kline_cache_dir', 'modules/data/kline_cache')
@@ -210,6 +212,7 @@ class BacktestKlineProvider:
         
         for symbol in self.symbols:
             self._kline_cache[symbol] = {}
+            self._kline_index[symbol] = {}
             logger.info(f"加载 {symbol} 的历史数据...")
             
             for interval in intervals_to_load:
@@ -223,11 +226,13 @@ class BacktestKlineProvider:
                     )
                     
                     self._kline_cache[symbol][interval] = klines
+                    self._kline_index[symbol][interval] = [k.timestamp for k in klines]
                     logger.info(f"  {symbol} {interval}: 加载完成 - {len(klines)} 根K线")
                     
                 except Exception as e:
                     logger.error(f"加载K线数据失败: {symbol} {interval} - {e}")
                     self._kline_cache[symbol][interval] = []
+                    self._kline_index[symbol][interval] = []
         
         if self._fetcher:
             self._fetcher.close()
@@ -291,15 +296,16 @@ class BacktestKlineProvider:
                 return []
         
         all_klines = self._kline_cache[symbol][interval]
+        all_timestamps = self._kline_index.get(symbol, {}).get(interval, [])
         interval_minutes = self._get_interval_minutes(interval)
         
         current_time_ms = int(current_time.timestamp() * 1000)
-        filtered = [k for k in all_klines 
-                   if k.timestamp + interval_minutes * 60 * 1000 <= current_time_ms]
-        
-        result = filtered[-limit:] if len(filtered) > limit else filtered
-        
-        return result
+        cutoff_ms = current_time_ms - interval_minutes * 60 * 1000
+        end_index = bisect.bisect_right(all_timestamps, cutoff_ms)
+        if end_index <= 0:
+            return []
+        start_index = max(0, end_index - limit)
+        return all_klines[start_index:end_index]
     
     def get_current_price(self, symbol: str) -> Optional[float]:
         """获取当前模拟时间的价格
@@ -332,15 +338,17 @@ class BacktestKlineProvider:
             return None
         
         all_klines = self._kline_cache[symbol][interval]
+        all_timestamps = self._kline_index.get(symbol, {}).get(interval, [])
         interval_minutes = self._get_interval_minutes(interval)
         target_time_ms = int(target_time.timestamp() * 1000)
-        
-        for k in all_klines:
-            open_time_ms = k.timestamp
-            close_time_ms = k.timestamp + interval_minutes * 60 * 1000
-            if open_time_ms <= target_time_ms < close_time_ms:
-                return k
-        
+        index = bisect.bisect_right(all_timestamps, target_time_ms) - 1
+        if index < 0:
+            return None
+        kline = all_klines[index]
+        open_time_ms = kline.timestamp
+        close_time_ms = open_time_ms + interval_minutes * 60 * 1000
+        if open_time_ms <= target_time_ms < close_time_ms:
+            return kline
         return None
     
     def get_klines_in_range(
@@ -370,10 +378,10 @@ class BacktestKlineProvider:
             return []
         
         all_klines = self._kline_cache[symbol][interval]
+        all_timestamps = self._kline_index.get(symbol, {}).get(interval, [])
         
         start_ms = int(start_time.timestamp() * 1000)
         end_ms = int(end_time.timestamp() * 1000)
-        
-        filtered = [k for k in all_klines if start_ms <= k.timestamp < end_ms]
-        
-        return filtered
+        start_index = bisect.bisect_left(all_timestamps, start_ms)
+        end_index = bisect.bisect_left(all_timestamps, end_ms)
+        return all_klines[start_index:end_index]

@@ -92,7 +92,10 @@ check_environment() {
     if ! check_command "uv"; then
         log_warn "uv 未安装，正在安装..."
         curl -LsSf https://astral.sh/uv/install.sh | sh
-        export PATH="$HOME/.cargo/bin:$PATH"
+        if [ -f "$HOME/.local/bin/env" ]; then
+            source "$HOME/.local/bin/env"
+        fi
+        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
         if ! check_command "uv"; then
             log_error "uv 安装失败，请手动安装: https://docs.astral.sh/uv/"
             exit 1

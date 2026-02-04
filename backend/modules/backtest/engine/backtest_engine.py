@@ -103,6 +103,8 @@ class BacktestEngine:
         self._result_collector: Optional[ResultCollector] = None
         self._position_logger: Optional[PositionLogger] = None
         self._semaphore: Optional[DynamicSemaphore] = None
+        self._executor_max_workers = max(1, self.config.concurrency)
+        self._executor_resize_target: Optional[int] = None
         
         self._base_dir = get_config().get("agent", {}).get("data_dir", "modules/data")
         self._total_steps = 0
@@ -232,10 +234,12 @@ class BacktestEngine:
         pending_step: Optional[Tuple[int, datetime]] = None
         steps_exhausted = False
         
-        max_workers = max(200, self.config.concurrency * 2)
+        current_executor = ThreadPoolExecutor(max_workers=self._executor_max_workers)
+        executors = [current_executor]
+        executor_counts: Dict[ThreadPoolExecutor, int] = {current_executor: 0}
         
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            pending_futures: Dict[Any, Tuple[int, datetime]] = {}
+        try:
+            pending_futures: Dict[Any, Tuple[int, datetime, ThreadPoolExecutor]] = {}
             
             def get_next_step() -> Optional[Tuple[int, datetime]]:
                 """获取下一个待提交的步骤"""
@@ -255,19 +259,29 @@ class BacktestEngine:
             def submit_available_steps() -> int:
                 """尽可能多地提交步骤，返回成功提交的数量"""
                 nonlocal pending_step
+                nonlocal current_executor
                 submitted = 0
+                target_workers = self._executor_resize_target
+                if target_workers and target_workers > self._executor_max_workers:
+                    self._executor_resize_target = None
+                    new_executor = ThreadPoolExecutor(max_workers=target_workers)
+                    executors.append(new_executor)
+                    executor_counts[new_executor] = 0
+                    self._executor_max_workers = target_workers
+                    current_executor = new_executor
                 while self._semaphore.available > 0:
                     step = get_next_step()
                     if step is None:
                         break
                     step_index, current_time = step
                     if self._semaphore.acquire(timeout=0):
-                        future = executor.submit(
+                        future = current_executor.submit(
                             self._execute_step_with_semaphore, 
                             current_time, 
                             step_index
                         )
-                        pending_futures[future] = (step_index, current_time)
+                        pending_futures[future] = (step_index, current_time, current_executor)
+                        executor_counts[current_executor] = executor_counts.get(current_executor, 0) + 1
                         step_start_times[future] = time.time()
                         submitted += 1
                     else:
@@ -302,8 +316,11 @@ class BacktestEngine:
                     pass
                 
                 for future in done_futures:
-                    step_index, current_time = pending_futures.pop(future)
+                    step_index, current_time, future_executor = pending_futures.pop(future)
                     step_duration = time.time() - step_start_times.pop(future, time.time())
+                    executor_counts[future_executor] = executor_counts.get(future_executor, 1) - 1
+                    if executor_counts[future_executor] <= 0 and future_executor is not current_executor:
+                        future_executor.shutdown(wait=False)
                     
                     try:
                         workflow_run_id, trade_results, cancelled_orders, is_timeout = future.result(timeout=1)
@@ -346,6 +363,9 @@ class BacktestEngine:
                             duration=step_duration,
                             success=False,
                         ))
+        finally:
+            for executor_item in executors:
+                executor_item.shutdown(wait=False)
     
     def _run_backtest(self) -> None:
         """执行回测主循环"""
@@ -524,6 +544,8 @@ class BacktestEngine:
         if self._semaphore:
             old_max = self._semaphore.max_value
             self._semaphore.set_max_value(new_max)
+            if new_max > self._executor_max_workers:
+                self._executor_resize_target = new_max
             logger.info(f"并发上限已调整: {old_max} -> {new_max}")
             return True
         
