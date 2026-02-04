@@ -378,6 +378,9 @@ class AlgoOrderService:
         
         try:
             api_orders = self.rest_client.get_algo_open_orders()
+            if api_orders is None:
+                logger.warning("[反向] ⚠️ 查询条件单失败（可能限流），跳过本次同步")
+                return triggered_orders
             
             api_order_map = {}
             for o in api_orders:

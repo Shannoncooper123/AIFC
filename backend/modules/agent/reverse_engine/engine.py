@@ -238,6 +238,10 @@ class ReverseEngine:
                 return
             
             api_orders = self.rest_client.get_algo_open_orders()
+            if api_orders is None:
+                logger.warning("[反向] ⚠️ 查询条件单失败（可能限流），跳过本次同步")
+                return
+            
             active_algo_ids = {str(o.get('algoId')) for o in api_orders}
             
             for record in open_records:
@@ -312,6 +316,7 @@ class ReverseEngine:
         """清理孤儿条件单
         
         检查 Binance 上的活跃条件单，如果不在本地跟踪列表中，则取消。
+        为了避免误删刚创建的条件单，只清理创建时间超过 10 秒的条件单。
         
         Args:
             active_algo_ids: Binance 上活跃的条件单 ID 集合
@@ -330,14 +335,43 @@ class ReverseEngine:
             
             orphan_ids = active_algo_ids - tracked_algo_ids
             
-            if orphan_ids:
-                logger.warning(f"[反向] 发现 {len(orphan_ids)} 个孤儿条件单，尝试清理...")
+            if not orphan_ids:
+                return
+            
+            api_orders = self.rest_client.get_algo_open_orders()
+            if api_orders is None:
+                logger.warning("[反向] ⚠️ 查询条件单失败，跳过孤儿清理")
+                return
+            
+            current_time_ms = int(datetime.now().timestamp() * 1000)
+            protection_period_ms = 10 * 1000
+            
+            algo_info_map = {}
+            for o in api_orders:
+                algo_id = str(o.get('algoId'))
+                algo_info_map[algo_id] = {
+                    'symbol': o.get('symbol'),
+                    'create_time': o.get('time', 0)
+                }
+            
+            orphan_to_clean = []
+            for algo_id in orphan_ids:
+                info = algo_info_map.get(algo_id)
+                if not info:
+                    continue
                 
-                api_orders = self.rest_client.get_algo_open_orders()
-                algo_id_to_symbol = {str(o.get('algoId')): o.get('symbol') for o in api_orders}
+                create_time = info.get('create_time', 0)
+                age_ms = current_time_ms - create_time
                 
-                for algo_id in orphan_ids:
-                    symbol = algo_id_to_symbol.get(algo_id, 'UNKNOWN')
+                if age_ms > protection_period_ms:
+                    orphan_to_clean.append((algo_id, info['symbol']))
+                else:
+                    logger.debug(f"[反向] 跳过新创建的条件单: {info['symbol']} algoId={algo_id} age={age_ms/1000:.1f}s")
+            
+            if orphan_to_clean:
+                logger.warning(f"[反向] 发现 {len(orphan_to_clean)} 个孤儿条件单（已过保护期），尝试清理...")
+                
+                for algo_id, symbol in orphan_to_clean:
                     if self.rest_client.cancel_algo_order(symbol, algo_id):
                         logger.info(f"[反向] 🗑️ 清理孤儿条件单成功: {symbol} algoId={algo_id}")
                     else:

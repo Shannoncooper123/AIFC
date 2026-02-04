@@ -796,14 +796,14 @@ class BinanceRestClient:
         return response.json()
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
-    def get_algo_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_algo_open_orders(self, symbol: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
         """查询当前条件单
         
         Args:
             symbol: 交易对（可选）
             
         Returns:
-            条件单列表
+            条件单列表，查询失败时返回 None（而不是空列表，以区分"没有条件单"和"查询失败"）
             
         Note:
             参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/Query-Current-Algo-Open-Orders
@@ -827,7 +827,7 @@ class BinanceRestClient:
             return result if isinstance(result, list) else []
         except Exception as e:
             logger.error(f"[Algo Order] 查询条件单失败: {e}")
-            return []
+            return None
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
     def get_algo_order_history(self, symbol: Optional[str] = None,
