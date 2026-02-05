@@ -527,3 +527,88 @@ def analyze_holding_duration(positions: List[Dict]) -> Dict:
         'avg_minutes': avg_duration,
         'median_minutes': median_duration
     }
+
+
+def analyze_fee_usage(positions: List[Dict], fee_rate: float = 0.00045) -> Dict:
+    print('\n' + '='*80)
+    print('手续费使用情况统计')
+    print('='*80)
+
+    fee_records = []
+    for p in positions:
+        entry_notional = p.get('entry_notional_usdt')
+        exit_notional = p.get('exit_notional_usdt')
+        if entry_notional is None or exit_notional is None:
+            qty = p.get('qty')
+            entry_price = p.get('entry_price')
+            exit_price = p.get('exit_price')
+            notional_usdt = p.get('notional_usdt')
+            if entry_notional is None:
+                if qty is not None and entry_price is not None:
+                    entry_notional = float(qty) * float(entry_price)
+                elif notional_usdt is not None:
+                    entry_notional = float(notional_usdt)
+            if exit_notional is None:
+                if qty is not None and exit_price is not None:
+                    exit_notional = float(qty) * float(exit_price)
+                else:
+                    exit_notional = entry_notional
+
+        if entry_notional is None or exit_notional is None:
+            continue
+
+        fee = (float(entry_notional) + float(exit_notional)) * fee_rate
+        fee_records.append({
+            'fee': fee,
+            'side': p.get('side', ''),
+            'is_win': p.get('is_win', False),
+            'entry_notional': float(entry_notional),
+            'exit_notional': float(exit_notional)
+        })
+
+    if not fee_records:
+        print('  无有效数据')
+        return {}
+
+    fees = [d['fee'] for d in fee_records]
+    total_fee = sum(fees)
+    sorted_fees = sorted(fees)
+    median_fee = sorted_fees[len(sorted_fees) // 2]
+    total_entry_notional = sum(d['entry_notional'] for d in fee_records)
+    total_exit_notional = sum(d['exit_notional'] for d in fee_records)
+    total_notional = total_entry_notional + total_exit_notional
+
+    print(f'\n--- 整体统计 ---')
+    print(f'  交易数: {len(fee_records)}')
+    print(f'  总手续费: ${total_fee:.2f}')
+    print(f'  平均单笔: ${total_fee/len(fee_records):.4f}')
+    print(f'  中位数: ${median_fee:.4f}')
+    print(f'  最小值: ${min(fees):.4f}')
+    print(f'  最大值: ${max(fees):.4f}')
+    print(f'  开仓名义总额: ${total_entry_notional:.2f}')
+    print(f'  平仓名义总额: ${total_exit_notional:.2f}')
+    print(f'  开平合计名义: ${total_notional:.2f}')
+
+    print(f'\n--- 按方向统计 ---')
+    for side_name, side_key in [('做多', 'long'), ('做空', 'short')]:
+        side_data = [d for d in fee_records if d['side'] == side_key]
+        if side_data:
+            side_fees = [d['fee'] for d in side_data]
+            side_entry = sum(d['entry_notional'] for d in side_data)
+            side_exit = sum(d['exit_notional'] for d in side_data)
+            print(f'\n  {side_name}:')
+            print(f'    交易数: {len(side_data)}')
+            print(f'    总手续费: ${sum(side_fees):.2f}')
+            print(f'    平均单笔: ${sum(side_fees)/len(side_data):.4f}')
+            print(f'    开仓名义总额: ${side_entry:.2f}')
+            print(f'    平仓名义总额: ${side_exit:.2f}')
+
+    return {
+        'total_fee': total_fee,
+        'avg_fee': total_fee / len(fee_records),
+        'median_fee': median_fee,
+        'min_fee': min(fees),
+        'max_fee': max(fees),
+        'total_entry_notional': total_entry_notional,
+        'total_exit_notional': total_exit_notional
+    }

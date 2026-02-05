@@ -23,11 +23,12 @@ from analyzers import (
     analyze_entry_to_exit_timing,
     analyze_complete_lifecycle,
     analyze_concurrent_margin,
-    analyze_holding_duration
+    analyze_holding_duration,
+    analyze_fee_usage
 )
 from visualizer import generate_all_charts
 
-DATA_FILE = '/Users/bytedance/Desktop/crypto_agentx/analysis/all_positions.jsonl'
+DATA_FILE = '/home/sunfayao/AIFC2/AIFC/analysis/all_positions.jsonl'
 
 
 def basic_stats(positions):
@@ -135,6 +136,8 @@ def main():
     analyze_entry_to_exit_timing(positions)
     
     analyze_complete_lifecycle(positions)
+
+    analyze_fee_usage(positions)
     
     print_summary_table(long_trades, short_trades)
     

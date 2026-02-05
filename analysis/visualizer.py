@@ -12,12 +12,43 @@ from typing import List, Dict, Any, Optional, Tuple
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MaxNLocator
+from matplotlib import font_manager
 import numpy as np
 
-plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
-plt.rcParams['axes.unicode_minus'] = False
+def configure_chinese_font():
+    font_path = os.environ.get('AIFC_CHINESE_FONT')
+    if font_path and os.path.isfile(font_path):
+        font_manager.fontManager.addfont(font_path)
+        font_name = font_manager.FontProperties(fname=font_path).get_name()
+        plt.rcParams['font.sans-serif'] = [font_name]
+        plt.rcParams['axes.unicode_minus'] = False
+        return
+    preferred_fonts = [
+        'Noto Sans CJK SC',
+        'Noto Sans CJK',
+        'Noto Sans SC',
+        'Microsoft YaHei',
+        'Microsoft YaHei UI',
+        'PingFang SC',
+        'Hiragino Sans GB',
+        'Source Han Sans SC',
+        'WenQuanYi Micro Hei',
+        'SimHei',
+        'Arial Unicode MS',
+        'DejaVu Sans'
+    ]
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    selected = [name for name in preferred_fonts if name in available]
+    if not selected:
+        selected = ['DejaVu Sans']
+    plt.rcParams['font.sans-serif'] = selected
+    plt.rcParams['axes.unicode_minus'] = False
 
-OUTPUT_DIR = '/Users/bytedance/Desktop/crypto_agentx/analysis/charts'
+configure_chinese_font()
+
+# 自动获取当前脚本所在目录的绝对路径，并创建 charts 子目录
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(CURRENT_DIR, 'charts')
 
 
 def ensure_output_dir():
@@ -27,7 +58,7 @@ def ensure_output_dir():
 
 def plot_holding_duration_distribution(positions: List[Dict], save: bool = True, show: bool = False) -> str:
     """
-    绑制持仓时间分布图
+    Plot holding duration distribution
     """
     ensure_output_dir()
     
@@ -38,11 +69,11 @@ def plot_holding_duration_distribution(positions: List[Dict], save: bool = True,
             durations.append(d)
     
     if not durations:
-        print('无有效持仓时间数据')
+        print('No valid holding duration data')
         return ''
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('持仓时间分布分析', fontsize=16, fontweight='bold')
+    fig.suptitle('Holding Duration Analysis', fontsize=16, fontweight='bold')
     
     ax1 = axes[0, 0]
     bins = [0, 15, 30, 60, 120, 240, 480, 1440, max(durations) + 1]
@@ -50,9 +81,9 @@ def plot_holding_duration_distribution(positions: List[Dict], save: bool = True,
     counts, _ = np.histogram(durations, bins=bins)
     colors = plt.cm.Blues(np.linspace(0.3, 0.9, len(labels)))
     bars = ax1.bar(labels, counts, color=colors, edgecolor='black', linewidth=0.5)
-    ax1.set_xlabel('持仓时间区间')
-    ax1.set_ylabel('交易数量')
-    ax1.set_title('持仓时间分布直方图')
+    ax1.set_xlabel('Holding Duration')
+    ax1.set_ylabel('Trade Count')
+    ax1.set_title('Holding Duration Histogram')
     for bar, count in zip(bars, counts):
         if count > 0:
             ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 5, 
@@ -66,17 +97,17 @@ def plot_holding_duration_distribution(positions: List[Dict], save: bool = True,
                        if p.get('side') == 'short' and p.get('entry_to_exit_minutes')]
     
     if long_durations and short_durations:
-        bp = ax2.boxplot([long_durations, short_durations], labels=['做多', '做空'], 
+        bp = ax2.boxplot([long_durations, short_durations], labels=['Long', 'Short'], 
                         patch_artist=True, showfliers=False)
         bp['boxes'][0].set_facecolor('#3498db')
         bp['boxes'][1].set_facecolor('#e74c3c')
-        ax2.set_ylabel('持仓时间 (分钟)')
-        ax2.set_title('做多 vs 做空 持仓时间对比')
+        ax2.set_ylabel('Holding Duration (min)')
+        ax2.set_title('Long vs Short Holding Duration')
         
         long_median = np.median(long_durations)
         short_median = np.median(short_durations)
-        ax2.text(1, long_median, f'中位数: {long_median:.0f}m', ha='left', va='bottom', fontsize=9)
-        ax2.text(2, short_median, f'中位数: {short_median:.0f}m', ha='left', va='bottom', fontsize=9)
+        ax2.text(1, long_median, f'Median: {long_median:.0f}m', ha='left', va='bottom', fontsize=9)
+        ax2.text(2, short_median, f'Median: {short_median:.0f}m', ha='left', va='bottom', fontsize=9)
     
     ax3 = axes[1, 0]
     win_durations = [p.get('entry_to_exit_minutes') for p in positions 
@@ -85,12 +116,12 @@ def plot_holding_duration_distribution(positions: List[Dict], save: bool = True,
                       if not p.get('is_win') and p.get('entry_to_exit_minutes')]
     
     if win_durations and loss_durations:
-        bp = ax3.boxplot([win_durations, loss_durations], labels=['盈利', '亏损'], 
+        bp = ax3.boxplot([win_durations, loss_durations], labels=['Win', 'Loss'], 
                         patch_artist=True, showfliers=False)
         bp['boxes'][0].set_facecolor('#27ae60')
         bp['boxes'][1].set_facecolor('#c0392b')
-        ax3.set_ylabel('持仓时间 (分钟)')
-        ax3.set_title('盈利 vs 亏损 持仓时间对比')
+        ax3.set_ylabel('Holding Duration (min)')
+        ax3.set_title('Win vs Loss Holding Duration')
     
     ax4 = axes[1, 1]
     duration_buckets = [
@@ -119,10 +150,10 @@ def plot_holding_duration_distribution(positions: List[Dict], save: bool = True,
         
         colors_wr = ['#27ae60' if wr >= 55 else '#f39c12' if wr >= 50 else '#c0392b' for wr in win_rates]
         bars = ax4.bar(labels_wr, win_rates, color=colors_wr, edgecolor='black', linewidth=0.5)
-        ax4.axhline(y=50, color='gray', linestyle='--', alpha=0.7, label='50%基准线')
-        ax4.set_xlabel('持仓时间区间')
-        ax4.set_ylabel('胜率 (%)')
-        ax4.set_title('各时间段胜率分布')
+        ax4.axhline(y=50, color='gray', linestyle='--', alpha=0.7, label='50% baseline')
+        ax4.set_xlabel('Holding Duration')
+        ax4.set_ylabel('Win Rate (%)')
+        ax4.set_title('Win Rate by Duration')
         ax4.set_ylim(0, 100)
         
         for bar, wr, count in zip(bars, win_rates, counts_wr):
@@ -134,7 +165,7 @@ def plot_holding_duration_distribution(positions: List[Dict], save: bool = True,
     filepath = os.path.join(OUTPUT_DIR, 'holding_duration_distribution.png')
     if save:
         plt.savefig(filepath, dpi=150, bbox_inches='tight')
-        print(f'图表已保存: {filepath}')
+        print(f'Chart saved: {filepath}')
     
     if show:
         plt.show()
@@ -146,7 +177,7 @@ def plot_holding_duration_distribution(positions: List[Dict], save: bool = True,
 
 def plot_concurrent_margin(positions: List[Dict], save: bool = True, show: bool = False) -> str:
     """
-    绑制并发持仓保证金分析图
+    Plot concurrent margin analysis
     """
     ensure_output_dir()
     
@@ -163,7 +194,7 @@ def plot_concurrent_margin(positions: List[Dict], save: bool = True, show: bool 
             events.append((exit_dt, 'close', margin))
     
     if not events:
-        print('无有效事件数据')
+        print('No valid event data')
         return ''
     
     events.sort(key=lambda x: (x[0], 0 if x[1] == 'open' else 1))
@@ -187,21 +218,21 @@ def plot_concurrent_margin(positions: List[Dict], save: bool = True, show: bool 
         position_counts.append(current_positions)
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('并发持仓保证金分析', fontsize=16, fontweight='bold')
+    fig.suptitle('Concurrent Margin Analysis', fontsize=16, fontweight='bold')
     
     ax1 = axes[0, 0]
     ax1.plot(timestamps, margin_values, color='#3498db', linewidth=0.8, alpha=0.8)
     ax1.fill_between(timestamps, margin_values, alpha=0.3, color='#3498db')
-    ax1.set_xlabel('时间')
-    ax1.set_ylabel('保证金 (USDT)')
-    ax1.set_title('保证金占用时间序列')
+    ax1.set_xlabel('Time')
+    ax1.set_ylabel('Margin (USDT)')
+    ax1.set_title('Margin Over Time')
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
     ax1.xaxis.set_major_locator(mdates.DayLocator(interval=7))
     plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right')
     
     max_margin = max(margin_values)
     max_idx = margin_values.index(max_margin)
-    ax1.annotate(f'峰值: ${max_margin:.0f}', 
+    ax1.annotate(f'Peak: ${max_margin:.0f}', 
                 xy=(timestamps[max_idx], max_margin),
                 xytext=(10, 10), textcoords='offset points',
                 fontsize=9, color='red',
@@ -210,9 +241,9 @@ def plot_concurrent_margin(positions: List[Dict], save: bool = True, show: bool 
     ax2 = axes[0, 1]
     ax2.plot(timestamps, position_counts, color='#e74c3c', linewidth=0.8, alpha=0.8)
     ax2.fill_between(timestamps, position_counts, alpha=0.3, color='#e74c3c')
-    ax2.set_xlabel('时间')
-    ax2.set_ylabel('持仓数量')
-    ax2.set_title('并发持仓数时间序列')
+    ax2.set_xlabel('Time')
+    ax2.set_ylabel('Positions')
+    ax2.set_title('Concurrent Positions Over Time')
     ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
     ax2.xaxis.set_major_locator(mdates.DayLocator(interval=7))
     ax2.yaxis.set_major_locator(MaxNLocator(integer=True))
@@ -246,7 +277,7 @@ def plot_concurrent_margin(positions: List[Dict], save: bool = True, show: bool 
         labels_nz, values_nz, colors_nz = zip(*non_zero)
         wedges, texts, autotexts = ax3.pie(values_nz, labels=labels_nz, autopct='%1.1f%%',
                                            colors=colors_nz, startangle=90)
-        ax3.set_title('保证金占用分布')
+        ax3.set_title('Margin Usage Distribution')
     
     ax4 = axes[1, 1]
     position_buckets = defaultdict(int)
@@ -258,9 +289,9 @@ def plot_concurrent_margin(positions: List[Dict], save: bool = True, show: bool 
     colors_pos = plt.cm.Greens(np.linspace(0.3, 0.9, len(pos_labels)))
     
     bars = ax4.bar([str(x) for x in pos_labels], pos_values, color=colors_pos, edgecolor='black', linewidth=0.5)
-    ax4.set_xlabel('并发持仓数')
-    ax4.set_ylabel('出现次数')
-    ax4.set_title('并发持仓数分布')
+    ax4.set_xlabel('Concurrent Positions')
+    ax4.set_ylabel('Count')
+    ax4.set_title('Concurrent Positions Distribution')
     
     for bar, val in zip(bars, pos_values):
         if val > 0:
@@ -273,7 +304,7 @@ def plot_concurrent_margin(positions: List[Dict], save: bool = True, show: bool 
     filepath = os.path.join(OUTPUT_DIR, 'concurrent_margin_analysis.png')
     if save:
         plt.savefig(filepath, dpi=150, bbox_inches='tight')
-        print(f'图表已保存: {filepath}')
+        print(f'Chart saved: {filepath}')
     
     if show:
         plt.show()
@@ -285,7 +316,7 @@ def plot_concurrent_margin(positions: List[Dict], save: bool = True, show: bool 
 
 def plot_order_to_entry_distribution(positions: List[Dict], save: bool = True, show: bool = False) -> str:
     """
-    绑制下单到成交时间分布图
+    Plot order-to-entry distribution
     """
     ensure_output_dir()
     
@@ -301,11 +332,11 @@ def plot_order_to_entry_distribution(positions: List[Dict], save: bool = True, s
             })
     
     if not order_to_entry:
-        print('无有效下单到成交时间数据')
+        print('No valid order-to-entry data')
         return ''
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('限价单等待成交时间分析 (下单 → 持仓)', fontsize=16, fontweight='bold')
+    fig.suptitle('Limit Order Fill Time Analysis (Order → Entry)', fontsize=16, fontweight='bold')
     
     ax1 = axes[0, 0]
     durations = [d['duration'] for d in order_to_entry]
@@ -316,9 +347,9 @@ def plot_order_to_entry_distribution(positions: List[Dict], save: bool = True, s
     colors = plt.cm.Purples(np.linspace(0.3, 0.9, len(labels)))
     
     bars = ax1.bar(labels, counts, color=colors, edgecolor='black', linewidth=0.5)
-    ax1.set_xlabel('等待成交时间')
-    ax1.set_ylabel('订单数量')
-    ax1.set_title('限价单等待成交时间分布')
+    ax1.set_xlabel('Fill Time')
+    ax1.set_ylabel('Order Count')
+    ax1.set_title('Limit Order Fill Time Distribution')
     
     for bar, count in zip(bars, counts):
         if count > 0:
@@ -331,31 +362,31 @@ def plot_order_to_entry_distribution(positions: List[Dict], save: bool = True, s
     short_wait = [d['duration'] for d in order_to_entry if d['side'] == 'short']
     
     if long_wait and short_wait:
-        bp = ax2.boxplot([long_wait, short_wait], labels=['做多', '做空'], 
+        bp = ax2.boxplot([long_wait, short_wait], labels=['Long', 'Short'], 
                         patch_artist=True, showfliers=False)
         bp['boxes'][0].set_facecolor('#3498db')
         bp['boxes'][1].set_facecolor('#e74c3c')
-        ax2.set_ylabel('等待时间 (分钟)')
-        ax2.set_title('做多 vs 做空 等待成交时间对比')
+        ax2.set_ylabel('Wait Time (min)')
+        ax2.set_title('Long vs Short Fill Time')
         
         long_median = np.median(long_wait)
         short_median = np.median(short_wait)
-        ax2.text(1, long_median, f'中位数: {long_median:.0f}m', ha='left', va='bottom', fontsize=9)
-        ax2.text(2, short_median, f'中位数: {short_median:.0f}m', ha='left', va='bottom', fontsize=9)
+        ax2.text(1, long_median, f'Median: {long_median:.0f}m', ha='left', va='bottom', fontsize=9)
+        ax2.text(2, short_median, f'Median: {short_median:.0f}m', ha='left', va='bottom', fontsize=9)
     
     ax3 = axes[1, 0]
     instant_fill = len([d for d in order_to_entry if d['duration'] <= 5])
     quick_fill = len([d for d in order_to_entry if 5 < d['duration'] <= 30])
     slow_fill = len([d for d in order_to_entry if d['duration'] > 30])
     
-    fill_labels = ['即时成交\n(≤5分钟)', '快速成交\n(5-30分钟)', '慢速成交\n(>30分钟)']
+    fill_labels = ['Instant Fill\n(≤5 min)', 'Quick Fill\n(5-30 min)', 'Slow Fill\n(>30 min)']
     fill_values = [instant_fill, quick_fill, slow_fill]
     fill_colors = ['#27ae60', '#f39c12', '#c0392b']
     
     wedges, texts, autotexts = ax3.pie(fill_values, labels=fill_labels, autopct='%1.1f%%',
                                        colors=fill_colors, startangle=90,
                                        explode=(0.05, 0, 0))
-    ax3.set_title('成交速度分类')
+    ax3.set_title('Fill Speed Categories')
     
     ax4 = axes[1, 1]
     wait_buckets = [
@@ -382,9 +413,9 @@ def plot_order_to_entry_distribution(positions: List[Dict], save: bool = True, s
         colors_wr = ['#27ae60' if wr >= 55 else '#f39c12' if wr >= 50 else '#c0392b' for wr in win_rates]
         bars = ax4.bar(labels_wr, win_rates, color=colors_wr, edgecolor='black', linewidth=0.5)
         ax4.axhline(y=50, color='gray', linestyle='--', alpha=0.7)
-        ax4.set_xlabel('等待成交时间')
-        ax4.set_ylabel('胜率 (%)')
-        ax4.set_title('等待时间与胜率关系')
+        ax4.set_xlabel('Fill Time')
+        ax4.set_ylabel('Win Rate (%)')
+        ax4.set_title('Fill Time vs Win Rate')
         ax4.set_ylim(0, 100)
         
         for bar, wr, count in zip(bars, win_rates, counts_wr):
@@ -396,7 +427,7 @@ def plot_order_to_entry_distribution(positions: List[Dict], save: bool = True, s
     filepath = os.path.join(OUTPUT_DIR, 'order_to_entry_distribution.png')
     if save:
         plt.savefig(filepath, dpi=150, bbox_inches='tight')
-        print(f'图表已保存: {filepath}')
+        print(f'Chart saved: {filepath}')
     
     if show:
         plt.show()
@@ -408,7 +439,7 @@ def plot_order_to_entry_distribution(positions: List[Dict], save: bool = True, s
 
 def plot_entry_to_exit_by_result(positions: List[Dict], save: bool = True, show: bool = False) -> str:
     """
-    绑制持仓到平仓时间分析图（按止盈/止损分类）
+    Plot entry-to-exit duration by result
     """
     ensure_output_dir()
     
@@ -433,32 +464,32 @@ def plot_entry_to_exit_by_result(positions: List[Dict], save: bool = True, show:
                 })
     
     if not tp_durations and not sl_durations:
-        print('无有效持仓时间数据')
+        print('No valid holding duration data')
         return ''
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('持仓到平仓时间分析 (持仓 → 止盈/止损)', fontsize=16, fontweight='bold')
+    fig.suptitle('Entry-to-Exit Duration (TP/SL)', fontsize=16, fontweight='bold')
     
     ax1 = axes[0, 0]
     if tp_durations and sl_durations:
         tp_vals = [d['duration'] for d in tp_durations]
         sl_vals = [d['duration'] for d in sl_durations]
         
-        bp = ax1.boxplot([tp_vals, sl_vals], labels=['止盈', '止损'], 
+        bp = ax1.boxplot([tp_vals, sl_vals], labels=['Take Profit', 'Stop Loss'], 
                         patch_artist=True, showfliers=False)
         bp['boxes'][0].set_facecolor('#27ae60')
         bp['boxes'][1].set_facecolor('#c0392b')
-        ax1.set_ylabel('持仓时间 (分钟)')
-        ax1.set_title('止盈 vs 止损 持仓时间对比')
+        ax1.set_ylabel('Holding Duration (min)')
+        ax1.set_title('TP vs SL Holding Duration')
         
         tp_median = np.median(tp_vals)
         sl_median = np.median(sl_vals)
         tp_avg = np.mean(tp_vals)
         sl_avg = np.mean(sl_vals)
         
-        ax1.text(1.2, tp_median, f'中位数: {tp_median:.0f}m\n平均: {tp_avg:.0f}m', 
+        ax1.text(1.2, tp_median, f'Median: {tp_median:.0f}m\nAvg: {tp_avg:.0f}m', 
                 fontsize=9, va='center')
-        ax1.text(2.2, sl_median, f'中位数: {sl_median:.0f}m\n平均: {sl_avg:.0f}m', 
+        ax1.text(2.2, sl_median, f'Median: {sl_median:.0f}m\nAvg: {sl_avg:.0f}m', 
                 fontsize=9, va='center')
     
     ax2 = axes[0, 1]
@@ -480,12 +511,12 @@ def plot_entry_to_exit_by_result(positions: List[Dict], save: bool = True, show:
     x = np.arange(len(labels))
     width = 0.35
     
-    bars1 = ax2.bar(x - width/2, tp_counts, width, label='止盈', color='#27ae60', edgecolor='black', linewidth=0.5)
-    bars2 = ax2.bar(x + width/2, sl_counts, width, label='止损', color='#c0392b', edgecolor='black', linewidth=0.5)
+    bars1 = ax2.bar(x - width/2, tp_counts, width, label='Take Profit', color='#27ae60', edgecolor='black', linewidth=0.5)
+    bars2 = ax2.bar(x + width/2, sl_counts, width, label='Stop Loss', color='#c0392b', edgecolor='black', linewidth=0.5)
     
-    ax2.set_xlabel('持仓时间区间')
-    ax2.set_ylabel('交易数量')
-    ax2.set_title('止盈/止损 持仓时间分布对比')
+    ax2.set_xlabel('Holding Duration')
+    ax2.set_ylabel('Trade Count')
+    ax2.set_title('TP/SL Duration Distribution')
     ax2.set_xticks(x)
     ax2.set_xticklabels(labels, rotation=45, ha='right')
     ax2.legend()
@@ -496,12 +527,12 @@ def plot_entry_to_exit_by_result(positions: List[Dict], save: bool = True, show:
         short_tp = [d['duration'] for d in tp_durations if d['side'] == 'short']
         
         if long_tp and short_tp:
-            bp = ax3.boxplot([long_tp, short_tp], labels=['做多止盈', '做空止盈'], 
+            bp = ax3.boxplot([long_tp, short_tp], labels=['Long TP', 'Short TP'], 
                             patch_artist=True, showfliers=False)
             bp['boxes'][0].set_facecolor('#3498db')
             bp['boxes'][1].set_facecolor('#9b59b6')
-            ax3.set_ylabel('持仓时间 (分钟)')
-            ax3.set_title('止盈交易: 做多 vs 做空 持仓时间')
+            ax3.set_ylabel('Holding Duration (min)')
+            ax3.set_title('TP Trades: Long vs Short Duration')
     
     ax4 = axes[1, 1]
     if sl_durations:
@@ -509,19 +540,19 @@ def plot_entry_to_exit_by_result(positions: List[Dict], save: bool = True, show:
         short_sl = [d['duration'] for d in sl_durations if d['side'] == 'short']
         
         if long_sl and short_sl:
-            bp = ax4.boxplot([long_sl, short_sl], labels=['做多止损', '做空止损'], 
+            bp = ax4.boxplot([long_sl, short_sl], labels=['Long SL', 'Short SL'], 
                             patch_artist=True, showfliers=False)
             bp['boxes'][0].set_facecolor('#e67e22')
             bp['boxes'][1].set_facecolor('#1abc9c')
-            ax4.set_ylabel('持仓时间 (分钟)')
-            ax4.set_title('止损交易: 做多 vs 做空 持仓时间')
+            ax4.set_ylabel('Holding Duration (min)')
+            ax4.set_title('SL Trades: Long vs Short Duration')
     
     plt.tight_layout()
     
     filepath = os.path.join(OUTPUT_DIR, 'entry_to_exit_by_result.png')
     if save:
         plt.savefig(filepath, dpi=150, bbox_inches='tight')
-        print(f'图表已保存: {filepath}')
+        print(f'Chart saved: {filepath}')
     
     if show:
         plt.show()
@@ -533,7 +564,7 @@ def plot_entry_to_exit_by_result(positions: List[Dict], save: bool = True, show:
 
 def plot_complete_trade_lifecycle(positions: List[Dict], save: bool = True, show: bool = False) -> str:
     """
-    绑制完整交易生命周期分析图
+    Plot complete trade lifecycle
     """
     ensure_output_dir()
     
@@ -553,34 +584,34 @@ def plot_complete_trade_lifecycle(positions: List[Dict], save: bool = True, show
             })
     
     if not valid_positions:
-        print('无有效完整生命周期数据')
+        print('No valid lifecycle data')
         return ''
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('交易完整生命周期分析 (下单 → 持仓 → 平仓)', fontsize=16, fontweight='bold')
+    fig.suptitle('Trade Lifecycle Analysis (Order → Entry → Exit)', fontsize=16, fontweight='bold')
     
     ax1 = axes[0, 0]
     order_to_entry = [p['order_to_entry'] for p in valid_positions]
     entry_to_exit = [p['entry_to_exit'] for p in valid_positions]
     
     ax1.scatter(order_to_entry, entry_to_exit, alpha=0.3, s=20, c='#3498db')
-    ax1.set_xlabel('等待成交时间 (分钟)')
-    ax1.set_ylabel('持仓时间 (分钟)')
-    ax1.set_title('等待成交时间 vs 持仓时间 散点图')
+    ax1.set_xlabel('Fill Time (min)')
+    ax1.set_ylabel('Holding Duration (min)')
+    ax1.set_title('Fill Time vs Holding Duration')
     
-    ax1.axhline(y=np.median(entry_to_exit), color='red', linestyle='--', alpha=0.5, label=f'持仓中位数: {np.median(entry_to_exit):.0f}m')
-    ax1.axvline(x=np.median(order_to_entry), color='green', linestyle='--', alpha=0.5, label=f'等待中位数: {np.median(order_to_entry):.0f}m')
+    ax1.axhline(y=np.median(entry_to_exit), color='red', linestyle='--', alpha=0.5, label=f'Holding Median: {np.median(entry_to_exit):.0f}m')
+    ax1.axvline(x=np.median(order_to_entry), color='green', linestyle='--', alpha=0.5, label=f'Fill Median: {np.median(order_to_entry):.0f}m')
     ax1.legend(fontsize=8)
     
     ax2 = axes[0, 1]
-    categories = ['下单→持仓', '持仓→平仓']
+    categories = ['Order→Entry', 'Entry→Exit']
     avg_order_to_entry = np.mean(order_to_entry)
     avg_entry_to_exit = np.mean(entry_to_exit)
     
     colors = ['#9b59b6', '#e74c3c']
     bars = ax2.bar(categories, [avg_order_to_entry, avg_entry_to_exit], color=colors, edgecolor='black', linewidth=0.5)
-    ax2.set_ylabel('平均时间 (分钟)')
-    ax2.set_title('交易各阶段平均耗时')
+    ax2.set_ylabel('Avg Time (min)')
+    ax2.set_title('Average Time by Stage')
     
     for bar, val in zip(bars, [avg_order_to_entry, avg_entry_to_exit]):
         ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, 
@@ -591,7 +622,7 @@ def plot_complete_trade_lifecycle(positions: List[Dict], save: bool = True, show
     loss_positions = [p for p in valid_positions if not p['is_win']]
     
     if win_positions and loss_positions:
-        categories = ['等待成交', '持仓时间', '总时长']
+        categories = ['Fill', 'Holding', 'Total']
         win_vals = [
             np.mean([p['order_to_entry'] for p in win_positions]),
             np.mean([p['entry_to_exit'] for p in win_positions]),
@@ -606,11 +637,11 @@ def plot_complete_trade_lifecycle(positions: List[Dict], save: bool = True, show
         x = np.arange(len(categories))
         width = 0.35
         
-        bars1 = ax3.bar(x - width/2, win_vals, width, label='盈利', color='#27ae60', edgecolor='black', linewidth=0.5)
-        bars2 = ax3.bar(x + width/2, loss_vals, width, label='亏损', color='#c0392b', edgecolor='black', linewidth=0.5)
+        bars1 = ax3.bar(x - width/2, win_vals, width, label='Win', color='#27ae60', edgecolor='black', linewidth=0.5)
+        bars2 = ax3.bar(x + width/2, loss_vals, width, label='Loss', color='#c0392b', edgecolor='black', linewidth=0.5)
         
-        ax3.set_ylabel('平均时间 (分钟)')
-        ax3.set_title('盈利 vs 亏损 各阶段耗时对比')
+        ax3.set_ylabel('Avg Time (min)')
+        ax3.set_title('Win vs Loss by Stage')
         ax3.set_xticks(x)
         ax3.set_xticklabels(categories)
         ax3.legend()
@@ -624,9 +655,9 @@ def plot_complete_trade_lifecycle(positions: List[Dict], save: bool = True, show
     colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(labels)))
     
     bars = ax4.bar(labels, counts, color=colors, edgecolor='black', linewidth=0.5)
-    ax4.set_xlabel('总时长 (下单到平仓)')
-    ax4.set_ylabel('交易数量')
-    ax4.set_title('交易完整生命周期时长分布')
+    ax4.set_xlabel('Total Duration (Order to Exit)')
+    ax4.set_ylabel('Trade Count')
+    ax4.set_title('Trade Lifecycle Duration Distribution')
     
     for bar, count in zip(bars, counts):
         if count > 0:
@@ -639,7 +670,7 @@ def plot_complete_trade_lifecycle(positions: List[Dict], save: bool = True, show
     filepath = os.path.join(OUTPUT_DIR, 'complete_trade_lifecycle.png')
     if save:
         plt.savefig(filepath, dpi=150, bbox_inches='tight')
-        print(f'图表已保存: {filepath}')
+        print(f'Chart saved: {filepath}')
     
     if show:
         plt.show()
@@ -651,7 +682,7 @@ def plot_complete_trade_lifecycle(positions: List[Dict], save: bool = True, show
 
 def plot_pnl_summary(positions: List[Dict], save: bool = True, show: bool = False) -> str:
     """
-    绑制盈亏汇总图
+    Plot PnL summary
     """
     ensure_output_dir()
     
@@ -659,7 +690,7 @@ def plot_pnl_summary(positions: List[Dict], save: bool = True, show: bool = Fals
     short_trades = [p for p in positions if p.get('side') == 'short']
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('盈亏汇总分析', fontsize=16, fontweight='bold')
+    fig.suptitle('PnL Summary', fontsize=16, fontweight='bold')
     
     ax1 = axes[0, 0]
     long_wins = len([p for p in long_trades if p.get('is_win')])
@@ -670,29 +701,29 @@ def plot_pnl_summary(positions: List[Dict], save: bool = True, show: bool = Fals
     x = np.arange(2)
     width = 0.35
     
-    bars1 = ax1.bar(x - width/2, [long_wins, short_wins], width, label='盈利', color='#27ae60', edgecolor='black', linewidth=0.5)
-    bars2 = ax1.bar(x + width/2, [long_losses, short_losses], width, label='亏损', color='#c0392b', edgecolor='black', linewidth=0.5)
+    bars1 = ax1.bar(x - width/2, [long_wins, short_wins], width, label='Win', color='#27ae60', edgecolor='black', linewidth=0.5)
+    bars2 = ax1.bar(x + width/2, [long_losses, short_losses], width, label='Loss', color='#c0392b', edgecolor='black', linewidth=0.5)
     
-    ax1.set_ylabel('交易数量')
-    ax1.set_title('做多 vs 做空 盈亏次数对比')
+    ax1.set_ylabel('Trade Count')
+    ax1.set_title('Long vs Short Win/Loss Counts')
     ax1.set_xticks(x)
-    ax1.set_xticklabels(['做多', '做空'])
+    ax1.set_xticklabels(['Long', 'Short'])
     ax1.legend()
     
     long_wr = long_wins / len(long_trades) * 100 if long_trades else 0
     short_wr = short_wins / len(short_trades) * 100 if short_trades else 0
-    ax1.text(0, max(long_wins, long_losses) + 20, f'胜率: {long_wr:.1f}%', ha='center', fontsize=10)
-    ax1.text(1, max(short_wins, short_losses) + 20, f'胜率: {short_wr:.1f}%', ha='center', fontsize=10)
+    ax1.text(0, max(long_wins, long_losses) + 20, f'Win Rate: {long_wr:.1f}%', ha='center', fontsize=10)
+    ax1.text(1, max(short_wins, short_losses) + 20, f'Win Rate: {short_wr:.1f}%', ha='center', fontsize=10)
     
     ax2 = axes[0, 1]
     long_pnl = sum(p.get('realized_pnl', 0) for p in long_trades)
     short_pnl = sum(p.get('realized_pnl', 0) for p in short_trades)
     
     colors = ['#27ae60' if pnl >= 0 else '#c0392b' for pnl in [long_pnl, short_pnl]]
-    bars = ax2.bar(['做多', '做空'], [long_pnl, short_pnl], color=colors, edgecolor='black', linewidth=0.5)
+    bars = ax2.bar(['Long', 'Short'], [long_pnl, short_pnl], color=colors, edgecolor='black', linewidth=0.5)
     ax2.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
-    ax2.set_ylabel('总盈亏 (USDT)')
-    ax2.set_title('做多 vs 做空 总盈亏对比')
+    ax2.set_ylabel('Total PnL (USDT)')
+    ax2.set_title('Long vs Short Total PnL')
     
     for bar, pnl in zip(bars, [long_pnl, short_pnl]):
         y_pos = bar.get_height() + 50 if pnl >= 0 else bar.get_height() - 100
@@ -708,9 +739,9 @@ def plot_pnl_summary(positions: List[Dict], save: bool = True, show: bool = Fals
     ax3.fill_between(range(len(cumulative_pnl)), cumulative_pnl, 
                      where=[p < 0 for p in cumulative_pnl], alpha=0.3, color='#c0392b')
     ax3.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
-    ax3.set_xlabel('交易序号')
-    ax3.set_ylabel('累计盈亏 (USDT)')
-    ax3.set_title('累计盈亏曲线')
+    ax3.set_xlabel('Trade Index')
+    ax3.set_ylabel('Cumulative PnL (USDT)')
+    ax3.set_title('Cumulative PnL')
     
     ax4 = axes[1, 1]
     pnl_buckets = defaultdict(int)
@@ -733,9 +764,9 @@ def plot_pnl_summary(positions: List[Dict], save: bool = True, show: bool = Fals
     colors = ['#c0392b', '#e74c3c', '#f39c12', '#f1c40f', '#2ecc71', '#27ae60']
     
     bars = ax4.bar(labels, values, color=colors, edgecolor='black', linewidth=0.5)
-    ax4.set_xlabel('单笔盈亏区间 (USDT)')
-    ax4.set_ylabel('交易数量')
-    ax4.set_title('单笔盈亏分布')
+    ax4.set_xlabel('PnL per Trade (USDT)')
+    ax4.set_ylabel('Trade Count')
+    ax4.set_title('PnL per Trade Distribution')
     
     for bar, val in zip(bars, values):
         if val > 0:
@@ -747,7 +778,7 @@ def plot_pnl_summary(positions: List[Dict], save: bool = True, show: bool = Fals
     filepath = os.path.join(OUTPUT_DIR, 'pnl_summary.png')
     if save:
         plt.savefig(filepath, dpi=150, bbox_inches='tight')
-        print(f'图表已保存: {filepath}')
+        print(f'Chart saved: {filepath}')
     
     if show:
         plt.show()
@@ -757,37 +788,92 @@ def plot_pnl_summary(positions: List[Dict], save: bool = True, show: bool = Fals
     return filepath
 
 
+def plot_fee_summary(positions: List[Dict], save: bool = True, show: bool = False) -> str:
+    ensure_output_dir()
+
+    fees = []
+    sides = []
+    for p in positions:
+        fee = p.get('fees_estimated_usdt')
+        if fee is not None:
+            fees.append(float(fee))
+            sides.append(p.get('side', ''))
+
+    if not fees:
+        print('No valid fee data')
+        return ''
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle('Fee Usage Summary', fontsize=14, fontweight='bold')
+
+    ax1 = axes[0]
+    total_fee = sum(fees)
+    long_fee = sum(f for f, s in zip(fees, sides) if s == 'long')
+    short_fee = sum(f for f, s in zip(fees, sides) if s == 'short')
+    bars = ax1.bar(['Total', 'Long', 'Short'], [total_fee, long_fee, short_fee],
+                   color=['#34495e', '#3498db', '#e74c3c'], edgecolor='black', linewidth=0.5)
+    ax1.set_ylabel('Fee (USDT)')
+    ax1.set_title('Total Fees by Side')
+    for bar, val in zip(bars, [total_fee, long_fee, short_fee]):
+        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.01,
+                 f'${val:.2f}', ha='center', va='bottom', fontsize=9)
+
+    ax2 = axes[1]
+    bins = np.linspace(min(fees), max(fees), 12)
+    ax2.hist(fees, bins=bins, color='#8e44ad', alpha=0.75, edgecolor='black', linewidth=0.5)
+    ax2.set_xlabel('Fee per Trade (USDT)')
+    ax2.set_ylabel('Trade Count')
+    ax2.set_title('Fee per Trade Distribution')
+
+    plt.tight_layout()
+
+    filepath = os.path.join(OUTPUT_DIR, 'fee_summary.png')
+    if save:
+        plt.savefig(filepath, dpi=150, bbox_inches='tight')
+        print(f'Chart saved: {filepath}')
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+    return filepath
+
+
 def generate_all_charts(positions: List[Dict], show: bool = False):
     """
-    生成所有图表
+    Generate all charts
     """
     print('\n' + '='*60)
-    print('开始生成分析图表...')
+    print('Generating analysis charts...')
     print('='*60)
     
     charts = []
     
-    print('\n[1/5] 生成持仓时间分布图...')
+    print('\n[1/5] Generating holding duration distribution...')
     charts.append(plot_holding_duration_distribution(positions, save=True, show=show))
     
-    print('\n[2/5] 生成并发保证金分析图...')
+    print('\n[2/5] Generating concurrent margin analysis...')
     charts.append(plot_concurrent_margin(positions, save=True, show=show))
     
-    print('\n[3/5] 生成下单到成交时间分布图...')
+    print('\n[3/5] Generating order-to-entry distribution...')
     charts.append(plot_order_to_entry_distribution(positions, save=True, show=show))
     
-    print('\n[4/5] 生成持仓到平仓时间分析图...')
+    print('\n[4/5] Generating entry-to-exit analysis...')
     charts.append(plot_entry_to_exit_by_result(positions, save=True, show=show))
     
-    print('\n[5/5] 生成完整交易生命周期图...')
+    print('\n[5/5] Generating trade lifecycle chart...')
     charts.append(plot_complete_trade_lifecycle(positions, save=True, show=show))
     
-    print('\n[额外] 生成盈亏汇总图...')
+    print('\n[Extra] Generating PnL summary...')
     charts.append(plot_pnl_summary(positions, save=True, show=show))
+
+    print('\n[Extra] Generating fee summary...')
+    charts.append(plot_fee_summary(positions, save=True, show=show))
     
     print('\n' + '='*60)
-    print(f'图表生成完成! 共 {len([c for c in charts if c])} 张图表')
-    print(f'保存目录: {OUTPUT_DIR}')
+    print(f'Charts generated: {len([c for c in charts if c])}')
+    print(f'Output directory: {OUTPUT_DIR}')
     print('='*60)
     
     return charts

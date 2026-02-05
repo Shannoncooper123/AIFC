@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
 
-sys.path.insert(0, '/Users/bytedance/Desktop/crypto_agentx/backend')
+sys.path.insert(0, '/home/sunfayao/AIFC2/AIFC/backend')
 
 INTERVAL_MINUTES = {
     '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
@@ -99,6 +99,31 @@ def enrich_positions_with_timing(positions: List[Dict]) -> List[Dict]:
             p_copy['total_duration_minutes'] = (exit_time - order_created_time).total_seconds() / 60
         else:
             p_copy['total_duration_minutes'] = None
+
+        qty = p_copy.get('qty')
+        entry_price = p_copy.get('entry_price')
+        exit_price = p_copy.get('exit_price')
+        notional_usdt = p_copy.get('notional_usdt')
+
+        entry_notional = None
+        if qty is not None and entry_price is not None:
+            entry_notional = float(qty) * float(entry_price)
+        elif notional_usdt is not None:
+            entry_notional = float(notional_usdt)
+
+        exit_notional = None
+        if qty is not None and exit_price is not None:
+            exit_notional = float(qty) * float(exit_price)
+        else:
+            exit_notional = entry_notional
+
+        p_copy['entry_notional_usdt'] = entry_notional
+        p_copy['exit_notional_usdt'] = exit_notional
+
+        if entry_notional is not None and exit_notional is not None:
+            p_copy['fees_estimated_usdt'] = (entry_notional + exit_notional) * 0.00045
+        else:
+            p_copy['fees_estimated_usdt'] = None
         
         enriched.append(p_copy)
     
