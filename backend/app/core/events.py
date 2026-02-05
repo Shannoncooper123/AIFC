@@ -64,6 +64,11 @@ class EventBus:
         self._async_subscribers: Dict[EventType, List[Callable]] = {}
         self._websocket_queues: Set[asyncio.Queue] = set()
         self._lock = asyncio.Lock()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+    
+    def set_loop(self, loop: asyncio.AbstractEventLoop):
+        """设置事件循环（用于跨线程发布）"""
+        self._loop = loop
     
     def subscribe(self, event_type: EventType, callback: Callable) -> None:
         """订阅事件（同步回调）"""
@@ -119,6 +124,11 @@ class EventBus:
             loop = asyncio.get_running_loop()
             loop.create_task(self.publish(event))
         except RuntimeError:
+            # 如果在非异步线程中（如 ReverseEngine 线程），尝试使用主循环
+            if self._loop and self._loop.is_running():
+                asyncio.run_coroutine_threadsafe(self.publish(event), self._loop)
+            
+            # 执行同步回调
             if event.type in self._subscribers:
                 for callback in self._subscribers[event.type]:
                     try:

@@ -201,7 +201,7 @@ async def cancel_reverse_pending_order(algo_id: str) -> Dict[str, Any]:
 
 @router.get("/history")
 async def get_reverse_history(
-    limit: int = Query(default=50, ge=1, le=500, description="返回的记录数量")
+    limit: int = Query(default=50, ge=1, le=1000, description="返回的记录数量")
 ) -> Dict[str, Any]:
     """获取反向交易历史"""
     try:

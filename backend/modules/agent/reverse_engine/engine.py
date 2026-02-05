@@ -689,14 +689,14 @@ class ReverseEngine:
             if updated_symbols:
                 self._price_update_counter += 1
                 
-                if self._price_update_counter % 5 == 0:
-                    try:
-                        from app.core.events import emit_mark_price_update
-                        
-                        relevant_prices = {s: prices[s] for s in updated_symbols if s in prices}
-                        emit_mark_price_update(relevant_prices)
-                    except Exception as e:
-                        logger.debug(f"[反向] 发送价格更新事件失败: {e}")
+                # 实时推送价格更新，不再限流
+                try:
+                    from app.core.events import emit_mark_price_update
+                    
+                    relevant_prices = {s: prices[s] for s in updated_symbols if s in prices}
+                    emit_mark_price_update(relevant_prices)
+                except Exception as e:
+                    logger.debug(f"[反向] 发送价格更新事件失败: {e}")
                         
         except Exception as e:
             logger.error(f"[反向] 处理标记价格更新失败: {e}")

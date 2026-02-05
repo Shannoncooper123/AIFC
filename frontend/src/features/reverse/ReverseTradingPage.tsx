@@ -32,6 +32,7 @@ export function ReverseTradingPage() {
   const [positions, setPositions] = useState<ReversePosition[]>([]);
   const [pendingOrders, setPendingOrders] = useState<ReversePendingOrder[]>([]);
   const [history, setHistory] = useState<ReverseHistoryEntry[]>([]);
+  const [historyLimit, setHistoryLimit] = useState(50);
   const [statistics, setStatistics] = useState<ReverseStatistics>({
     total_trades: 0,
     winning_trades: 0,
@@ -48,7 +49,7 @@ export function ReverseTradingPage() {
       const [posRes, ordersRes, histRes, statsRes] = await Promise.all([
         getReversePositions(),
         getReversePendingOrders(),
-        getReverseHistory(50),
+        getReverseHistory(historyLimit),
         getReverseStatistics(),
       ]);
 
@@ -62,7 +63,7 @@ export function ReverseTradingPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [historyLimit]);
 
   useEffect(() => {
     fetchData();
@@ -119,49 +120,68 @@ export function ReverseTradingPage() {
       <ReverseStatisticsPanel statistics={statistics} loading={loading} />
 
       <div className="rounded-xl border border-neutral-800 bg-[#1a1a1a] p-6">
-        <div className="mb-6 flex rounded-lg border border-neutral-800 bg-[#141414] p-1 w-fit">
-          <button
-            onClick={() => setActiveTab('positions')}
-            className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
-              activeTab === 'positions'
-                ? 'bg-neutral-800 text-white'
-                : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Briefcase className="h-4 w-4" />
-            Positions
-            <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
-              {positions.length}
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
-              activeTab === 'orders'
-                ? 'bg-neutral-800 text-white'
-                : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Clock className="h-4 w-4" />
-            Pending Orders
-            <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
-              {pendingOrders.length}
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
-              activeTab === 'history'
-                ? 'bg-neutral-800 text-white'
-                : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <History className="h-4 w-4" />
-            History
-            <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
-              {history.length}
-            </span>
-          </button>
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex rounded-lg border border-neutral-800 bg-[#141414] p-1 w-fit">
+            <button
+              onClick={() => setActiveTab('positions')}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                activeTab === 'positions'
+                  ? 'bg-neutral-800 text-white'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <Briefcase className="h-4 w-4" />
+              Positions
+              <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
+                {positions.length}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab('orders')}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                activeTab === 'orders'
+                  ? 'bg-neutral-800 text-white'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <Clock className="h-4 w-4" />
+              Pending Orders
+              <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
+                {pendingOrders.length}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                activeTab === 'history'
+                  ? 'bg-neutral-800 text-white'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              <History className="h-4 w-4" />
+              History
+              <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs">
+                {history.length}
+              </span>
+            </button>
+          </div>
+
+          {activeTab === 'history' && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-neutral-400">Show:</span>
+              <select
+                value={historyLimit}
+                onChange={(e) => setHistoryLimit(Number(e.target.value))}
+                className="rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+              >
+                <option value={50}>50 rows</option>
+                <option value={100}>100 rows</option>
+                <option value={200}>200 rows</option>
+                <option value={500}>500 rows</option>
+                <option value={1000}>1000 rows</option>
+              </select>
+            </div>
+          )}
         </div>
 
         {activeTab === 'positions' && (

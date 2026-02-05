@@ -28,7 +28,7 @@ export function ReverseStatisticsPanel({ statistics, loading }: ReverseStatistic
       <div className="rounded-xl border border-neutral-800 bg-[#1a1a1a] p-4">
         <div className="flex items-center gap-2 text-neutral-400 text-sm mb-1">
           <BarChart3 className="h-4 w-4" />
-          Total Trades
+          Total Trades <span className="text-[10px] text-neutral-600">(All Time)</span>
         </div>
         <div className="text-2xl font-bold text-white">
           {statistics.total_trades}

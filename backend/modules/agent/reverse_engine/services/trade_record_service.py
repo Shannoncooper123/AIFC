@@ -494,7 +494,7 @@ class TradeRecordService:
                     'unrealized_pnl': round(unrealized_pnl, 4),
                     'roe': round(roe * 100, 2),
                     'leverage': record.leverage,
-                    'margin': round(record.margin_usdt, 2),
+                    'margin': round(record.margin_usdt, 4),
                     'opened_at': record.open_time,
                     'algo_order_id': record.algo_order_id
                 })

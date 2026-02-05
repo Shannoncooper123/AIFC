@@ -41,6 +41,11 @@ async def lifespan(app: FastAPI):
     logger.info("Crypto Monitor Backend 启动中...")
     logger.info("=" * 60)
     
+    # 设置事件总线的事件循环，支持跨线程发布
+    import asyncio
+    from app.core.events import event_bus
+    event_bus.set_loop(asyncio.get_running_loop())
+    
     logger.info("服务已就绪，等待手动启动 Monitor 和 Workflow...")
     logger.info("提示: 通过 API /api/system/start 或前端控制面板启动服务")
     
