@@ -206,7 +206,7 @@ class BacktestKlineProvider:
         else:
             logger.info("本地缓存已禁用，将从API获取所有数据")
         
-        intervals_to_load = ["1m", "15m", "1h", "4h", "1d"]
+        intervals_to_load = ["1m", "3m", "15m", "1h", "4h", "1d"]
         if self.interval not in intervals_to_load:
             intervals_to_load.append(self.interval)
         

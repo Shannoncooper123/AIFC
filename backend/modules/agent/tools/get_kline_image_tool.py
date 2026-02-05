@@ -27,7 +27,7 @@ def get_kline_image_tool(
     
     Args:
         symbol: 交易对，如 "BTCUSDT"
-        interval: 时间周期，如 "15m"、"1h"、"4h"、"1d"。默认为 "1h"。注意：仅支持单个周期。
+        interval: 时间周期，如 "3m"、"15m"、"1h"。默认为 "1h"。注意：仅支持单个周期。
         feedback: 分析进度笔记。请填写：1) 上一周期分析的关键结论（趋势方向、关键位、动能状态）；2) 本次调用的分析目的（如"验证4h趋势是否与1d一致"或"寻找1h级别的入场触发信号"）。
     """
     def _make_error(msg: str) -> List[Dict[str, Any]]:
