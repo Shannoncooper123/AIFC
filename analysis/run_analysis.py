@@ -28,7 +28,7 @@ from analyzers import (
 )
 from visualizer import generate_all_charts
 
-DATA_FILE = '/home/sunfayao/AIFC2/AIFC/analysis/all_positions.jsonl'
+DATA_FILE = '/Users/bytedance/Desktop/crypto_agentx/analysis/all_positions.jsonl'
 
 
 def basic_stats(positions):
