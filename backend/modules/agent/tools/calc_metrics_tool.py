@@ -30,12 +30,12 @@ def _validate_min_distance(symbol: str, entry_price: float, sl_dist: float, tp_d
             if min_dist > 0:
                 if sl_dist < min_dist:
                     return make_input_error(
-                        f"止损距离过近 ({sl_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止损距离，同时确保 R:R < 1（即亏损空间 > 盈利空间）以符合亏钱原则。",
+                        f"止损距离过近 ({sl_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止损距离，同时确保 R:R < 0.8（即亏损空间 > 盈利空间）以符合亏钱原则。",
                         feedback
                     )
                 if tp_dist < min_dist:
                     return make_input_error(
-                        f"止盈距离过近 ({tp_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止盈距离，同时确保 R:R < 1（即亏损空间 > 盈利空间）以符合亏钱原则。",
+                        f"止盈距离过近 ({tp_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止盈距离，同时确保 R:R < 0.8（即亏损空间 > 盈利空间）以符合亏钱原则。",
                         feedback
                     )
                 return None

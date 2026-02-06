@@ -529,6 +529,388 @@ def analyze_holding_duration(positions: List[Dict]) -> Dict:
     }
 
 
+def analyze_hedged_positions(positions: List[Dict]) -> Dict:
+    """
+    分析双向持仓（对冲）情况
+    
+    当开仓时存在相反方向的持仓，视为"对冲持仓"
+    统计对冲vs非对冲持仓的胜率和盈亏差异
+    """
+    print('\n' + '='*80)
+    print('双向持仓（对冲）分析')
+    print('='*80)
+    
+    events = []
+    for p in positions:
+        entry_dt = parse_datetime(p.get('entry_time', ''))
+        exit_dt = parse_datetime(p.get('exit_time', ''))
+        side = p.get('side', '')
+        
+        if entry_dt and exit_dt and side:
+            events.append({
+                'time': entry_dt,
+                'type': 'entry',
+                'side': side,
+                'trade_id': p.get('trade_id', ''),
+                'position': p
+            })
+            events.append({
+                'time': exit_dt,
+                'type': 'exit',
+                'side': side,
+                'trade_id': p.get('trade_id', ''),
+                'position': p
+            })
+    
+    if not events:
+        print('  无有效数据')
+        return {}
+    
+    events.sort(key=lambda x: (x['time'], 0 if x['type'] == 'entry' else 1))
+    
+    active_longs = set()
+    active_shorts = set()
+    
+    hedged_trades = []
+    non_hedged_trades = []
+    
+    for event in events:
+        trade_id = event['trade_id']
+        side = event['side']
+        event_type = event['type']
+        position = event['position']
+        
+        if event_type == 'entry':
+            if side == 'long':
+                has_opposite = len(active_shorts) > 0
+                active_longs.add(trade_id)
+            else:
+                has_opposite = len(active_longs) > 0
+                active_shorts.add(trade_id)
+            
+            trade_info = {
+                'trade_id': trade_id,
+                'side': side,
+                'is_win': position.get('is_win', False),
+                'pnl': position.get('realized_pnl', 0),
+                'exit_type': position.get('exit_type', ''),
+                'entry_time': event['time'],
+                'opposite_count': len(active_shorts) if side == 'long' else len(active_longs),
+                'same_count': len(active_longs) if side == 'long' else len(active_shorts)
+            }
+            
+            if has_opposite:
+                hedged_trades.append(trade_info)
+            else:
+                non_hedged_trades.append(trade_info)
+        
+        else:
+            if side == 'long':
+                active_longs.discard(trade_id)
+            else:
+                active_shorts.discard(trade_id)
+    
+    total_trades = len(hedged_trades) + len(non_hedged_trades)
+    
+    print(f'\n--- 整体统计 ---')
+    print(f'  总交易数: {total_trades}')
+    print(f'  对冲持仓: {len(hedged_trades)} ({len(hedged_trades)/total_trades*100:.1f}%)')
+    print(f'  非对冲持仓: {len(non_hedged_trades)} ({len(non_hedged_trades)/total_trades*100:.1f}%)')
+    
+    print(f'\n--- 对冲 vs 非对冲 对比 ---')
+    print(f'\n  {"指标":15s} {"对冲持仓":>15s} {"非对冲持仓":>15s} {"差异":>12s}')
+    print(f'  {"-"*15} {"-"*15} {"-"*15} {"-"*12}')
+    
+    if hedged_trades:
+        h_wins = len([t for t in hedged_trades if t['is_win']])
+        h_wr = h_wins / len(hedged_trades) * 100
+        h_pnl = sum(t['pnl'] for t in hedged_trades)
+        h_avg_pnl = h_pnl / len(hedged_trades)
+    else:
+        h_wr, h_pnl, h_avg_pnl = 0, 0, 0
+    
+    if non_hedged_trades:
+        nh_wins = len([t for t in non_hedged_trades if t['is_win']])
+        nh_wr = nh_wins / len(non_hedged_trades) * 100
+        nh_pnl = sum(t['pnl'] for t in non_hedged_trades)
+        nh_avg_pnl = nh_pnl / len(non_hedged_trades)
+    else:
+        nh_wr, nh_pnl, nh_avg_pnl = 0, 0, 0
+    
+    print(f'  {"交易数":15s} {len(hedged_trades):>15d} {len(non_hedged_trades):>15d} {len(hedged_trades)-len(non_hedged_trades):>+12d}')
+    print(f'  {"胜率":15s} {h_wr:>14.1f}% {nh_wr:>14.1f}% {h_wr-nh_wr:>+11.1f}%')
+    print(f'  {"总P&L":15s} ${h_pnl:>13.2f} ${nh_pnl:>13.2f} ${h_pnl-nh_pnl:>+11.2f}')
+    print(f'  {"平均P&L":15s} ${h_avg_pnl:>13.2f} ${nh_avg_pnl:>13.2f} ${h_avg_pnl-nh_avg_pnl:>+11.2f}')
+    
+    print(f'\n--- 对冲持仓按方向分析 ---')
+    for side_name, side_key in [('做多', 'long'), ('做空', 'short')]:
+        h_side = [t for t in hedged_trades if t['side'] == side_key]
+        nh_side = [t for t in non_hedged_trades if t['side'] == side_key]
+        
+        if h_side or nh_side:
+            print(f'\n  {side_name}:')
+            
+            if h_side:
+                h_wins = len([t for t in h_side if t['is_win']])
+                h_wr = h_wins / len(h_side) * 100
+                h_pnl = sum(t['pnl'] for t in h_side)
+                print(f'    对冲: {len(h_side):4d} 笔, WR {h_wr:5.1f}%, P&L ${h_pnl:>9.2f}')
+            
+            if nh_side:
+                nh_wins = len([t for t in nh_side if t['is_win']])
+                nh_wr = nh_wins / len(nh_side) * 100
+                nh_pnl = sum(t['pnl'] for t in nh_side)
+                print(f'    非对冲: {len(nh_side):4d} 笔, WR {nh_wr:5.1f}%, P&L ${nh_pnl:>9.2f}')
+    
+    print(f'\n--- 止盈/止损分布对比 ---')
+    for exit_name, exit_key in [('止盈', 'tp'), ('止损', 'sl')]:
+        h_exit = [t for t in hedged_trades if t['exit_type'] == exit_key]
+        nh_exit = [t for t in non_hedged_trades if t['exit_type'] == exit_key]
+        
+        h_pct = len(h_exit) / len(hedged_trades) * 100 if hedged_trades else 0
+        nh_pct = len(nh_exit) / len(non_hedged_trades) * 100 if non_hedged_trades else 0
+        
+        print(f'  {exit_name}: 对冲 {len(h_exit):4d} ({h_pct:5.1f}%) vs 非对冲 {len(nh_exit):4d} ({nh_pct:5.1f}%)')
+    
+    opposite_count_buckets = [
+        (1, 1, '1个对手仓'),
+        (2, 2, '2个对手仓'),
+        (3, 3, '3个对手仓'),
+        (4, float('inf'), '4个以上对手仓')
+    ]
+    
+    print(f'\n--- 对冲持仓：对手仓数量分布 ---')
+    for min_c, max_c, label in opposite_count_buckets:
+        subset = [t for t in hedged_trades if min_c <= t['opposite_count'] <= max_c]
+        if subset:
+            count = len(subset)
+            pct = count / len(hedged_trades) * 100
+            wins = len([t for t in subset if t['is_win']])
+            wr = wins / count * 100
+            pnl = sum(t['pnl'] for t in subset)
+            bar = '█' * int(pct / 2)
+            print(f'  {label:15s}: {count:4d} ({pct:5.1f}%) WR {wr:5.1f}% P&L ${pnl:>9.2f} {bar}')
+    
+    print(f'\n--- 结论 ---')
+    if hedged_trades and non_hedged_trades:
+        h_wr_all = len([t for t in hedged_trades if t['is_win']]) / len(hedged_trades) * 100
+        nh_wr_all = len([t for t in non_hedged_trades if t['is_win']]) / len(non_hedged_trades) * 100
+        
+        h_pnl_all = sum(t['pnl'] for t in hedged_trades)
+        nh_pnl_all = sum(t['pnl'] for t in non_hedged_trades)
+        
+        if h_wr_all > nh_wr_all:
+            print(f'  对冲持仓胜率更高 (+{h_wr_all - nh_wr_all:.1f}%)')
+        else:
+            print(f'  非对冲持仓胜率更高 (+{nh_wr_all - h_wr_all:.1f}%)')
+        
+        if h_pnl_all > nh_pnl_all:
+            print(f'  对冲持仓P&L更好 (+${h_pnl_all - nh_pnl_all:.2f})')
+        else:
+            print(f'  非对冲持仓P&L更好 (+${nh_pnl_all - h_pnl_all:.2f})')
+    
+    return {
+        'hedged_count': len(hedged_trades),
+        'non_hedged_count': len(non_hedged_trades),
+        'hedged_win_rate': len([t for t in hedged_trades if t['is_win']]) / len(hedged_trades) * 100 if hedged_trades else 0,
+        'non_hedged_win_rate': len([t for t in non_hedged_trades if t['is_win']]) / len(non_hedged_trades) * 100 if non_hedged_trades else 0,
+        'hedged_pnl': sum(t['pnl'] for t in hedged_trades),
+        'non_hedged_pnl': sum(t['pnl'] for t in non_hedged_trades)
+    }
+
+
+def analyze_consecutive_direction_changes(positions: List[Dict]) -> Dict:
+    """
+    分析连续15分钟K线开仓方向变化模式
+    
+    查找三个连续15分钟周期内开仓方向交替变化的情况：
+    - 做空 -> 做多 -> 做空 (SLS)
+    - 做多 -> 做空 -> 做多 (LSL)
+    
+    "连续"指的是三个相邻的15分钟K线周期都有开仓
+    """
+    print('\n' + '='*80)
+    print('连续15分钟开仓方向变化分析')
+    print('='*80)
+    
+    interval_positions = defaultdict(list)
+    
+    for p in positions:
+        order_time = parse_datetime(p.get('order_created_time', ''))
+        if not order_time:
+            order_time = parse_datetime(p.get('entry_time', ''))
+        
+        if not order_time:
+            continue
+        
+        ts = order_time.timestamp()
+        interval_start = int(ts // (15 * 60)) * (15 * 60)
+        
+        interval_positions[interval_start].append({
+            'side': p.get('side', ''),
+            'time': order_time,
+            'symbol': p.get('symbol', ''),
+            'trade_id': p.get('trade_id', ''),
+            'is_win': p.get('is_win', False),
+            'pnl': p.get('realized_pnl', 0),
+            'position': p
+        })
+    
+    if not interval_positions:
+        print('  无有效数据')
+        return {}
+    
+    sorted_intervals = sorted(interval_positions.keys())
+    
+    print(f'\n--- 基础统计 ---')
+    print(f'  总开仓记录数: {len(positions)}')
+    print(f'  有开仓的15分钟周期数: {len(sorted_intervals)}')
+    print(f'  时间范围: {datetime.fromtimestamp(sorted_intervals[0]).strftime("%Y-%m-%d %H:%M")} ~ '
+          f'{datetime.fromtimestamp(sorted_intervals[-1]).strftime("%Y-%m-%d %H:%M")}')
+    
+    def get_dominant_side(positions_in_interval):
+        """获取该周期内的主导方向（按数量多少）"""
+        longs = len([p for p in positions_in_interval if p['side'] == 'long'])
+        shorts = len([p for p in positions_in_interval if p['side'] == 'short'])
+        if longs > shorts:
+            return 'long'
+        elif shorts > longs:
+            return 'short'
+        else:
+            return positions_in_interval[0]['side'] if positions_in_interval else None
+    
+    def get_all_sides(positions_in_interval):
+        """获取该周期内所有不同的方向"""
+        sides = set(p['side'] for p in positions_in_interval if p['side'])
+        return sides
+    
+    consecutive_patterns = []
+    alternating_patterns = {
+        'SLS': [],
+        'LSL': [],
+    }
+    
+    interval_15m = 15 * 60
+    
+    for i in range(len(sorted_intervals) - 2):
+        t1, t2, t3 = sorted_intervals[i], sorted_intervals[i+1], sorted_intervals[i+2]
+        
+        if t2 - t1 == interval_15m and t3 - t2 == interval_15m:
+            p1 = interval_positions[t1]
+            p2 = interval_positions[t2]
+            p3 = interval_positions[t3]
+            
+            s1 = get_dominant_side(p1)
+            s2 = get_dominant_side(p2)
+            s3 = get_dominant_side(p3)
+            
+            if s1 and s2 and s3:
+                pattern_info = {
+                    't1': t1, 't2': t2, 't3': t3,
+                    's1': s1, 's2': s2, 's3': s3,
+                    'p1': p1, 'p2': p2, 'p3': p3,
+                    'count1': len(p1), 'count2': len(p2), 'count3': len(p3),
+                    'pnl1': sum(x['pnl'] for x in p1),
+                    'pnl2': sum(x['pnl'] for x in p2),
+                    'pnl3': sum(x['pnl'] for x in p3),
+                }
+                
+                consecutive_patterns.append(pattern_info)
+                
+                if s1 == 'short' and s2 == 'long' and s3 == 'short':
+                    alternating_patterns['SLS'].append(pattern_info)
+                elif s1 == 'long' and s2 == 'short' and s3 == 'long':
+                    alternating_patterns['LSL'].append(pattern_info)
+    
+    print(f'\n--- 连续三个15分钟周期统计 ---')
+    print(f'  找到连续三个15分钟周期的窗口数: {len(consecutive_patterns)}')
+    
+    total_alternating = len(alternating_patterns['SLS']) + len(alternating_patterns['LSL'])
+    print(f'\n--- 方向交替变化统计 ---')
+    print(f'  总交替变化窗口数: {total_alternating}')
+    if consecutive_patterns:
+        print(f'  占所有连续窗口比例: {total_alternating/len(consecutive_patterns)*100:.1f}%')
+    
+    print(f'\n  做空→做多→做空 (SLS): {len(alternating_patterns["SLS"])} 次')
+    print(f'  做多→做空→做多 (LSL): {len(alternating_patterns["LSL"])} 次')
+    
+    if alternating_patterns['SLS']:
+        sls = alternating_patterns['SLS']
+        total_pnl = sum(p['pnl1'] + p['pnl2'] + p['pnl3'] for p in sls)
+        total_trades = sum(p['count1'] + p['count2'] + p['count3'] for p in sls)
+        print(f'\n  SLS 模式详情:')
+        print(f'    涉及交易笔数: {total_trades}')
+        print(f'    总P&L: ${total_pnl:.2f}')
+        print(f'    平均每窗口P&L: ${total_pnl/len(sls):.2f}')
+    
+    if alternating_patterns['LSL']:
+        lsl = alternating_patterns['LSL']
+        total_pnl = sum(p['pnl1'] + p['pnl2'] + p['pnl3'] for p in lsl)
+        total_trades = sum(p['count1'] + p['count2'] + p['count3'] for p in lsl)
+        print(f'\n  LSL 模式详情:')
+        print(f'    涉及交易笔数: {total_trades}')
+        print(f'    总P&L: ${total_pnl:.2f}')
+        print(f'    平均每窗口P&L: ${total_pnl/len(lsl):.2f}')
+    
+    all_patterns = {
+        'LLL': 0, 'LLS': 0, 'LSL': 0, 'LSS': 0,
+        'SLL': 0, 'SLS': 0, 'SSL': 0, 'SSS': 0
+    }
+    
+    for p in consecutive_patterns:
+        pattern_key = ('L' if p['s1'] == 'long' else 'S') + \
+                      ('L' if p['s2'] == 'long' else 'S') + \
+                      ('L' if p['s3'] == 'long' else 'S')
+        all_patterns[pattern_key] += 1
+    
+    print(f'\n--- 所有方向组合分布 ---')
+    sorted_patterns = sorted(all_patterns.items(), key=lambda x: -x[1])
+    for pattern, count in sorted_patterns:
+        if count > 0:
+            pct = count / len(consecutive_patterns) * 100 if consecutive_patterns else 0
+            pattern_display = pattern.replace('L', '多').replace('S', '空')
+            bar = '█' * int(pct / 2)
+            print(f'  {pattern} ({pattern_display}): {count:4d} ({pct:5.1f}%) {bar}')
+    
+    print(f'\n--- 样例展示（前5个交替变化窗口）---')
+    all_alternating = alternating_patterns['SLS'] + alternating_patterns['LSL']
+    for i, p in enumerate(all_alternating[:5]):
+        t1_str = datetime.fromtimestamp(p['t1']).strftime('%Y-%m-%d %H:%M')
+        t2_str = datetime.fromtimestamp(p['t2']).strftime('%H:%M')
+        t3_str = datetime.fromtimestamp(p['t3']).strftime('%H:%M')
+        s1_cn = '多' if p['s1'] == 'long' else '空'
+        s2_cn = '多' if p['s2'] == 'long' else '空'
+        s3_cn = '多' if p['s3'] == 'long' else '空'
+        print(f'  [{i+1}] {t1_str} ~ {t3_str}')
+        print(f'      {s1_cn}({p["count1"]}笔,${p["pnl1"]:.0f}) → {s2_cn}({p["count2"]}笔,${p["pnl2"]:.0f}) → {s3_cn}({p["count3"]}笔,${p["pnl3"]:.0f})')
+    
+    middle_position_stats = {'win': 0, 'loss': 0, 'pnl': 0}
+    for p in all_alternating:
+        for pos in p['p2']:
+            if pos['is_win']:
+                middle_position_stats['win'] += 1
+            else:
+                middle_position_stats['loss'] += 1
+            middle_position_stats['pnl'] += pos['pnl']
+    
+    total_middle = middle_position_stats['win'] + middle_position_stats['loss']
+    if total_middle > 0:
+        print(f'\n--- 中间反向开仓表现 ---')
+        print(f'  交易数: {total_middle}')
+        print(f'  胜率: {middle_position_stats["win"]/total_middle*100:.1f}%')
+        print(f'  总P&L: ${middle_position_stats["pnl"]:.2f}')
+        print(f'  平均P&L: ${middle_position_stats["pnl"]/total_middle:.2f}')
+    
+    return {
+        'total_consecutive_windows': len(consecutive_patterns),
+        'sls_count': len(alternating_patterns['SLS']),
+        'lsl_count': len(alternating_patterns['LSL']),
+        'total_alternating': total_alternating,
+        'pattern_distribution': all_patterns,
+        'middle_position_stats': middle_position_stats
+    }
+
+
 def analyze_fee_usage(positions: List[Dict], fee_rate: float = 0.00045) -> Dict:
     print('\n' + '='*80)
     print('手续费使用情况统计')

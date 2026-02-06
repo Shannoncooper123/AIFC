@@ -200,7 +200,7 @@ class ModelFactory:
             temperature=0.0,
             timeout=300,
             max_tokens=8000,
-            thinking_enabled=False,
+            thinking_enabled=True,
         )
     
     def get_position_management_model(self) -> ChatOpenAI:

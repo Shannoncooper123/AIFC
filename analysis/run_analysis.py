@@ -24,7 +24,9 @@ from analyzers import (
     analyze_complete_lifecycle,
     analyze_concurrent_margin,
     analyze_holding_duration,
-    analyze_fee_usage
+    analyze_fee_usage,
+    analyze_hedged_positions,
+    analyze_consecutive_direction_changes
 )
 from visualizer import generate_all_charts
 
@@ -138,6 +140,10 @@ def main():
     analyze_complete_lifecycle(positions)
 
     analyze_fee_usage(positions)
+    
+    analyze_hedged_positions(positions)
+    
+    analyze_consecutive_direction_changes(positions)
     
     print_summary_table(long_trades, short_trades)
     
