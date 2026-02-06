@@ -17,48 +17,28 @@ logger = get_logger('agent.nodes.opening_decision')
 
 REVIEW_INTERVALS = ["1h", "15m", "3m"]
 
+HARDCODED_ACCOUNT_SUMMARY_STR = (
+    "余额: $10000.00 | 净值: $10000.00 | "
+    "保证金利用率: 0.0% | 持仓数: 0"
+)
+
+HARDCODED_MAX_MARGIN = 500.0
+
 
 def _format_account_summary(account: Dict[str, Any]) -> str:
-    """格式化账户摘要"""
-    if not account:
-        return "账户信息不可用"
-
-    balance = account.get('balance', 0)
-    equity = account.get('equity', 0)
-    margin_usage = account.get('margin_usage_rate', 0)
-    positions_count = account.get('positions_count', 0)
-
-    return (
-        f"余额: ${balance:.2f} | 净值: ${equity:.2f} | "
-        f"保证金利用率: {margin_usage:.1f}% | 持仓数: {positions_count}"
-    )
+    """格式化账户摘要，始终返回硬编码的账户状态"""
+    return HARDCODED_ACCOUNT_SUMMARY_STR
 
 
 def _get_max_margin_for_new_position() -> float:
-    """获取当前可用于新开仓的最大保证金（单仓上限为可用余额的5%）
+    """获取当前可用于新开仓的最大保证金
+    
+    返回硬编码值，实际金额由引擎层根据配置决定
     
     Returns:
-        最大可用保证金金额（USDT），获取失败返回0
+        硬编码的最大可用保证金金额（USDT）
     """
-    from modules.agent.engine import get_engine
-    
-    try:
-        eng = get_engine()
-        if eng is None:
-            logger.warning("_get_max_margin_for_new_position: 引擎未初始化")
-            return 0
-        
-        account_summary = eng.get_account_summary()
-        account_balance = float(account_summary.get('balance', 0))
-        reserved_margin = float(account_summary.get('reserved_margin_sum', 0))
-        available_balance = account_balance - reserved_margin
-        max_margin = available_balance * 0.05
-        
-        logger.info(f"可用保证金计算: 余额={account_balance:.2f}, 已占用={reserved_margin:.2f}, 可用={available_balance:.2f}, 单仓上限(5%)={max_margin:.2f}")
-        return max_margin
-    except Exception as e:
-        logger.error(f"_get_max_margin_for_new_position 失败: {e}")
-        return 0
+    return HARDCODED_MAX_MARGIN
 
 
 def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict[str, Any]], List[Dict[str, str]]]:

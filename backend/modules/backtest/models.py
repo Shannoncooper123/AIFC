@@ -24,6 +24,8 @@ class BacktestConfig:
     initial_balance: float = 10000.0
     concurrency: int = 5
     workflow_timeout: int = 600
+    fixed_margin_usdt: float = 50.0
+    fixed_leverage: int = 10
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -34,6 +36,8 @@ class BacktestConfig:
             "initial_balance": self.initial_balance,
             "concurrency": self.concurrency,
             "workflow_timeout": self.workflow_timeout,
+            "fixed_margin_usdt": self.fixed_margin_usdt,
+            "fixed_leverage": self.fixed_leverage,
         }
     
     @classmethod
@@ -46,6 +50,8 @@ class BacktestConfig:
             initial_balance=data.get("initial_balance", 10000.0),
             concurrency=data.get("concurrency", 5),
             workflow_timeout=data.get("workflow_timeout", 600),
+            fixed_margin_usdt=data.get("fixed_margin_usdt", 50.0),
+            fixed_leverage=data.get("fixed_leverage", 10),
         )
 
 

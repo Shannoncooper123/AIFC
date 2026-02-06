@@ -18,23 +18,16 @@ logger = get_logger('agent.nodes.single_symbol_analysis')
 
 ANALYSIS_INTERVALS = ["1h", "15m", "3m"]
 
+HARDCODED_ACCOUNT_SUMMARY_STR = (
+    "余额: $10000.00 | 净值: $10000.00 | "
+    "保证金利用率: 0.0% | "
+    "持仓数: 0 | 已实现盈亏: $0.00"
+)
+
 
 def _format_account_summary(account: Dict[str, Any]) -> str:
-    """格式化账户摘要，只保留关键信息"""
-    if not account:
-        return "账户信息不可用"
-
-    balance = account.get('balance', 0)
-    equity = account.get('equity', 0)
-    margin_usage = account.get('margin_usage_rate', 0)
-    positions_count = account.get('positions_count', 0)
-    realized_pnl = account.get('realized_pnl', 0)
-
-    return (
-        f"余额: ${balance:.2f} | 净值: ${equity:.2f} | "
-        f"保证金利用率: {margin_usage:.1f}% | "
-        f"持仓数: {positions_count} | 已实现盈亏: ${realized_pnl:.2f}"
-    )
+    """格式化账户摘要，始终返回硬编码的账户状态"""
+    return HARDCODED_ACCOUNT_SUMMARY_STR
 
 
 def _build_supplemental_context(

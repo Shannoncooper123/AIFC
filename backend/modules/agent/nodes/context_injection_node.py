@@ -3,12 +3,20 @@ from typing import Any, Dict, List
 
 from langchain_core.runnables import RunnableConfig
 
-from modules.agent.engine import get_engine
 from modules.agent.utils.trace_utils import traced_node
 from modules.agent.state import AgentState
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.context_injection')
+
+HARDCODED_ACCOUNT_SUMMARY: Dict[str, Any] = {
+    'balance': 10000.0,
+    'equity': 10000.0,
+    'margin_usage_rate': 0.0,
+    'positions_count': 0,
+    'realized_pnl': 0.0,
+    'reserved_margin_sum': 0.0,
+}
 
 
 @traced_node("context_injection")
@@ -17,7 +25,7 @@ def context_injection_node(state: AgentState, *, config: RunnableConfig) -> Dict
     注入账户状态和待分析币种列表。
     
     简化版本：
-    - 只注入账户信息
+    - 使用硬编码的账户信息（不再获取真实账户状态）
     - 提取告警中的币种列表
     - 不再注入持仓、历史等冗余信息
     """
@@ -28,8 +36,7 @@ def context_injection_node(state: AgentState, *, config: RunnableConfig) -> Dict
 
     run_id = configurable.get("run_id")
 
-    eng = get_engine()
-    account_summary = eng.get_account_summary() if eng else {}
+    account_summary = HARDCODED_ACCOUNT_SUMMARY.copy()
 
     entries = latest_alert.get('entries', [])
 

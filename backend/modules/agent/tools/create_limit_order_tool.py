@@ -1,31 +1,22 @@
 """创建限价单工具"""
 from langchain.tools import tool
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from modules.agent.engine import get_engine
-from modules.constants import DEFAULT_LEVERAGE
 from modules.monitor.utils.logger import get_logger
-from modules.monitor.alerts.notifier import EmailNotifier
-from modules.config.settings import get_config
 
 logger = get_logger('agent.tool.create_limit_order')
 
-def _format_limit_order_result(res: Dict[str, Any], margin_usdt: float, leverage: int) -> str:
-    """格式化限价单结果
-    
-    Args:
-        res: 引擎返回的订单字典
-        margin_usdt: 保证金
-        leverage: 杠杆
-    
-    Returns:
-        格式化的字符串
-    """
+
+def _format_limit_order_result(res: Dict[str, Any]) -> str:
+    """格式化限价单结果"""
     symbol = res.get('symbol', 'UNKNOWN')
     side = res.get('side', 'unknown')
     limit_price = res.get('limit_price', 0)
     tp_price = res.get('tp_price')
     sl_price = res.get('sl_price')
     order_id = res.get('id', 'unknown')
+    margin_usdt = res.get('margin_usdt', 0)
+    leverage = res.get('leverage', 10)
     
     side_cn = '做多' if side == 'long' else '做空'
     notional = margin_usdt * leverage
@@ -43,101 +34,33 @@ def _format_limit_order_result(res: Dict[str, Any], margin_usdt: float, leverage
   止损: {sl_str}
   状态: Pending"""
 
-def _send_limit_order_email(symbol: str, side: str, margin_usdt: float, leverage: int,
-                           limit_price: float, tp_price: Optional[float], sl_price: Optional[float]):
-    """发送限价单通知邮件"""
-    try:
-        from datetime import datetime, timezone
-        
-        config = get_config()
-        
-        if not config['env'].get('email_enabled', False):
-            return
-        
-        notifier = EmailNotifier(config)
-        target_email = config.get('agent', {}).get('report_email') or config['env']['alert_email']
-        
-        if not target_email:
-            return
-        
-        notifier.alert_email = target_email
-        side_abbr = "LONG" if side == "long" else "SHORT"
-        
-        # 构建HTML邮件
-        subject = f"Limit Order Created: {symbol} {side_abbr}"
-        
-        tp_display = f"{tp_price:.8f}" if tp_price else "N/A"
-        sl_display = f"{sl_price:.8f}" if sl_price else "N/A"
-        
-        body_html = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                .header {{ background-color: #3498db; color: white; padding: 15px; border-radius: 5px; }}
-                .info-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-                .info-table th {{ background-color: #34495e; color: white; padding: 10px; text-align: left; }}
-                .info-table td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
-                .highlight {{ font-weight: bold; color: #3498db; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h2>限价单已创建</h2>
-                <p>SYMBOL：<strong>{symbol}</strong> | SIDE：<strong>{side_abbr}</strong></p>
-                <p>TIME：{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
-            </div>
-            
-            <table class="info-table">
-                <tr><th>ITEM</th><th>VALUE</th></tr>
-                <tr><td>SYMBOL</td><td class="highlight">{symbol}</td></tr>
-                <tr><td>SIDE</td><td class="highlight">{side_abbr}</td></tr>
-                <tr><td>LIMIT PRICE</td><td>{limit_price:.8f}</td></tr>
-                <tr><td>保证金</td><td>{margin_usdt:.2f} USDT</td></tr>
-                <tr><td>杠杆</td><td>{leverage}x</td></tr>
-                <tr><td>止盈价</td><td>{tp_display}</td></tr>
-                <tr><td>止损价</td><td>{sl_display}</td></tr>
-            </table>
-        </body>
-        </html>
-        """
-        
-        notifier._send_html_email(subject, body_html)
-        
-    except Exception as e:
-        logger.error(f"发送限价单邮件异常: {e}")
-
 @tool("create_limit_order", description="创建限价单（挂单）。当当前价格不理想但想在特定价格入场时使用。注意：必须同时设置止盈和止损。", parse_docstring=True)
 def create_limit_order_tool(
     symbol: str,
     side: str,
     limit_price: float,
-    margin_usdt: float,
     tp_price: float,
     sl_price: float,
 ) -> str | Dict[str, Any]:
-    """创建限价单。
+    """创建限价单（开仓信号）。
+    
+    Agent 只需要提供开仓信号，实际金额由引擎配置决定。
     
     Args:
         symbol: 交易对 (e.g. "BTCUSDT")
         side: 方向 "BUY" (做多) 或 "SELL" (做空)
         limit_price: 挂单价格（必须大于0）
-        margin_usdt: 保证金金额（USDT，必须大于0），但是不能超过当前可用保证金的5%！
         tp_price: 止盈价格（必须大于0，且符合方向逻辑）
         sl_price: 止损价格（必须大于0，且符合方向逻辑）
     """
     from modules.agent.tools.tool_utils import make_input_error
     
     try:
-        # 参数校验
-        if not symbol or not side or not limit_price or not margin_usdt:
-            return make_input_error("symbol, side, limit_price, margin_usdt 均为必填参数")
+        if not symbol or not side or not limit_price:
+            return make_input_error("symbol, side, limit_price 均为必填参数")
             
         if limit_price <= 0:
             return make_input_error("limit_price 必须大于 0")
-            
-        if margin_usdt <= 0:
-            return make_input_error("margin_usdt 必须大于 0")
 
         if not tp_price or tp_price <= 0:
             return make_input_error("tp_price (止盈价) 为必填项且必须大于 0")
@@ -145,80 +68,50 @@ def create_limit_order_tool(
         if not sl_price or sl_price <= 0:
             return make_input_error("sl_price (止损价) 为必填项且必须大于 0")
             
-        # 转换 side
         side_lower = "long" if side.upper() == "BUY" else "short" if side.upper() == "SELL" else None
         if not side_lower:
-             return make_input_error("side 必须为 'BUY' 或 'SELL'")
+            return make_input_error("side 必须为 'BUY' 或 'SELL'")
 
-        # 校验 TP/SL 逻辑
         if side_lower == "long":
             if tp_price <= limit_price:
                 return make_input_error(f"做多限价单错误: 止盈价({tp_price}) 必须高于 挂单价({limit_price})")
             if sl_price >= limit_price:
                 return make_input_error(f"做多限价单错误: 止损价({sl_price}) 必须低于 挂单价({limit_price})")
-        else: # short
+        else:
             if tp_price >= limit_price:
                 return make_input_error(f"做空限价单错误: 止盈价({tp_price}) 必须低于 挂单价({limit_price})")
             if sl_price <= limit_price:
                 return make_input_error(f"做空限价单错误: 止损价({sl_price}) 必须高于 挂单价({limit_price})")
-            
-        config = get_config()
-        trading_mode = config.get('trading', {}).get('mode', 'simulator')
-        if trading_mode == 'live':
-            leverage = int(config.get('trading', {}).get('max_leverage', DEFAULT_LEVERAGE))
-        else:
-            leverage = int(config.get('agent', {}).get('simulator', {}).get('max_leverage', DEFAULT_LEVERAGE))
         
         eng = get_engine()
         if eng is None:
             logger.error("create_limit_order_tool: 引擎未初始化")
             return {"error": "TOOL_RUNTIME_ERROR: 交易引擎未初始化"}
 
-        try:
-            account_summary = eng.get_account_summary()
-            account_balance = float(account_summary.get('balance', 0))
-            reserved_margin = float(account_summary.get('reserved_margin_sum', 0))
-            available_balance = account_balance - reserved_margin
-            max_margin_for_new_position = available_balance * 0.05
-            if margin_usdt > max_margin_for_new_position:
-                original_margin = margin_usdt
-                margin_usdt = max_margin_for_new_position
-                logger.warning(
-                    f"create_limit_order_tool: 保证金超限，自动调整！"
-                    f"请求={original_margin:.2f}U → 调整为={margin_usdt:.2f}U (可用={available_balance:.2f}U × 5%)"
-                )
-        except Exception as e:
-            logger.warning(f"保证金上限校验时出错（继续执行）: {e}")
-
-        # 检查是否启用反向交易模式
         from modules.agent.engine import get_reverse_engine
         reverse_engine = get_reverse_engine()
         is_reverse_mode = reverse_engine and reverse_engine.is_enabled()
         
         if is_reverse_mode:
-            # 反向模式：只创建反向条件单，不创建正向限价单
-            logger.info(f"[反向模式] 跳过正向限价单，直接创建反向条件单: {symbol} {side_lower} @ {limit_price}")
+            logger.info(f"[反向模式] 创建反向条件单: {symbol} {side_lower} @ {limit_price}")
             
-            try:
-                order = reverse_engine.on_agent_limit_order(
-                    symbol=symbol,
-                    side=side_lower,
-                    limit_price=limit_price,
-                    tp_price=tp_price,
-                    sl_price=sl_price,
-                    agent_order_id=None
-                )
-                
-                if order:
-                    logger.info(f"[反向模式] 反向条件单创建成功: {symbol} algoId={order.algo_id}")
-                    
-                    # 发送邮件通知
-                    _send_limit_order_email(symbol, side_lower, margin_usdt, leverage, limit_price, tp_price, sl_price)
-                    
-                    # 返回反向条件单的结果
-                    reverse_side = 'short' if side_lower == 'long' else 'long'
-                    reverse_side_cn = '做空' if reverse_side == 'short' else '做多'
-                    return f"""✅ 反向条件单创建成功
+            order = reverse_engine.on_agent_limit_order(
+                symbol=symbol,
+                side=side_lower,
+                limit_price=limit_price,
+                tp_price=tp_price,
+                sl_price=sl_price,
+            )
+            
+            if not order:
+                logger.error(f"[反向模式] 反向条件单创建失败: {symbol}")
+                return {"error": "TOOL_RUNTIME_ERROR: 反向条件单创建失败"}
+            
+            logger.info(f"[反向模式] 反向条件单创建成功: {symbol} algoId={order.algo_id}")
+            leverage = reverse_engine.config_manager.fixed_leverage
+            reverse_side_cn = '做空' if side_lower == 'long' else '做多'
+            
+            return f"""✅ 反向条件单创建成功
 
 【{symbol}】反向{reverse_side_cn} (Conditional) | {leverage}x杠杆
   条件单ID: {order.algo_id}
@@ -226,36 +119,22 @@ def create_limit_order_tool(
   止盈: ${order.tp_price:.6g} (Agent止损位)
   止损: ${order.sl_price:.6g} (Agent止盈位)
   状态: 等待触发"""
-                else:
-                    logger.error(f"[反向模式] 反向条件单创建失败: {symbol}")
-                    return {"error": "TOOL_RUNTIME_ERROR: 反向条件单创建失败"}
-                    
-            except Exception as e:
-                logger.error(f"[反向模式] 创建反向条件单异常: {e}", exc_info=True)
-                return {"error": f"TOOL_RUNTIME_ERROR: {str(e)}"}
         
-        else:
-            # 正常模式：创建正向限价单
-            logger.info(f"create_limit_order: {symbol} {side_lower} @ {limit_price}, margin={margin_usdt}")
-            
-            res = eng.create_limit_order(
-                symbol=symbol,
-                side=side_lower,
-                limit_price=limit_price,
-                margin_usdt=margin_usdt,
-                leverage=leverage,
-                tp_price=tp_price,
-                sl_price=sl_price
-            )
-            
-            if isinstance(res, dict) and 'error' in res:
-                logger.error(f"create_limit_order failed: {res['error']}")
-                return res
-                
-            # 发送邮件
-            _send_limit_order_email(symbol, side_lower, margin_usdt, leverage, limit_price, tp_price, sl_price)
-            
-            return _format_limit_order_result(res, margin_usdt, leverage)
+        logger.info(f"create_limit_order: {symbol} {side_lower} @ {limit_price}")
+        
+        res = eng.create_limit_order(
+            symbol=symbol,
+            side=side_lower,
+            limit_price=limit_price,
+            tp_price=tp_price,
+            sl_price=sl_price
+        )
+        
+        if isinstance(res, dict) and 'error' in res:
+            logger.error(f"create_limit_order failed: {res['error']}")
+            return res
+        
+        return _format_limit_order_result(res)
         
     except Exception as e:
         logger.error(f"create_limit_order_tool exception: {e}", exc_info=True)

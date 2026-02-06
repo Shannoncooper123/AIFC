@@ -41,6 +41,8 @@ export function BacktestPage() {
           interval: config.interval,
           initial_balance: config.initialBalance,
           concurrency: config.concurrency,
+          fixed_margin_usdt: config.fixedMarginUsdt,
+          fixed_leverage: config.fixedLeverage,
         });
         setSelectedBacktestId(result.backtest_id);
       } catch (error) {

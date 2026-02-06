@@ -76,6 +76,7 @@ open_interest:
 trading:
   mode: "simulator"            # 交易模式：simulator（模拟）/ live（实盘）
   max_leverage: 10        # 最大杠杆倍数
+  fixed_margin_usdt: 50.0 # 固定开仓保证金（USDT），Agent不再指定金额
   history_sync_days: 0    # 启动时同步历史持仓天数（0=禁用，最大7天）
 
 # 交易对过滤

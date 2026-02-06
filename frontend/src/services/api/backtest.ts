@@ -7,6 +7,8 @@ export interface BacktestStartRequest {
   interval: string;
   initial_balance: number;
   concurrency: number;
+  fixed_margin_usdt: number;
+  fixed_leverage: number;
 }
 
 export interface BacktestStartResponse {

@@ -339,17 +339,25 @@ class BinanceLiveEngine:
             logger.error(f"开仓失败: {e}", exc_info=True)
             return {'error': str(e)}
     
-    def create_limit_order(self, symbol: str, side: str, limit_price: float, margin_usdt: float,
-                           leverage: int, tp_price: Optional[float] = None, 
+    def _get_trading_config(self) -> Dict[str, Any]:
+        """获取交易配置（固定金额和杠杆）"""
+        trading_config = self.config.get('trading', {})
+        return {
+            'fixed_margin_usdt': trading_config.get('fixed_margin_usdt', 50.0),
+            'max_leverage': trading_config.get('max_leverage', 10),
+        }
+    
+    def create_limit_order(self, symbol: str, side: str, limit_price: float,
+                           tp_price: Optional[float] = None, 
                            sl_price: Optional[float] = None) -> Dict[str, Any]:
-        """创建限价单
+        """创建限价单（信号模式）
+        
+        Agent 只提供开仓信号，实际金额和杠杆由配置决定。
         
         Args:
             symbol: 交易对
             side: 方向（long/short）
             limit_price: 限价
-            margin_usdt: 保证金
-            leverage: 杠杆
             tp_price: 止盈价
             sl_price: 止损价
             
@@ -358,11 +366,13 @@ class BinanceLiveEngine:
         """
         import uuid
         try:
-            # 计算数量
+            trading_cfg = self._get_trading_config()
+            margin_usdt = trading_cfg['fixed_margin_usdt']
+            leverage = trading_cfg['max_leverage']
+            
             notional = margin_usdt * leverage
             quantity = notional / limit_price
             
-            # 获取交易规则（精度）
             exchange_info = self.rest_client.get_exchange_info()
             quantity_precision = 3
             price_precision = 2
@@ -377,13 +387,11 @@ class BinanceLiveEngine:
             
             logger.info(f"创建限价单: {symbol} {side} @ {limit_price}, margin={margin_usdt}, leverage={leverage}x, qty={quantity}")
             
-            # 设置杠杆
             try:
                 self.rest_client.set_leverage(symbol, leverage)
             except Exception as e:
                 logger.warning(f"设置杠杆失败（可能已设置）: {e}")
             
-            # 下限价单（双向持仓模式）
             order_side = 'BUY' if side == 'long' else 'SELL'
             position_side = 'LONG' if side == 'long' else 'SHORT'
             
@@ -401,7 +409,6 @@ class BinanceLiveEngine:
             
             logger.info(f"限价单已创建: {symbol} orderId={order_id}")
             
-            # 返回结果（注意：限价单成交后才会有持仓，TP/SL 需要在成交后设置）
             return {
                 'success': True,
                 'id': str(order_id),

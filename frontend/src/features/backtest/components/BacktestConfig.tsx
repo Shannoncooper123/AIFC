@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, Calendar, DollarSign, Clock, Cpu } from 'lucide-react';
+import { Play, Calendar, DollarSign, Clock, Cpu, TrendingUp } from 'lucide-react';
 import { Button, Card } from '../../../components/ui';
 
 interface BacktestConfigProps {
@@ -15,6 +15,8 @@ export interface BacktestConfigData {
   interval: string;
   initialBalance: number;
   concurrency: number;
+  fixedMarginUsdt: number;
+  fixedLeverage: number;
 }
 
 const AVAILABLE_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'DOGEUSDT', 'LTCUSDT', 'SOLUSDT', 'XRPUSDT','1000PEPEUSDT'];
@@ -27,6 +29,8 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
     interval: '15m',
     initialBalance: 10000,
     concurrency: 5,
+    fixedMarginUsdt: 50,
+    fixedLeverage: 10,
   });
 
   function toUTCDatetimeLocal(date: Date): string {
@@ -135,22 +139,60 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
           </div>
         </div>
 
-        <div>
-          <label className="block text-sm text-neutral-400 mb-2">
-            <DollarSign className="inline h-4 w-4 mr-1" />
-            Initial Balance (USDT)
-          </label>
-          <input
-            type="number"
-            value={config.initialBalance}
-            onChange={(e) =>
-              setConfig((prev) => ({ ...prev, initialBalance: parseFloat(e.target.value) || 10000 }))
-            }
-            min={100}
-            max={1000000}
-            step={100}
-            className="w-full px-4 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:border-blue-500 focus:outline-none"
-          />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm text-neutral-400 mb-2">
+              <DollarSign className="inline h-4 w-4 mr-1" />
+              Initial Balance (USDT)
+            </label>
+            <input
+              type="number"
+              value={config.initialBalance}
+              onChange={(e) =>
+                setConfig((prev) => ({ ...prev, initialBalance: parseFloat(e.target.value) || 10000 }))
+              }
+              min={100}
+              max={1000000}
+              step={100}
+              className="w-full px-4 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-neutral-400 mb-2">
+              <DollarSign className="inline h-4 w-4 mr-1" />
+              Fixed Margin per Trade (USDT)
+            </label>
+            <input
+              type="number"
+              value={config.fixedMarginUsdt}
+              onChange={(e) =>
+                setConfig((prev) => ({ ...prev, fixedMarginUsdt: parseFloat(e.target.value) || 50 }))
+              }
+              min={1}
+              max={10000}
+              step={10}
+              className="w-full px-4 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-neutral-400 mb-2">
+              <TrendingUp className="inline h-4 w-4 mr-1" />
+              Fixed Leverage
+            </label>
+            <input
+              type="number"
+              value={config.fixedLeverage}
+              onChange={(e) =>
+                setConfig((prev) => ({ ...prev, fixedLeverage: parseInt(e.target.value) || 10 }))
+              }
+              min={1}
+              max={125}
+              step={1}
+              className="w-full px-4 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:border-blue-500 focus:outline-none"
+            />
+          </div>
         </div>
 
         <div>

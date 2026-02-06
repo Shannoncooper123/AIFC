@@ -207,26 +207,37 @@ class TradeSimulatorEngine:
 
         return result
 
+    def _get_trading_config(self) -> Dict[str, Any]:
+        """获取交易配置（固定金额和杠杆）"""
+        sim_cfg = self.config.get('agent', {}).get('simulator', {})
+        trading_cfg = self.config.get('trading', {})
+        return {
+            'fixed_margin_usdt': trading_cfg.get('fixed_margin_usdt', 50.0),
+            'max_leverage': sim_cfg.get('max_leverage', trading_cfg.get('max_leverage', 10)),
+        }
+    
     def create_limit_order(self, symbol: str, side: str, limit_price: float,
-                          margin_usdt: float, leverage: int,
                           tp_price: Optional[float] = None, sl_price: Optional[float] = None) -> Dict[str, Any]:
-        """创建限价单
+        """创建限价单（信号模式）
+        
+        Agent 只提供开仓信号，实际金额和杠杆由配置决定。
         
         Args:
             symbol: 交易对
             side: 方向（long/short）
             limit_price: 挂单价格
-            margin_usdt: 保证金金额
-            leverage: 杠杆倍数
             tp_price: 止盈价
             sl_price: 止损价
         """
+        trading_cfg = self._get_trading_config()
+        margin_usdt = trading_cfg['fixed_margin_usdt']
+        leverage = trading_cfg['max_leverage']
+        
         result = self.limit_order_manager.create_limit_order(
             symbol, side, limit_price, margin_usdt, leverage, tp_price, sl_price
         )
 
         if 'error' not in result:
-            # 成功创建，重建WS订阅并持久化
             self._rebuild_ws()
             self.limit_order_manager.persist()
 
