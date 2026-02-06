@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from modules.config.settings import get_config
 from modules.monitor.data.models import Kline
+from modules.agent.tools.chart_renderer_pillow import compute_indicators
 from modules.monitor.utils.logger import get_logger
 
 from .kline_storage import KlineStorage
@@ -104,6 +105,7 @@ class BacktestKlineProvider:
         
         self._kline_cache: Dict[str, Dict[str, List[Kline]]] = {}
         self._kline_index: Dict[str, Dict[str, List[int]]] = {}
+        self._indicator_cache: Dict[str, Dict[str, Dict[str, List[Optional[float]]]]] = {}
         
         cfg = get_config()
         cache_dir = cfg.get('backtest', {}).get('kline_cache_dir', 'modules/data/kline_cache')
@@ -213,6 +215,7 @@ class BacktestKlineProvider:
         for symbol in self.symbols:
             self._kline_cache[symbol] = {}
             self._kline_index[symbol] = {}
+            self._indicator_cache[symbol] = {}
             logger.info(f"加载 {symbol} 的历史数据...")
             
             for interval in intervals_to_load:
@@ -227,12 +230,18 @@ class BacktestKlineProvider:
                     
                     self._kline_cache[symbol][interval] = klines
                     self._kline_index[symbol][interval] = [k.timestamp for k in klines]
+                    if klines:
+                        closes = [k.close for k in klines]
+                        self._indicator_cache[symbol][interval] = compute_indicators(closes)
+                    else:
+                        self._indicator_cache[symbol][interval] = {}
                     logger.info(f"  {symbol} {interval}: 加载完成 - {len(klines)} 根K线")
                     
                 except Exception as e:
                     logger.error(f"加载K线数据失败: {symbol} {interval} - {e}")
                     self._kline_cache[symbol][interval] = []
                     self._kline_index[symbol][interval] = []
+                    self._indicator_cache[symbol][interval] = {}
         
         if self._fetcher:
             self._fetcher.close()
@@ -306,6 +315,42 @@ class BacktestKlineProvider:
             return []
         start_index = max(0, end_index - limit)
         return all_klines[start_index:end_index]
+
+    def get_klines_with_indicators(self, symbol: str, interval: str, limit: int) -> tuple[List[Kline], Optional[Dict[str, List[Optional[float]]]]]:
+        symbol = symbol.upper()
+        current_time = self.get_current_time()
+        
+        if symbol not in self._kline_cache:
+            logger.warning(f"未找到 {symbol} 的缓存数据")
+            return [], None
+        
+        if interval not in self._kline_cache[symbol]:
+            logger.warning(f"未找到 {symbol} {interval} 的缓存数据，尝试使用15m")
+            interval = "15m"
+            if interval not in self._kline_cache[symbol]:
+                return [], None
+        
+        all_klines = self._kline_cache[symbol][interval]
+        all_timestamps = self._kline_index.get(symbol, {}).get(interval, [])
+        interval_minutes = self._get_interval_minutes(interval)
+        
+        current_time_ms = int(current_time.timestamp() * 1000)
+        cutoff_ms = current_time_ms - interval_minutes * 60 * 1000
+        end_index = bisect.bisect_right(all_timestamps, cutoff_ms)
+        if end_index <= 0:
+            return [], None
+        start_index = max(0, end_index - limit)
+        
+        klines = all_klines[start_index:end_index]
+        indicators = self._indicator_cache.get(symbol, {}).get(interval)
+        if not indicators:
+            return klines, None
+        
+        indicator_slice: Dict[str, List[Optional[float]]] = {}
+        for key, values in indicators.items():
+            if values and len(values) >= end_index:
+                indicator_slice[key] = values[start_index:end_index]
+        return klines, indicator_slice
     
     def get_current_price(self, symbol: str) -> Optional[float]:
         """获取当前模拟时间的价格

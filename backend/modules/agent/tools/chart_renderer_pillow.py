@@ -10,7 +10,9 @@ from __future__ import annotations
 import base64
 import io
 import math
+from collections import OrderedDict
 from datetime import datetime
+from threading import RLock
 from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
@@ -161,6 +163,31 @@ def _calculate_rsi(data: List[float], period: int = 14) -> List[Optional[float]]
     return result
 
 
+def compute_indicators(closes: List[float]) -> Dict[str, List[Optional[float]]]:
+    ema_fast = _calculate_ema(closes, 7)
+    ema_slow = _calculate_ema(closes, 25)
+    bb_upper, bb_middle, bb_lower = _calculate_bollinger(closes)
+    macd_line, signal_line, histogram = _calculate_macd(closes)
+    rsi = _calculate_rsi(closes)
+    return {
+        "ema_fast": ema_fast,
+        "ema_slow": ema_slow,
+        "bb_upper": bb_upper,
+        "bb_middle": bb_middle,
+        "bb_lower": bb_lower,
+        "macd_line": macd_line,
+        "signal_line": signal_line,
+        "histogram": histogram,
+        "rsi": rsi,
+    }
+
+
+def _slice_or_none(values: Optional[List[Optional[float]]], total_len: int, visible_count: int) -> Optional[List[Optional[float]]]:
+    if not values or len(values) < total_len:
+        return None
+    return values[-visible_count:]
+
+
 def _try_load_font(size: int) -> ImageFont.FreeTypeFont:
     font_paths = [
         "/System/Library/Fonts/Helvetica.ttc",
@@ -217,6 +244,7 @@ class PillowChartRenderer:
         symbol: str,
         interval: str,
         visible_count: int = 100,
+        indicators: Optional[Dict[str, List[Optional[float]]]] = None,
     ) -> str:
         if not kline_data:
             raise ValueError("没有K线数据可以绑制")
@@ -225,16 +253,25 @@ class PillowChartRenderer:
         klines = kline_data[-visible_count:]
         
         closes = [k['close'] for k in kline_data]
-        ema_fast = _calculate_ema(closes, 7)[-visible_count:]
-        ema_slow = _calculate_ema(closes, 25)[-visible_count:]
-        bb_upper, bb_middle, bb_lower = _calculate_bollinger(closes)
-        bb_upper = bb_upper[-visible_count:]
-        bb_lower = bb_lower[-visible_count:]
-        macd_line, signal_line, histogram = _calculate_macd(closes)
-        macd_line = macd_line[-visible_count:]
-        signal_line = signal_line[-visible_count:]
-        histogram = histogram[-visible_count:]
-        rsi = _calculate_rsi(closes)[-visible_count:]
+        total_len = len(kline_data)
+        ema_fast = _slice_or_none(indicators.get("ema_fast") if indicators else None, total_len, visible_count)
+        ema_slow = _slice_or_none(indicators.get("ema_slow") if indicators else None, total_len, visible_count)
+        bb_upper = _slice_or_none(indicators.get("bb_upper") if indicators else None, total_len, visible_count)
+        bb_lower = _slice_or_none(indicators.get("bb_lower") if indicators else None, total_len, visible_count)
+        macd_line = _slice_or_none(indicators.get("macd_line") if indicators else None, total_len, visible_count)
+        signal_line = _slice_or_none(indicators.get("signal_line") if indicators else None, total_len, visible_count)
+        histogram = _slice_or_none(indicators.get("histogram") if indicators else None, total_len, visible_count)
+        rsi = _slice_or_none(indicators.get("rsi") if indicators else None, total_len, visible_count)
+        if not all([ema_fast, ema_slow, bb_upper, bb_lower, macd_line, signal_line, histogram, rsi]):
+            computed = compute_indicators(closes)
+            ema_fast = computed["ema_fast"][-visible_count:]
+            ema_slow = computed["ema_slow"][-visible_count:]
+            bb_upper = computed["bb_upper"][-visible_count:]
+            bb_lower = computed["bb_lower"][-visible_count:]
+            macd_line = computed["macd_line"][-visible_count:]
+            signal_line = computed["signal_line"][-visible_count:]
+            histogram = computed["histogram"][-visible_count:]
+            rsi = computed["rsi"][-visible_count:]
         volumes = [k['volume'] for k in klines]
         
         s = self.scale
@@ -605,6 +642,32 @@ class PillowChartRenderer:
 
 _renderer_instance: Optional[PillowChartRenderer] = None
 
+
+class RenderCache:
+    def __init__(self, max_size: int = 128):
+        self.max_size = max_size
+        self._lock = RLock()
+        self._data: OrderedDict = OrderedDict()
+    
+    def get(self, key: tuple) -> Optional[str]:
+        with self._lock:
+            if key not in self._data:
+                return None
+            value = self._data.pop(key)
+            self._data[key] = value
+            return value
+    
+    def set(self, key: tuple, value: str) -> None:
+        with self._lock:
+            if key in self._data:
+                self._data.pop(key)
+            self._data[key] = value
+            while len(self._data) > self.max_size:
+                self._data.popitem(last=False)
+
+
+_render_cache = RenderCache()
+
 def get_pillow_renderer() -> PillowChartRenderer:
     global _renderer_instance
     if _renderer_instance is None:
@@ -616,7 +679,14 @@ def render_kline_chart_pillow(
     symbol: str,
     interval: str,
     visible_count: int = 100,
+    indicators: Optional[Dict[str, List[Optional[float]]]] = None,
 ) -> str:
+    if klines:
+        last_ts = klines[-1].timestamp
+        key = (symbol, interval, visible_count, last_ts, len(klines))
+        cached = _render_cache.get(key)
+        if cached:
+            return cached
     kline_data = [
         {
             'timestamp': k.timestamp,
@@ -630,4 +700,7 @@ def render_kline_chart_pillow(
     ]
     
     renderer = get_pillow_renderer()
-    return renderer.render(kline_data, symbol, interval, visible_count)
+    image_base64 = renderer.render(kline_data, symbol, interval, visible_count, indicators)
+    if klines:
+        _render_cache.set(key, image_base64)
+    return image_base64

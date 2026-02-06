@@ -7,6 +7,55 @@ from modules.agent.utils.kline_utils import get_current_price
 logger = get_logger('agent.tool.calc_metrics')
 
 
+from modules.monitor.indicators.atr import calculate_atr_list
+from modules.agent.utils.kline_utils import fetch_klines
+from modules.config.settings import get_config
+
+def _validate_min_distance(symbol: str, entry_price: float, sl_dist: float, tp_dist: float, feedback: str) -> Optional[Dict]:
+    """校验最小止盈止损距离（基于ATR动态计算，降级使用固定百分比）"""
+    try:
+        # 获取最近的K线数据计算ATR
+        # 默认使用15m周期计算ATR，取最近50根
+        klines, _ = fetch_klines(symbol, "15m", 50)
+        if klines and len(klines) > 20:
+            config = get_config()
+            atr_period = int(config.get('indicators', {}).get('atr_period', 14))
+            atr_list = calculate_atr_list(klines, atr_period)
+            current_atr = atr_list[-1] if atr_list else 0
+            
+            # 最小距离设定为 1.0 * ATR (1倍ATR的波动幅度)
+            # 这样能动态适应不同币种的波动率
+            min_dist = current_atr * 1.0
+            
+            if min_dist > 0:
+                if sl_dist < min_dist:
+                    return make_input_error(
+                        f"止损距离过近 ({sl_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止损距离，同时确保 R:R < 1（即亏损空间 > 盈利空间）以符合亏钱原则。",
+                        feedback
+                    )
+                if tp_dist < min_dist:
+                    return make_input_error(
+                        f"止盈距离过近 ({tp_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止盈距离，同时确保 R:R < 1（即亏损空间 > 盈利空间）以符合亏钱原则。",
+                        feedback
+                    )
+                return None
+    except Exception as e:
+        logger.warning(f"ATR计算失败，降级使用固定百分比校验: {e}")
+    
+    # 降级方案：保留原有固定百分比校验作为兜底
+    min_dist_pct = 0.002 # 0.2% 最小距离
+    if sl_dist / entry_price < min_dist_pct:
+        return make_input_error(
+            f"止损距离过近 ({sl_dist/entry_price:.4%})，容易被噪音触发。建议至少保留 0.2% ({entry_price * min_dist_pct:.4f}) 的空间。",
+            feedback
+        )
+    if tp_dist / entry_price < min_dist_pct:
+        return make_input_error(
+            f"止盈距离过近 ({tp_dist/entry_price:.4%})，容易被噪音触发。建议至少保留 0.2% ({entry_price * min_dist_pct:.4f}) 的空间。",
+            feedback
+        )
+    return None
+
 @tool(
     "calc_metrics",
     description=(
@@ -97,6 +146,12 @@ def calc_metrics_tool(
             sl_dist = entry_price - sl
             tp_dist = tp - entry_price
             side_norm = "long"
+            
+            # 新增：动态最小止盈止损距离校验（基于ATR）
+            error = _validate_min_distance(symbol, entry_price, sl_dist, tp_dist, feedback)
+            if error:
+                return error
+
         else:  # SELL
             if not (sl > entry_price > tp):
                 return make_input_error(
@@ -107,6 +162,11 @@ def calc_metrics_tool(
             sl_dist = sl - entry_price
             tp_dist = entry_price - tp
             side_norm = "short"
+            
+            # 新增：动态最小止盈止损距离校验（基于ATR）
+            error = _validate_min_distance(symbol, entry_price, sl_dist, tp_dist, feedback)
+            if error:
+                return error
         
         sl_dist_pct = (sl_dist / entry_price) * 100
 
@@ -120,13 +180,37 @@ def calc_metrics_tool(
         summary = f"""风险回报率计算结果
 交易对: {symbol} | 方向: {side_cn}
 入场价: ${entry_price:.4f}
-止盈价: ${tp:.4f} (+{tp_dist_pct:.2f}%) | 距离: {tp_dist:.4f} 点
-止损价: ${sl:.4f} (-{sl_dist_pct:.2f}%) | 距离: {sl_dist:.4f} 点
+止盈价: ${tp:.4f} (+{tp_dist_pct:.2f}%) | 距离: {tp_dist:.4f}
+止损价: ${sl:.4f} (-{sl_dist_pct:.2f}%) | 距离: {sl_dist:.4f}
 风险回报率 (R:R): {rr:.2f}:1"""
 
         result = {
             "summary": summary,
-            "rr": round(rr, 2),
+            "direction": side_norm,
+            "prices": {
+                "entry": round(entry_price, 8),
+                "tp": round(tp, 8),
+                "sl": round(sl, 8),
+                "limit": round(float(limit_price), 8) if limit_price else None,
+            },
+            "distances": {
+                "tp": {
+                    "abs": round(tp_dist, 8),
+                    "pct": round(tp_dist_pct, 2),
+                },
+                "sl": {
+                    "abs": round(sl_dist, 8),
+                    "pct": round(sl_dist_pct, 2),
+                },
+            },
+            "rr": {
+                "value": round(rr, 6),
+                "text": f"{rr:.2f}:1",
+            },
+            "checks": {
+                "rr_lt_1": rr < 1,
+                "rr_lt_0_8": rr < 0.8,
+            },
             "inputs": {
                 "symbol": symbol,
                 "side": side_norm,
@@ -134,14 +218,6 @@ def calc_metrics_tool(
                 "tp_price": round(tp, 8),
                 "sl_price": round(sl, 8),
                 "limit_price": round(float(limit_price), 8) if limit_price else None,
-            },
-            "metrics": {
-                "entry_price": round(entry_price, 8),
-                "sl_distance": round(sl_dist, 8),
-                "sl_distance_pct": round(sl_dist_pct, 2),
-                "tp_distance": round(tp_dist, 8),
-                "tp_distance_pct": round(tp_dist_pct, 2),
-                "rr": round(rr, 6),
             },
             "feedback": feedback,
         }
@@ -157,5 +233,4 @@ def calc_metrics_tool(
     except Exception as e:
         logger.error(f"calc_metrics_tool: 异常 -> {e}")
         return {"error": f"TOOL_RUNTIME_ERROR: 计算失败 - {str(e)}", "feedback": feedback if isinstance(feedback, str) else ""}
-
 

@@ -7,7 +7,6 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from modules.agent.state import SymbolAnalysisState
-from modules.agent.tools.trend_comparison_tool import trend_comparison_tool
 from modules.agent.tools.calc_metrics_tool import calc_metrics_tool
 from modules.agent.tools.get_kline_image_tool import get_kline_image_tool
 from modules.agent.utils.kline_utils import get_current_price, format_price
@@ -17,7 +16,7 @@ from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.nodes.single_symbol_analysis')
 
-ANALYSIS_INTERVALS = ["4h", "1h", "15m"]
+ANALYSIS_INTERVALS = ["1h", "15m", "3m"]
 
 
 def _format_account_summary(account: Dict[str, Any]) -> str:
@@ -80,7 +79,7 @@ def _build_multimodal_content(
 
 {supplemental_context}
 
-请利用 get_kline_image 工具，严格按照 4h -> 1h -> 15m 的顺序，逐个获取K线图像并进行分析。"""
+请利用 get_kline_image 工具，严格按照 1h -> 15m -> 3m 的顺序，逐个获取K线图像并进行分析。"""
     content.append({"type": "text", "text": text_part})
     
     return content
@@ -98,7 +97,6 @@ def _create_directional_subagent(direction: str) -> Tuple[Any, str]:
     """
     tools = [
         get_kline_image_tool,
-        trend_comparison_tool,
         calc_metrics_tool,
     ]
     
@@ -226,7 +224,7 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
     对当前状态中的单个币种进行双向深度技术分析（做多+做空）。
     
     本节点：
-    1. 预生成 4h/1h/15m 三个周期的K线图像
+    1. 预生成 1h/15m/3m 三个周期的K线图像
     2. 将图像直接传入 HumanMessage，供 LLM 进行视觉分析
     3. 并行执行两个 subagent（使用 asyncio 实现并行，contextvars 自动传播）：
        - Long Subagent: 专注于识别做多机会
