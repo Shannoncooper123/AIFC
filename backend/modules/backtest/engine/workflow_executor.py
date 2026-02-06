@@ -131,6 +131,8 @@ class WorkflowExecutor:
             config=cfg,
             backtest_id=f"{self.backtest_id}_{step_id}",
             initial_balance=self.config.initial_balance,
+            fixed_margin_usdt=self.config.fixed_margin_usdt,
+            fixed_leverage=self.config.fixed_leverage,
         )
         engine.start()
         return engine

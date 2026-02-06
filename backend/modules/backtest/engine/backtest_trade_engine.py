@@ -21,18 +21,29 @@ class BacktestTradeEngine(TradeSimulatorEngine):
     3. 支持设置模拟价格用于开仓/平仓
     """
     
-    def __init__(self, config: Dict, backtest_id: str, initial_balance: float = 10000.0):
+    def __init__(
+        self, 
+        config: Dict, 
+        backtest_id: str, 
+        initial_balance: float = 10000.0,
+        fixed_margin_usdt: float = 50.0,
+        fixed_leverage: int = 10,
+    ):
         """初始化回测交易引擎
         
         Args:
             config: 基础配置
             backtest_id: 回测ID，用于隔离状态文件
             initial_balance: 初始资金
+            fixed_margin_usdt: 回测固定保证金（USDT）
+            fixed_leverage: 回测固定杠杆倍数
         """
         self.backtest_id = backtest_id
         self._simulated_prices: Dict[str, float] = {}
         
-        backtest_config = self._create_backtest_config(config, backtest_id, initial_balance)
+        backtest_config = self._create_backtest_config(
+            config, backtest_id, initial_balance, fixed_margin_usdt, fixed_leverage
+        )
         
         super().__init__(backtest_config)
         
@@ -40,13 +51,16 @@ class BacktestTradeEngine(TradeSimulatorEngine):
         self.account.equity = initial_balance
         
         logger.info(f"回测交易引擎初始化完成: backtest_id={backtest_id}, "
-                   f"initial_balance={initial_balance}")
+                   f"initial_balance={initial_balance}, "
+                   f"fixed_margin={fixed_margin_usdt}U, leverage={fixed_leverage}x")
     
     def _create_backtest_config(
         self, 
         config: Dict, 
         backtest_id: str,
-        initial_balance: float
+        initial_balance: float,
+        fixed_margin_usdt: float,
+        fixed_leverage: int,
     ) -> Dict:
         """创建回测专用配置
         
@@ -57,9 +71,11 @@ class BacktestTradeEngine(TradeSimulatorEngine):
             config: 基础配置
             backtest_id: 回测ID
             initial_balance: 初始资金
+            fixed_margin_usdt: 回测固定保证金（USDT）
+            fixed_leverage: 回测固定杠杆倍数
         
         Returns:
-            修改后的配置，禁用文件持久化
+            修改后的配置，禁用文件持久化，使用回测指定的 margin 和 leverage
         """
         bt_config = copy.deepcopy(config)
         
@@ -74,6 +90,12 @@ class BacktestTradeEngine(TradeSimulatorEngine):
         if 'simulator' not in bt_config['agent']:
             bt_config['agent']['simulator'] = {}
         bt_config['agent']['simulator']['initial_balance'] = initial_balance
+        bt_config['agent']['simulator']['max_leverage'] = fixed_leverage
+        
+        if 'trading' not in bt_config:
+            bt_config['trading'] = {}
+        bt_config['trading']['fixed_margin_usdt'] = fixed_margin_usdt
+        bt_config['trading']['max_leverage'] = fixed_leverage
         
         return bt_config
     
