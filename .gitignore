@@ -89,3 +89,4 @@ analysis/all_positions.jsonl
 /backend/agent/reverse_algo_orders.json
 /backend/agent/reverse_positions.json
 /backend/agent/reverse_history.jsonl
+backend_copy
