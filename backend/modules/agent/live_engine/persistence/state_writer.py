@@ -2,7 +2,7 @@
 
 使用 shared/persistence/JsonStateManager 进行 JSON 读写。
 """
-from typing import Dict
+from typing import Dict, Any
 from datetime import datetime, timezone
 from modules.agent.shared.persistence import JsonStateManager
 from modules.monitor.utils.logger import get_logger
