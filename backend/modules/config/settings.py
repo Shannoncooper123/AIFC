@@ -79,12 +79,18 @@ class ConfigLoader:
             if key in agent_cfg and not os.path.isabs(agent_cfg[key]):
                 agent_cfg[key] = os.path.join(backend_dir, agent_cfg[key])
         
-        # 反向交易引擎路径配置（转换为绝对路径）
+        # 持久化路径配置（转换为绝对路径）
+        persistence_cfg = agent_cfg.get('persistence', {})
+        persistence_path_keys = ['trade_records_path', 'pending_orders_path', 'trade_history_path']
+        for key in persistence_path_keys:
+            if key in persistence_cfg and not os.path.isabs(persistence_cfg[key]):
+                persistence_cfg[key] = os.path.join(backend_dir, persistence_cfg[key])
+        agent_cfg['persistence'] = persistence_cfg
+        
+        # 反向交易引擎配置（转换为绝对路径）
         reverse_cfg = agent_cfg.get('reverse', {})
-        reverse_path_keys = ['config_path', 'algo_orders_path', 'trade_records_path', 'history_path']
-        for key in reverse_path_keys:
-            if key in reverse_cfg and not os.path.isabs(reverse_cfg[key]):
-                reverse_cfg[key] = os.path.join(backend_dir, reverse_cfg[key])
+        if 'config_path' in reverse_cfg and not os.path.isabs(reverse_cfg['config_path']):
+            reverse_cfg['config_path'] = os.path.join(backend_dir, reverse_cfg['config_path'])
         agent_cfg['reverse'] = reverse_cfg
         
         # 验证 simulator 配置存在（数值配置从 config.yaml 读取）

@@ -13,7 +13,17 @@ from modules.agent.shared.models import TradeRecord, RecordStatus
 
 logger = get_logger('shared.record_repository')
 
-DEFAULT_STATE_FILE = 'modules/data/trade_records.json'
+
+def _get_default_state_file() -> str:
+    """从配置文件获取默认状态文件路径"""
+    try:
+        from modules.config.settings import get_config
+        config = get_config()
+        persistence = config.get('agent', {}).get('persistence', {})
+        return persistence.get('trade_records_path', 'modules/data/trade_records.json')
+    except Exception as e:
+        logger.warning(f"获取配置路径失败，使用默认值: {e}")
+        return 'modules/data/trade_records.json'
 
 
 class RecordRepository:
@@ -27,17 +37,19 @@ class RecordRepository:
     不包含业务逻辑（如 TP/SL 处理），业务逻辑由 RecordService 处理。
     """
     
-    def __init__(self, state_file: str = DEFAULT_STATE_FILE):
+    def __init__(self, state_file: Optional[str] = None):
         """初始化
         
         Args:
-            state_file: 持久化文件路径
+            state_file: 持久化文件路径（可选，默认从配置文件读取）
         """
         self._lock = threading.RLock()
-        self._state_manager = JsonStateManager(state_file)
+        file_path = state_file or _get_default_state_file()
+        self._state_manager = JsonStateManager(file_path)
         self._records: Dict[str, TradeRecord] = {}
         self._on_change_callbacks: List[Callable[[], None]] = []
         
+        logger.info(f"[RecordRepository] 使用存储文件: {file_path}")
         self._load_state()
     
     def _load_state(self):

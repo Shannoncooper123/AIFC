@@ -35,7 +35,17 @@ if TYPE_CHECKING:
 
 logger = get_logger('reverse_engine')
 
-PENDING_ORDERS_STATE_FILE = 'modules/data/reverse_pending_orders.json'
+
+def _get_pending_orders_path() -> str:
+    """从配置文件获取挂单状态文件路径"""
+    try:
+        from modules.config.settings import get_config
+        config = get_config()
+        persistence = config.get('agent', {}).get('persistence', {})
+        return persistence.get('pending_orders_path', 'modules/data/pending_orders.json')
+    except Exception as e:
+        logger.warning(f"获取配置路径失败，使用默认值: {e}")
+        return 'modules/data/pending_orders.json'
 
 
 class ReverseEngine:
@@ -74,7 +84,9 @@ class ReverseEngine:
         
         self.workflow_manager = ReverseWorkflowManager()
         
-        self._pending_state = JsonStateManager(PENDING_ORDERS_STATE_FILE)
+        pending_path = _get_pending_orders_path()
+        logger.info(f"[反向] 使用挂单存储文件: {pending_path}")
+        self._pending_state = JsonStateManager(pending_path)
         self.pending_algo_orders: Dict[str, PendingOrder] = {}
         self.pending_limit_orders: Dict[int, PendingOrder] = {}
         self._load_pending_orders()

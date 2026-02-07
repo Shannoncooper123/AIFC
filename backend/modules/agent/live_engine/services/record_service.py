@@ -54,18 +54,7 @@ class RecordService:
         if repository:
             self._repository = repository
         else:
-            file_path = state_file or self._get_state_file_path()
-            self._repository = RecordRepository(state_file=file_path)
-    
-    def _get_state_file_path(self) -> str:
-        """获取状态文件路径"""
-        try:
-            from modules.config.settings import get_config
-            config = get_config()
-            return config.get('agent', {}).get('records_path', 'modules/data/trade_records.json')
-        except Exception as e:
-            logger.warning(f"获取状态文件路径失败，使用默认路径: {e}")
-            return 'modules/data/trade_records.json'
+            self._repository = RecordRepository(state_file=state_file)
     
     @property
     def records(self) -> Dict[str, TradeRecord]:
