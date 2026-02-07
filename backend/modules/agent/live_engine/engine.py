@@ -4,6 +4,7 @@
 - 初始化各服务层
 - 协调各层交互
 - 对外提供统一接口（符合 EngineProtocol）
+- 为其他模块（如 reverse_engine）提供基础设施服务
 """
 from typing import Dict, Optional, List, Any
 import threading
@@ -16,6 +17,8 @@ from modules.agent.live_engine.services.account_service import AccountService
 from modules.agent.live_engine.services.position_service import PositionService
 from modules.agent.live_engine.services.order_service import OrderService
 from modules.agent.live_engine.services.close_detector import CloseDetectorService
+from modules.agent.live_engine.services.order_manager import OrderManager
+from modules.agent.live_engine.services.record_service import RecordService
 
 from modules.agent.live_engine.events.dispatcher import EventDispatcher
 from modules.agent.live_engine.events.account_handler import AccountUpdateHandler
@@ -23,6 +26,9 @@ from modules.agent.live_engine.events.order_handler import OrderUpdateHandler
 
 from modules.agent.live_engine.persistence.state_writer import StateWriter
 from modules.agent.live_engine.persistence.history_writer import HistoryWriter
+from modules.agent.live_engine.sync import SyncManager
+
+from modules.agent.shared import ExchangeInfoCache
 
 logger = get_logger('live_engine')
 
@@ -55,12 +61,23 @@ class BinanceLiveEngine:
         else:
             logger.info(f"API 密钥已加载: Key长度={len(self.rest_client.api_key)}, Secret长度={len(self.rest_client.api_secret)}")
         
-        # 初始化服务层
+        ExchangeInfoCache.set_rest_client(self.rest_client)
+        
         self.account_service = AccountService(self.rest_client)
         self.order_service = OrderService(self.rest_client, config)
         self.position_service = PositionService(self.rest_client)
         
-        # 初始化持久化层
+        self.order_manager = OrderManager(self.rest_client)
+        self.record_service = RecordService(
+            rest_client=self.rest_client,
+            order_manager=self.order_manager
+        )
+        
+        self.sync_manager = SyncManager(
+            rest_client=self.rest_client,
+            record_service=self.record_service
+        )
+        
         self.history_writer = HistoryWriter(config)
         self.state_writer = StateWriter(config, self.account_service, self.position_service, self.order_service)
         

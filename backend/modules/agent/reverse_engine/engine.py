@@ -1,57 +1,62 @@
-"""反向交易引擎
+"""反向交易引擎（策略层）
 
-当 Agent 下限价单时，自动创建反向条件单进行对冲交易。
+当 Agent 下限价单时，自动创建反向订单进行对冲交易。
 使用固定保证金和杠杆，与 Agent 的参数无关。
 
-架构说明（v3 - Binance 条件单管理 TP/SL）：
-- 强制复用 live_engine 的 REST 客户端（不创建独立连接）
-- 复用 live_engine 的 WebSocket 连接
-- 独立管理：条件单状态、开仓记录
-- 使用 Binance 的 TAKE_PROFIT_MARKET 和 STOP_MARKET 条件单管理 TP/SL
-- 不再需要本地价格监控，更加可靠
-- 通过 MarkPriceWS 实时更新持仓盈亏
+架构说明（v5 - 统一基础设施）：
+- 使用 live_engine 的 OrderManager 进行下单
+- 使用 live_engine 的 RecordService 管理开仓记录
+- 本模块只负责策略逻辑：信号解析、方向反转、订单类型选择
+
+职责：
+- 监听 Agent 限价单创建事件
+- 计算反向订单参数（方向反转、TP/SL 互换）
+- 智能选择订单类型（限价单/条件单）以优化手续费
+- 监听成交事件并处理后续逻辑
 """
 
 import threading
-import time
 from typing import Dict, Any, Optional, List, Set, TYPE_CHECKING
 from modules.monitor.utils.logger import get_logger
 from modules.monitor.clients.binance_ws import BinanceMarkPriceWSClient
 
 from .config import ConfigManager
-from .services.algo_order_service import AlgoOrderService
-from .services.trade_record_service import TradeRecordService
-from .services.tpsl_monitor import TPSLMonitorService
-from .services.history_writer import ReverseHistoryWriter
-from .events.order_handler import ReverseOrderHandler
 from .workflow_runner import ReverseWorkflowManager
+from modules.agent.shared import (
+    ExchangeInfoCache, 
+    JsonStateManager,
+    PendingOrder,
+    AlgoOrderStatus,
+    OrderKind,
+)
 
 if TYPE_CHECKING:
     from modules.agent.live_engine.engine import BinanceLiveEngine
 
 logger = get_logger('reverse_engine')
 
+PENDING_ORDERS_STATE_FILE = 'modules/data/reverse_pending_orders.json'
+
 
 class ReverseEngine:
-    """反向交易引擎
+    """反向交易引擎（策略层）
     
     职责：
-    - 监听 Agent 限价单创建事件
-    - 创建反向条件单
-    - 使用 Binance 条件单管理 TP/SL（更可靠）
-    - 监听 ALGO_UPDATE 事件处理条件单触发
+    - 解析 Agent 限价单信号
+    - 计算反向订单参数（方向反转、TP/SL 互换）
+    - 调用 live_engine 执行下单
+    - 监听成交事件并处理后续逻辑
     
     架构：
-    - 强制依赖 live_engine，复用其 REST 连接和 WebSocket
-    - 开仓条件单触发后自动下止盈止损条件单
-    - 止盈/止损条件单触发后自动关闭记录并取消另一个
+    - 强制依赖 live_engine，使用其 OrderManager 和 RecordService
+    - 不再维护独立的订单/记录管理
     """
     
     def __init__(self, live_engine: 'BinanceLiveEngine', config: Dict):
         """初始化
         
         Args:
-            live_engine: 实盘引擎实例（必需），用于复用 REST 连接
+            live_engine: 实盘引擎实例（必需）
             config: 配置字典
             
         Raises:
@@ -63,37 +68,67 @@ class ReverseEngine:
         self.config = config
         self._lock = threading.RLock()
         self._running = False
-        self._sync_thread = None
         
         self.live_engine = live_engine
-        self.rest_client = live_engine.rest_client
-        
         self.config_manager = ConfigManager()
-        
-        self.algo_order_service = AlgoOrderService(self.rest_client, self.config_manager)
-        
-        self.trade_record_service = TradeRecordService(self.rest_client)
-        
-        self.tpsl_monitor = TPSLMonitorService(self.trade_record_service, self.rest_client)
-        
-        self.history_writer = ReverseHistoryWriter(
-            config, 
-            live_history_writer=live_engine.history_writer
-        )
-        
-        self.order_handler = ReverseOrderHandler(
-            self.algo_order_service,
-            self.trade_record_service,
-            self.history_writer
-        )
         
         self.workflow_manager = ReverseWorkflowManager()
         
+        self._pending_state = JsonStateManager(PENDING_ORDERS_STATE_FILE)
+        self.pending_algo_orders: Dict[str, PendingOrder] = {}
+        self.pending_limit_orders: Dict[int, PendingOrder] = {}
+        self._load_pending_orders()
+        
         self.mark_price_ws: Optional[BinanceMarkPriceWSClient] = None
         self._watched_symbols: Set[str] = set()
-        self._price_update_counter = 0
         
-        logger.info("[反向] 反向交易引擎已初始化（v3 - Binance 条件单管理 TP/SL）")
+        logger.info("[反向] 反向交易引擎已初始化（v5 - 统一基础设施）")
+    
+    @property
+    def order_manager(self):
+        """获取订单管理器（来自 live_engine）"""
+        return self.live_engine.order_manager
+    
+    @property
+    def record_service(self):
+        """获取记录服务（来自 live_engine）"""
+        return self.live_engine.record_service
+    
+    @property
+    def rest_client(self):
+        """获取 REST 客户端（来自 live_engine）"""
+        return self.live_engine.rest_client
+    
+    def _load_pending_orders(self):
+        """加载待触发订单"""
+        data = self._pending_state.load()
+        
+        for algo_id, order_data in data.get('pending_algo_orders', {}).items():
+            self.pending_algo_orders[algo_id] = PendingOrder.from_dict(order_data)
+        
+        for order_id_str, order_data in data.get('pending_limit_orders', {}).items():
+            order_id = int(order_id_str)
+            self.pending_limit_orders[order_id] = PendingOrder.from_dict(order_data)
+        
+        if self.pending_algo_orders or self.pending_limit_orders:
+            logger.info(f"[反向] 已加载 {len(self.pending_algo_orders)} 个条件单, "
+                       f"{len(self.pending_limit_orders)} 个限价单")
+    
+    def _save_pending_orders(self):
+        """保存待触发订单"""
+        from datetime import datetime
+        data = {
+            'pending_algo_orders': {
+                algo_id: order.to_dict()
+                for algo_id, order in self.pending_algo_orders.items()
+            },
+            'pending_limit_orders': {
+                str(order_id): order.to_dict()
+                for order_id, order in self.pending_limit_orders.items()
+            },
+            'updated_at': datetime.now().isoformat()
+        }
+        self._pending_state.save(data)
     
     def is_enabled(self) -> bool:
         """是否启用"""
@@ -112,29 +147,24 @@ class ReverseEngine:
             
             self._running = True
             logger.info("=" * 60)
-            logger.info("[反向] 反向交易引擎启动 (v3 - Binance 条件单管理 TP/SL)")
+            logger.info("[反向] 反向交易引擎启动 (v5 - 统一基础设施)")
             logger.info(f"[反向] 配置: margin={self.config_manager.fixed_margin_usdt}U, "
-                       f"leverage={self.config_manager.fixed_leverage}x, "
-                       f"expiration={self.config_manager.expiration_days}days")
+                       f"leverage={self.config_manager.fixed_leverage}x")
+            logger.info("[反向] 策略: 开仓优先限价单(Maker) | 止盈限价单 | 止损条件单")
             logger.info("=" * 60)
             
             try:
-                self.algo_order_service.sync_from_api()
-                
                 if self.live_engine and hasattr(self.live_engine, 'event_dispatcher'):
-                    self.live_engine.event_dispatcher.register_listener(self.order_handler.handle_event)
+                    self.live_engine.event_dispatcher.register_listener(self._handle_event)
                     logger.info("[反向] 已注册到 live_engine 的事件分发器")
-                else:
-                    logger.warning("[反向] 无法注册到 live_engine 事件分发器，将依赖定时同步")
-                
-                self._sync_thread = threading.Thread(target=self._periodic_sync_loop, daemon=True)
-                self._sync_thread.start()
                 
                 self._start_mark_price_ws()
                 
+                open_records = self.record_service.get_open_records(source='reverse')
                 logger.info("[反向] 反向交易引擎启动完成")
-                logger.info(f"[反向] 待触发条件单: {len(self.algo_order_service.pending_orders)}")
-                logger.info(f"[反向] 当前开仓记录: {len(self.trade_record_service.get_open_records())}")
+                logger.info(f"[反向] 待触发条件单: {len(self.pending_algo_orders)}")
+                logger.info(f"[反向] 待成交限价单: {len(self.pending_limit_orders)}")
+                logger.info(f"[反向] 当前开仓记录: {len(open_records)}")
                 
             except Exception as e:
                 logger.error(f"[反向] 启动引擎失败: {e}", exc_info=True)
@@ -152,347 +182,48 @@ class ReverseEngine:
             
             try:
                 self.workflow_manager.stop_all()
-                
                 self._stop_mark_price_ws()
                 
                 if self.live_engine and hasattr(self.live_engine, 'event_dispatcher'):
-                    self.live_engine.event_dispatcher.unregister_listener(self.order_handler.handle_event)
+                    self.live_engine.event_dispatcher.unregister_listener(self._handle_event)
                     logger.info("[反向] 已从 live_engine 事件分发器取消注册")
-                
-                if self._sync_thread and self._sync_thread.is_alive():
-                    time.sleep(0.5)
                 
                 logger.info("[反向] 反向交易引擎已停止")
                 
             except Exception as e:
                 logger.error(f"[反向] 停止引擎时出错: {e}")
     
-    def _periodic_sync_loop(self):
-        """定时同步线程
-        
-        作为 WebSocket 的兜底机制：
-        - 定期检查条件单是否已触发
-        - 如果 WebSocket 没有收到事件，通过 API 同步来补偿
-        - 同步 Binance 上被取消的条件单
-        - 同步止盈止损条件单的触发情况
-        - 同步 Binance 持仓，关闭本地不存在的记录
-        """
-        sync_interval = 5
-        position_sync_counter = 0
-        position_sync_interval = 6
-        
-        logger.info(f"[反向] 定时同步线程已启动（间隔={sync_interval}秒，持仓同步间隔={position_sync_interval * sync_interval}秒）")
-        
-        while self._running:
-            try:
-                time.sleep(sync_interval)
-                
-                if not self._running:
-                    break
-                
-                triggered_orders = self.algo_order_service.sync_from_api()
-                
-                for order in triggered_orders:
-                    logger.info(f"[反向] 🔄 通过定时同步检测到条件单触发: {order.symbol} algoId={order.algo_id}")
-                    
-                    try:
-                        mark_price_data = self.rest_client.get_mark_price(order.symbol)
-                        filled_price = float(mark_price_data.get('markPrice', order.trigger_price))
-                    except:
-                        filled_price = order.trigger_price
-                    
-                    logger.info(f"[反向] 创建开仓记录: {order.symbol} @ {filled_price}")
-                    
-                    self.algo_order_service.mark_order_triggered(order.algo_id, filled_price)
-                    
-                    record = self.trade_record_service.create_record(order, filled_price)
-                    
-                    if record:
-                        logger.info(f"[反向] ✅ 开仓记录已创建: {order.symbol} {record.side} @ {filled_price}")
-                        logger.info(f"[反向]    TP={record.tp_price} (algoId={record.tp_algo_id})")
-                        logger.info(f"[反向]    SL={record.sl_price} (algoId={record.sl_algo_id})")
-                    
-                    self.algo_order_service.remove_order(order.algo_id)
-                
-                self._sync_tp_sl_orders()
-                
-                position_sync_counter += 1
-                if position_sync_counter >= position_sync_interval:
-                    position_sync_counter = 0
-                    self._sync_positions_with_binance()
-                
-            except Exception as e:
-                logger.error(f"[反向] 定时同步失败: {e}", exc_info=True)
-        
-        logger.info("[反向] 定时同步线程已退出")
-    
-    def _sync_tp_sl_orders(self):
-        """同步止盈止损条件单状态
-        
-        作为 WebSocket 的兜底机制，检查止盈止损条件单是否已触发。
-        如果某个止盈/止损单不在 API 返回的活跃条件单中，说明已触发或被取消。
-        """
-        try:
-            open_records = self.trade_record_service.get_open_records()
-            if not open_records:
-                return
-            
-            api_orders = self.rest_client.get_algo_open_orders()
-            if api_orders is None:
-                logger.warning("[反向] ⚠️ 查询条件单失败（可能限流），跳过本次同步")
-                return
-            
-            active_algo_ids = {str(o.get('algoId')) for o in api_orders}
-            
-            for record in open_records:
-                tp_triggered = False
-                sl_triggered = False
-                
-                if record.tp_algo_id and record.tp_algo_id not in active_algo_ids:
-                    logger.info(f"[反向] 🔄 通过定时同步检测到止盈单已触发/取消: {record.symbol} algoId={record.tp_algo_id}")
-                    tp_triggered = True
-                
-                if record.sl_algo_id and record.sl_algo_id not in active_algo_ids:
-                    logger.info(f"[反向] 🔄 通过定时同步检测到止损单已触发/取消: {record.symbol} algoId={record.sl_algo_id}")
-                    sl_triggered = True
-                
-                if tp_triggered and not sl_triggered:
-                    try:
-                        mark_price_data = self.rest_client.get_mark_price(record.symbol)
-                        close_price = float(mark_price_data.get('markPrice', record.tp_price))
-                    except:
-                        close_price = record.tp_price
-                    
-                    logger.info(f"[反向] 🎯 止盈单已触发（定时同步）: {record.symbol} @ {close_price}")
-                    
-                    if record.sl_algo_id:
-                        if self.rest_client.cancel_algo_order(record.symbol, record.sl_algo_id):
-                            logger.info(f"[反向] 🚫 取消止损单成功: {record.symbol} algoId={record.sl_algo_id}")
-                            record.sl_algo_id = None
-                        else:
-                            logger.warning(f"[反向] ⚠️ 取消止损单失败，将在下次同步时重试: {record.symbol}")
-                    
-                    record.tp_algo_id = None
-                    self.trade_record_service.close_record(
-                        record_id=record.id,
-                        close_price=close_price,
-                        close_reason='TP_CLOSED'
-                    )
-                
-                elif sl_triggered and not tp_triggered:
-                    try:
-                        mark_price_data = self.rest_client.get_mark_price(record.symbol)
-                        close_price = float(mark_price_data.get('markPrice', record.sl_price))
-                    except:
-                        close_price = record.sl_price
-                    
-                    logger.info(f"[反向] 🛑 止损单已触发（定时同步）: {record.symbol} @ {close_price}")
-                    
-                    if record.tp_algo_id:
-                        if self.rest_client.cancel_algo_order(record.symbol, record.tp_algo_id):
-                            logger.info(f"[反向] 🚫 取消止盈单成功: {record.symbol} algoId={record.tp_algo_id}")
-                            record.tp_algo_id = None
-                        else:
-                            logger.warning(f"[反向] ⚠️ 取消止盈单失败，将在下次同步时重试: {record.symbol}")
-                    
-                    record.sl_algo_id = None
-                    self.trade_record_service.close_record(
-                        record_id=record.id,
-                        close_price=close_price,
-                        close_reason='SL_CLOSED'
-                    )
-                
-                elif tp_triggered and sl_triggered:
-                    logger.warning(f"[反向] ⚠️ 止盈止损单同时消失: {record.symbol}，可能已被外部平仓")
-                    record.tp_algo_id = None
-                    record.sl_algo_id = None
-            
-            self._cleanup_orphan_algo_orders(active_algo_ids)
-                    
-        except Exception as e:
-            logger.error(f"[反向] 同步止盈止损单失败: {e}")
-    
-    def _cleanup_orphan_algo_orders(self, active_algo_ids: set):
-        """清理孤儿条件单
-        
-        检查 Binance 上的活跃条件单，如果不在本地跟踪列表中，则取消。
-        为了避免误删刚创建的条件单，只清理创建时间超过 10 秒的条件单。
-        
-        Args:
-            active_algo_ids: Binance 上活跃的条件单 ID 集合
-        """
-        try:
-            tracked_algo_ids = set()
-            
-            for algo_id in self.algo_order_service.pending_orders.keys():
-                tracked_algo_ids.add(algo_id)
-            
-            for record in self.trade_record_service.records.values():
-                if record.tp_algo_id:
-                    tracked_algo_ids.add(record.tp_algo_id)
-                if record.sl_algo_id:
-                    tracked_algo_ids.add(record.sl_algo_id)
-            
-            orphan_ids = active_algo_ids - tracked_algo_ids
-            
-            if not orphan_ids:
-                return
-            
-            api_orders = self.rest_client.get_algo_open_orders()
-            if api_orders is None:
-                logger.warning("[反向] ⚠️ 查询条件单失败，跳过孤儿清理")
-                return
-            
-            current_time_ms = int(datetime.now().timestamp() * 1000)
-            protection_period_ms = 10 * 1000
-            
-            algo_info_map = {}
-            for o in api_orders:
-                algo_id = str(o.get('algoId'))
-                algo_info_map[algo_id] = {
-                    'symbol': o.get('symbol'),
-                    'create_time': o.get('time', 0)
-                }
-            
-            orphan_to_clean = []
-            for algo_id in orphan_ids:
-                info = algo_info_map.get(algo_id)
-                if not info:
-                    continue
-                
-                create_time = info.get('create_time', 0)
-                age_ms = current_time_ms - create_time
-                
-                if age_ms > protection_period_ms:
-                    orphan_to_clean.append((algo_id, info['symbol']))
-                else:
-                    logger.debug(f"[反向] 跳过新创建的条件单: {info['symbol']} algoId={algo_id} age={age_ms/1000:.1f}s")
-            
-            if orphan_to_clean:
-                logger.warning(f"[反向] 发现 {len(orphan_to_clean)} 个孤儿条件单（已过保护期），尝试清理...")
-                
-                for algo_id, symbol in orphan_to_clean:
-                    if self.rest_client.cancel_algo_order(symbol, algo_id):
-                        logger.info(f"[反向] 🗑️ 清理孤儿条件单成功: {symbol} algoId={algo_id}")
-                    else:
-                        logger.warning(f"[反向] ⚠️ 清理孤儿条件单失败: {symbol} algoId={algo_id}")
-                        
-        except Exception as e:
-            logger.error(f"[反向] 清理孤儿条件单失败: {e}")
-    
-    def _sync_positions_with_binance(self):
-        """同步本地记录与 Binance 实际持仓
-        
-        检查本地开仓记录对应的 Binance 持仓是否还存在，
-        如果不存在则关闭本地记录。
-        """
-        try:
-            open_records = self.trade_record_service.get_open_records()
-            if not open_records:
-                return
-            
-            account_info = self.rest_client.get_account()
-            positions = account_info.get('positions', [])
-            
-            bn_positions = {}
-            for pos in positions:
-                symbol = pos.get('symbol', '')
-                position_side = pos.get('positionSide', 'BOTH')
-                position_amt = float(pos.get('positionAmt', 0))
-                
-                if position_amt != 0:
-                    key = f"{symbol}_{position_side}"
-                    bn_positions[key] = {
-                        'symbol': symbol,
-                        'position_side': position_side,
-                        'position_amt': position_amt,
-                        'mark_price': float(pos.get('markPrice', 0))
-                    }
-            
-            for record in open_records:
-                position_side = 'SHORT' if record.side.upper() in ('SELL', 'SHORT') else 'LONG'
-                key = f"{record.symbol}_{position_side}"
-                
-                if key in bn_positions:
-                    bn_pos = bn_positions[key]
-                    if bn_pos['mark_price'] > 0:
-                        self.trade_record_service.update_mark_price(record.symbol, bn_pos['mark_price'])
-                else:
-                    logger.warning(f"[反向] ⚠️ 本地记录 {record.symbol} {position_side} 在 Binance 上无对应持仓，自动关闭")
-                    
-                    try:
-                        mark_price_data = self.rest_client.get_mark_price(record.symbol)
-                        close_price = float(mark_price_data.get('markPrice', record.entry_price))
-                    except:
-                        close_price = record.entry_price
-                    
-                    if record.tp_algo_id:
-                        if self.rest_client.cancel_algo_order(record.symbol, record.tp_algo_id):
-                            logger.info(f"[反向] 🚫 取消止盈单成功: {record.symbol} algoId={record.tp_algo_id}")
-                        else:
-                            logger.warning(f"[反向] ⚠️ 取消止盈单失败: {record.symbol} algoId={record.tp_algo_id}")
-                        record.tp_algo_id = None
-                        
-                    if record.sl_algo_id:
-                        if self.rest_client.cancel_algo_order(record.symbol, record.sl_algo_id):
-                            logger.info(f"[反向] 🚫 取消止损单成功: {record.symbol} algoId={record.sl_algo_id}")
-                        else:
-                            logger.warning(f"[反向] ⚠️ 取消止损单失败: {record.symbol} algoId={record.sl_algo_id}")
-                        record.sl_algo_id = None
-                    
-                    self.trade_record_service.close_record(
-                        record_id=record.id,
-                        close_price=close_price,
-                        close_reason='POSITION_CLOSED_EXTERNALLY'
-                    )
-                    logger.info(f"[反向] 📕 记录已关闭: {record.symbol} @ {close_price} (外部平仓)")
-            
-        except Exception as e:
-            logger.error(f"[反向] 同步持仓失败: {e}")
-    
     def on_agent_limit_order(self, symbol: str, side: str, limit_price: float,
                               tp_price: float, sl_price: float,
                               agent_order_id: Optional[str] = None):
         """Agent 下限价单时触发
         
-        创建反向条件单：
+        智能创建反向订单：
         - 方向反转：Agent BUY -> 我们 SELL
         - TP/SL 互换：Agent 的 TP 变成我们的 SL，Agent 的 SL 变成我们的 TP
         - 使用固定保证金和杠杆
-        
-        Args:
-            symbol: 交易对
-            side: Agent 方向（long/short）
-            limit_price: Agent 限价（作为我们的触发价）
-            tp_price: Agent 止盈价（作为我们的止损价）
-            sl_price: Agent 止损价（作为我们的止盈价）
-            agent_order_id: Agent 订单ID
-            
-        Returns:
-            创建的条件单对象，失败返回 None
+        - 智能选择订单类型（限价单/条件单）以优化手续费
         """
         if not self.config_manager.enabled:
             logger.debug(f"[反向] 引擎未启用，跳过处理 {symbol}")
             return None
         
         max_positions = self.config_manager.max_positions
-        current_records = len(self.trade_record_service.get_open_records())
-        current_pending = len(self.algo_order_service.pending_orders)
+        open_records = self.record_service.get_open_records(source='reverse')
+        current_count = len(open_records) + len(self.pending_algo_orders) + len(self.pending_limit_orders)
         
-        if current_records + current_pending >= max_positions:
+        if current_count >= max_positions:
             logger.warning(f"[反向] 达到最大持仓/挂单数限制 ({max_positions})，跳过 {symbol}")
             return None
         
         reverse_side = 'SELL' if side == 'long' else 'BUY'
-        
         reverse_tp = sl_price
         reverse_sl = tp_price
         
         logger.info(f"[反向] 处理 Agent 限价单: {symbol} {side} @ {limit_price}")
-        logger.info(f"[反向] 创建反向条件单: {reverse_side} trigger={limit_price} "
-                   f"TP={reverse_tp} SL={reverse_sl}")
+        logger.info(f"[反向] 创建反向订单: {reverse_side} price={limit_price} TP={reverse_tp} SL={reverse_sl}")
         
-        order = self.algo_order_service.create_conditional_order(
+        return self._create_entry_order(
             symbol=symbol,
             side=reverse_side,
             trigger_price=limit_price,
@@ -501,131 +232,231 @@ class ReverseEngine:
             agent_order_id=agent_order_id,
             agent_side=side
         )
+    
+    def _create_entry_order(self, symbol: str, side: str, trigger_price: float,
+                            tp_price: float, sl_price: float,
+                            agent_order_id: Optional[str] = None,
+                            agent_side: Optional[str] = None) -> Optional[PendingOrder]:
+        """智能创建开仓订单（选择限价单或条件单）"""
+        fixed_margin = self.config_manager.fixed_margin_usdt
+        fixed_leverage = self.config_manager.fixed_leverage
         
-        if order:
-            logger.info(f"[反向] 条件单创建成功: {symbol} algoId={order.algo_id}")
+        self.order_manager.ensure_dual_position_mode()
+        self.order_manager.ensure_leverage(symbol, fixed_leverage)
+        
+        notional = fixed_margin * fixed_leverage
+        quantity = notional / trigger_price
+        quantity = ExchangeInfoCache.format_quantity(symbol, quantity)
+        
+        current_price = self.order_manager.get_mark_price(symbol)
+        if not current_price:
+            current_price = trigger_price
+        
+        use_limit_order = False
+        if side.upper() == 'BUY' and current_price > trigger_price:
+            use_limit_order = True
+            logger.info(f"[反向] 当前价格 {current_price} > 触发价 {trigger_price}，使用限价单 (Maker)")
+        elif side.upper() == 'SELL' and current_price < trigger_price:
+            use_limit_order = True
+            logger.info(f"[反向] 当前价格 {current_price} < 触发价 {trigger_price}，使用限价单 (Maker)")
+        
+        if use_limit_order:
+            return self._create_limit_order(
+                symbol, side, trigger_price, quantity, fixed_leverage, fixed_margin,
+                tp_price, sl_price, agent_order_id, agent_side
+            )
         else:
-            logger.error(f"[反向] 条件单创建失败: {symbol}")
+            logger.info(f"[反向] 使用条件单 (Taker)")
+            return self._create_algo_order(
+                symbol, side, trigger_price, quantity, fixed_leverage, fixed_margin,
+                tp_price, sl_price, agent_order_id, agent_side
+            )
+    
+    def _create_limit_order(self, symbol: str, side: str, price: float, quantity: float,
+                            leverage: int, margin: float, tp_price: float, sl_price: float,
+                            agent_order_id: Optional[str], agent_side: Optional[str]) -> Optional[PendingOrder]:
+        """创建限价单"""
+        from datetime import datetime
         
+        position_side = 'LONG' if side.upper() == 'BUY' else 'SHORT'
+        
+        result = self.order_manager.place_limit_order(
+            symbol=symbol,
+            side=side,
+            price=price,
+            quantity=quantity,
+            position_side=position_side
+        )
+        
+        if not result.get('success'):
+            logger.error(f"[反向] 限价单下单失败: {result.get('error')}")
+            return None
+        
+        order_id = result.get('order_id')
+        
+        order = PendingOrder(
+            id=f"LIMIT_{order_id}",
+            symbol=symbol,
+            side=side.lower(),
+            trigger_price=price,
+            quantity=quantity,
+            status=AlgoOrderStatus.NEW,
+            order_kind=OrderKind.LIMIT_ORDER,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            leverage=leverage,
+            margin_usdt=margin,
+            order_id=order_id,
+            source='reverse',
+            agent_order_id=agent_order_id,
+            agent_limit_price=price,
+            agent_side=agent_side,
+            created_at=datetime.now().isoformat()
+        )
+        
+        self.pending_limit_orders[order_id] = order
+        self._save_pending_orders()
+        
+        logger.info(f"[反向] ✅ 限价单创建成功: orderId={order_id}")
         return order
     
-    def start_symbol_workflow(self, symbol: str, interval: str = "15m") -> bool:
-        """启动指定币种的 workflow 分析
+    def _create_algo_order(self, symbol: str, side: str, trigger_price: float, quantity: float,
+                           leverage: int, margin: float, tp_price: float, sl_price: float,
+                           agent_order_id: Optional[str], agent_side: Optional[str]) -> Optional[PendingOrder]:
+        """创建条件单"""
+        from datetime import datetime
         
-        每根K线收盘时触发 workflow 分析，Agent 开仓后自动创建反向条件单。
-        启动 workflow 会自动启用并启动反向交易引擎。
+        position_side = 'LONG' if side.upper() == 'BUY' else 'SHORT'
         
-        Args:
-            symbol: 交易对（如 "BTCUSDT"）
-            interval: K线周期（如 "15m"）
+        current_price = self.order_manager.get_mark_price(symbol) or trigger_price
+        if side.upper() == 'BUY':
+            order_type = 'STOP_MARKET' if trigger_price > current_price else 'TAKE_PROFIT_MARKET'
+        else:
+            order_type = 'STOP_MARKET' if trigger_price < current_price else 'TAKE_PROFIT_MARKET'
+        
+        result = self.order_manager.place_algo_order(
+            symbol=symbol,
+            side=side,
+            trigger_price=trigger_price,
+            quantity=quantity,
+            order_type=order_type,
+            position_side=position_side,
+            expiration_days=self.config_manager.expiration_days
+        )
+        
+        if not result.get('success'):
+            logger.error(f"[反向] 条件单下单失败: {result.get('error')}")
+            return None
+        
+        algo_id = result.get('algo_id')
+        
+        order = PendingOrder(
+            id=algo_id,
+            symbol=symbol,
+            side=side.lower(),
+            trigger_price=trigger_price,
+            quantity=quantity,
+            status=AlgoOrderStatus.NEW,
+            order_kind=OrderKind.CONDITIONAL_ORDER,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            leverage=leverage,
+            margin_usdt=margin,
+            algo_id=algo_id,
+            source='reverse',
+            agent_order_id=agent_order_id,
+            agent_limit_price=trigger_price,
+            agent_side=agent_side,
+            created_at=datetime.now().isoformat()
+        )
+        
+        self.pending_algo_orders[algo_id] = order
+        self._save_pending_orders()
+        
+        logger.info(f"[反向] ✅ 条件单创建成功: algoId={algo_id}")
+        return order
+    
+    def _handle_event(self, event: Dict[str, Any]):
+        """处理 WebSocket 事件"""
+        event_type = event.get('e')
+        
+        if event_type == 'ORDER_TRADE_UPDATE':
+            self._handle_order_update(event.get('o', {}))
+        elif event_type == 'ALGO_UPDATE':
+            self._handle_algo_update(event)
+    
+    def _handle_order_update(self, order_data: Dict):
+        """处理普通订单更新（限价单成交）"""
+        order_id = order_data.get('i')
+        status = order_data.get('X')
+        symbol = order_data.get('s')
+        
+        if status == 'FILLED' and order_id in self.pending_limit_orders:
+            order = self.pending_limit_orders[order_id]
+            filled_price = float(order_data.get('ap', order.trigger_price))
             
-        Returns:
-            是否成功启动
-        """
-        if not self.config_manager.enabled:
-            logger.info(f"[反向] 自动启用反向交易引擎以启动 {symbol} workflow")
-            self.config_manager.update(enabled=True)
-        
-        if not self._running:
-            logger.info(f"[反向] 自动启动反向交易引擎")
-            self.start()
-        
-        return self.workflow_manager.start_symbol(symbol, interval)
-    
-    def stop_symbol_workflow(self, symbol: str) -> bool:
-        """停止指定币种的 workflow 分析
-        
-        Args:
-            symbol: 交易对
+            logger.info(f"[反向] 📦 限价单成交: {symbol} orderId={order_id} price={filled_price}")
             
-        Returns:
-            是否成功停止
-        """
-        return self.workflow_manager.stop_symbol(symbol)
-    
-    def get_running_workflows(self) -> List[str]:
-        """获取正在运行 workflow 的币种列表"""
-        return self.workflow_manager.get_running_symbols()
-    
-    def get_workflow_status(self, symbol: Optional[str] = None) -> Dict[str, Any]:
-        """获取 workflow 运行状态
-        
-        Args:
-            symbol: 指定币种，None 表示获取所有
-        """
-        return self.workflow_manager.get_status(symbol)
-    
-    def get_config(self) -> Dict[str, Any]:
-        """获取配置"""
-        return self.config_manager.get_dict()
-    
-    def update_config(self, **kwargs) -> Dict[str, Any]:
-        """更新配置"""
-        config = self.config_manager.update(**kwargs)
-        return config.to_dict()
-    
-    def get_positions_summary(self) -> List[Dict[str, Any]]:
-        """获取开仓记录汇总"""
-        return self.trade_record_service.get_summary()
-    
-    def get_pending_orders_summary(self) -> Dict[str, Any]:
-        """获取待触发条件单汇总"""
-        return self.algo_order_service.get_summary()
-    
-    def get_history(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """获取历史记录"""
-        return self.trade_record_service.get_history(limit)
-    
-    def get_statistics(self) -> Dict[str, Any]:
-        """获取统计信息"""
-        return self.trade_record_service.get_statistics()
-    
-    def cancel_pending_order(self, algo_id: str) -> bool:
-        """撤销待触发条件单
-        
-        Args:
-            algo_id: 条件单ID
+            self.record_service.create_record(
+                symbol=order.symbol,
+                side=order.side,
+                qty=order.quantity,
+                entry_price=filled_price,
+                leverage=order.leverage,
+                tp_price=order.tp_price,
+                sl_price=order.sl_price,
+                source='reverse',
+                entry_order_id=order_id,
+                agent_order_id=order.agent_order_id,
+                auto_place_tpsl=True
+            )
             
-        Returns:
-            是否成功
-        """
-        return self.algo_order_service.cancel_order(algo_id)
+            del self.pending_limit_orders[order_id]
+            self._save_pending_orders()
     
-    def close_record(self, record_id: str) -> bool:
-        """手动关闭指定开仓记录
+    def _handle_algo_update(self, event: Dict):
+        """处理策略单更新（条件单触发）"""
+        algo_id = str(event.get('ai', ''))
+        status = event.get('as', '')
+        symbol = event.get('s', '')
         
-        Args:
-            record_id: 记录ID
+        if status == 'FILLED' and algo_id in self.pending_algo_orders:
+            order = self.pending_algo_orders[algo_id]
+            filled_price = float(event.get('ap', order.trigger_price))
+            triggered_order_id = event.get('oi')
             
-        Returns:
-            是否成功
-        """
-        return self.tpsl_monitor.manual_close(record_id, 'MANUAL_CLOSED')
-    
-    def close_all_records_by_symbol(self, symbol: str) -> int:
-        """关闭指定交易对的所有开仓记录
-        
-        Args:
-            symbol: 交易对
+            logger.info(f"[反向] 📦 条件单触发: {symbol} algoId={algo_id} price={filled_price}")
             
-        Returns:
-            关闭的记录数量
-        """
-        return self.tpsl_monitor.close_all_by_symbol(symbol, 'MANUAL_CLOSED')
-    
-    def get_summary(self) -> Dict[str, Any]:
-        """获取引擎汇总信息
+            self.record_service.create_record(
+                symbol=order.symbol,
+                side=order.side,
+                qty=order.quantity,
+                entry_price=filled_price,
+                leverage=order.leverage,
+                tp_price=order.tp_price,
+                sl_price=order.sl_price,
+                source='reverse',
+                entry_algo_id=algo_id,
+                agent_order_id=order.agent_order_id,
+                auto_place_tpsl=True
+            )
+            
+            del self.pending_algo_orders[algo_id]
+            self._save_pending_orders()
         
-        返回格式与前端 ReverseSummary 类型匹配
-        """
-        return {
-            'enabled': self.config_manager.enabled,
-            'config': self.config_manager.get_dict(),
-            'pending_orders_count': len(self.algo_order_service.pending_orders),
-            'positions_count': len(self.trade_record_service.get_open_records()),
-            'statistics': self.trade_record_service.get_statistics(),
-            'tpsl_monitor_status': self.tpsl_monitor.get_status()
-        }
+        elif status in ('FILLED', 'USER_CANCELLED'):
+            record = self.record_service.find_record_by_tp_algo_id(algo_id)
+            if record:
+                close_price = float(event.get('ap', record.tp_price or record.entry_price))
+                self.record_service.cancel_remaining_tpsl(record, 'TP')
+                self.record_service.close_record(record.id, close_price, 'TP_CLOSED')
+                return
+            
+            record = self.record_service.find_record_by_sl_algo_id(algo_id)
+            if record:
+                close_price = float(event.get('ap', record.sl_price or record.entry_price))
+                self.record_service.cancel_remaining_tpsl(record, 'SL')
+                self.record_service.close_record(record.id, close_price, 'SL_CLOSED')
     
     def _start_mark_price_ws(self):
         """启动标记价格 WebSocket"""
@@ -660,10 +491,13 @@ class ReverseEngine:
         """更新需要监控的交易对列表"""
         new_symbols = set()
         
-        for record in self.trade_record_service.get_open_records():
+        for record in self.record_service.get_open_records(source='reverse'):
             new_symbols.add(record.symbol)
         
-        for order in self.algo_order_service.pending_orders.values():
+        for order in self.pending_algo_orders.values():
+            new_symbols.add(order.symbol)
+        
+        for order in self.pending_limit_orders.values():
             new_symbols.add(order.symbol)
         
         if new_symbols != self._watched_symbols:
@@ -673,30 +507,143 @@ class ReverseEngine:
                 logger.info(f"[反向] 更新监控交易对: {len(new_symbols)} 个")
     
     def _on_mark_price_update(self, prices: Dict[str, float]):
-        """处理标记价格更新
-        
-        Args:
-            prices: {symbol: mark_price} 字典
-        """
+        """处理标记价格更新"""
         try:
-            updated_symbols = []
-            
             for symbol, mark_price in prices.items():
                 if symbol in self._watched_symbols:
-                    self.trade_record_service.update_mark_price(symbol, mark_price)
-                    updated_symbols.append(symbol)
-            
-            if updated_symbols:
-                self._price_update_counter += 1
-                
-                # 实时推送价格更新，不再限流
-                try:
-                    from app.core.events import emit_mark_price_update
-                    
-                    relevant_prices = {s: prices[s] for s in updated_symbols if s in prices}
-                    emit_mark_price_update(relevant_prices)
-                except Exception as e:
-                    logger.debug(f"[反向] 发送价格更新事件失败: {e}")
-                        
+                    self.record_service.update_mark_price(symbol, mark_price)
         except Exception as e:
             logger.error(f"[反向] 处理标记价格更新失败: {e}")
+    
+    def start_symbol_workflow(self, symbol: str, interval: str = "15m") -> bool:
+        """启动指定币种的 workflow 分析"""
+        if not self.config_manager.enabled:
+            logger.info(f"[反向] 自动启用反向交易引擎以启动 {symbol} workflow")
+            self.config_manager.update(enabled=True)
+        
+        if not self._running:
+            logger.info(f"[反向] 自动启动反向交易引擎")
+            self.start()
+        
+        return self.workflow_manager.start_symbol(symbol, interval)
+    
+    def stop_symbol_workflow(self, symbol: str) -> bool:
+        """停止指定币种的 workflow 分析"""
+        return self.workflow_manager.stop_symbol(symbol)
+    
+    def get_running_workflows(self) -> List[str]:
+        """获取正在运行 workflow 的币种列表"""
+        return self.workflow_manager.get_running_symbols()
+    
+    def get_workflow_status(self, symbol: Optional[str] = None) -> Dict[str, Any]:
+        """获取 workflow 运行状态"""
+        return self.workflow_manager.get_status(symbol)
+    
+    def get_config(self) -> Dict[str, Any]:
+        """获取配置"""
+        return self.config_manager.get_dict()
+    
+    def update_config(self, **kwargs) -> Dict[str, Any]:
+        """更新配置"""
+        config = self.config_manager.update(**kwargs)
+        return config.to_dict()
+    
+    def get_positions_summary(self) -> List[Dict[str, Any]]:
+        """获取开仓记录汇总"""
+        return self.record_service.get_summary(source='reverse')
+    
+    def get_pending_orders_summary(self) -> Dict[str, Any]:
+        """获取待触发订单汇总"""
+        return {
+            'total_conditional': len(self.pending_algo_orders),
+            'total_limit': len(self.pending_limit_orders),
+            'conditional_orders': [o.to_dict() for o in self.pending_algo_orders.values()],
+            'limit_orders': [o.to_dict() for o in self.pending_limit_orders.values()]
+        }
+    
+    def get_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """获取历史记录"""
+        records = [
+            r for r in self.record_service.records.values()
+            if r.source == 'reverse' and r.status.value != 'OPEN'
+        ]
+        records.sort(key=lambda x: x.close_time or '', reverse=True)
+        
+        result = []
+        for record in records[:limit]:
+            pnl_pct = (record.realized_pnl / record.margin_usdt * 100) if record.margin_usdt > 0 else 0
+            result.append({
+                'id': record.id,
+                'symbol': record.symbol,
+                'side': record.side.upper(),
+                'qty': record.qty,
+                'entry_price': record.entry_price,
+                'exit_price': record.close_price,
+                'leverage': record.leverage,
+                'margin_usdt': round(record.margin_usdt, 2),
+                'realized_pnl': round(record.realized_pnl or 0, 4),
+                'pnl_percent': round(pnl_pct, 2),
+                'open_time': record.open_time,
+                'close_time': record.close_time,
+                'close_reason': record.close_reason
+            })
+        return result
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """获取统计信息"""
+        return self.record_service.get_statistics(source='reverse')
+    
+    def cancel_pending_order(self, algo_id: str) -> bool:
+        """撤销待触发条件单"""
+        if algo_id in self.pending_algo_orders:
+            order = self.pending_algo_orders[algo_id]
+            if self.order_manager.cancel_algo_order(order.symbol, algo_id):
+                del self.pending_algo_orders[algo_id]
+                self._save_pending_orders()
+                return True
+        return False
+    
+    def cancel_limit_order(self, order_id: int) -> bool:
+        """撤销待成交限价单"""
+        if order_id in self.pending_limit_orders:
+            order = self.pending_limit_orders[order_id]
+            if self.order_manager.cancel_order(order.symbol, order_id):
+                del self.pending_limit_orders[order_id]
+                self._save_pending_orders()
+                return True
+        return False
+    
+    def close_record(self, record_id: str) -> bool:
+        """手动关闭指定开仓记录"""
+        record = self.record_service.get_record(record_id)
+        if not record or record.source != 'reverse':
+            return False
+        
+        current_price = self.order_manager.get_mark_price(record.symbol) or record.entry_price
+        
+        result = self.order_manager.place_market_order(
+            symbol=record.symbol,
+            side='SELL' if record.side.upper() in ('LONG', 'BUY') else 'BUY',
+            quantity=record.qty,
+            position_side='LONG' if record.side.upper() in ('LONG', 'BUY') else 'SHORT',
+            reduce_only=True
+        )
+        
+        if result.get('success'):
+            self.record_service.cancel_remaining_tpsl(record, 'TP')
+            self.record_service.cancel_remaining_tpsl(record, 'SL')
+            self.record_service.close_record(record_id, current_price, 'MANUAL_CLOSED')
+            return True
+        
+        return False
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """获取引擎汇总信息"""
+        open_records = self.record_service.get_open_records(source='reverse')
+        return {
+            'enabled': self.config_manager.enabled,
+            'config': self.config_manager.get_dict(),
+            'pending_orders_count': len(self.pending_algo_orders) + len(self.pending_limit_orders),
+            'positions_count': len(open_records),
+            'statistics': self.get_statistics()
+        }
