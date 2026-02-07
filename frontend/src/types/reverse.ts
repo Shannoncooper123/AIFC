@@ -31,7 +31,10 @@ export interface ReversePosition {
 }
 
 export interface ReversePendingOrder {
-  algo_id: string;
+  id: string;
+  algo_id?: string;
+  order_id?: number;
+  order_kind: 'CONDITIONAL' | 'LIMIT' | string;
   symbol: string;
   side: string;
   trigger_price: number;

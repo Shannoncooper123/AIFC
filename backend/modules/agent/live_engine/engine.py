@@ -23,6 +23,7 @@ from modules.agent.live_engine.services.record_service import RecordService
 from modules.agent.live_engine.events.dispatcher import EventDispatcher
 from modules.agent.live_engine.events.account_handler import AccountUpdateHandler
 from modules.agent.live_engine.events.order_handler import OrderUpdateHandler
+from modules.agent.live_engine.events.algo_order_handler import AlgoOrderHandler
 
 from modules.agent.live_engine.persistence.state_writer import StateWriter
 from modules.agent.live_engine.persistence.history_writer import HistoryWriter
@@ -89,7 +90,12 @@ class BinanceLiveEngine:
             self.account_service, self.position_service, self.order_service, self.close_detector
         )
         order_handler = OrderUpdateHandler(self.order_service)
-        self.event_dispatcher = EventDispatcher(account_handler, order_handler)
+        algo_order_handler = AlgoOrderHandler(
+            record_service=self.record_service,
+            order_manager=self.order_manager
+        )
+        self.algo_order_handler = algo_order_handler
+        self.event_dispatcher = EventDispatcher(account_handler, order_handler, algo_order_handler)
         
         # 用户数据流 WebSocket
         self.user_data_ws: Optional[BinanceUserDataWSClient] = None

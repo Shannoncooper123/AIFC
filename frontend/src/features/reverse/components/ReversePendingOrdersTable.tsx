@@ -59,10 +59,10 @@ export function ReversePendingOrdersTable({
 }: ReversePendingOrdersTableProps) {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
-  const handleCancel = async (algoId: string) => {
+  const handleCancel = async (orderId: string) => {
     try {
-      setCancellingId(algoId);
-      await cancelReversePendingOrder(algoId);
+      setCancellingId(orderId);
+      await cancelReversePendingOrder(orderId);
       onOrderCancelled?.();
     } catch (err) {
       console.error('Failed to cancel order:', err);
@@ -99,7 +99,7 @@ export function ReversePendingOrdersTable({
 
         return (
           <div
-            key={order.algo_id}
+            key={order.id}
             className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 hover:border-neutral-700 transition-colors"
           >
             <div className="flex items-start justify-between mb-3">
@@ -131,17 +131,17 @@ export function ReversePendingOrdersTable({
                     <span>•</span>
                     <span>Margin: {formatPrice(order.margin_usdt)}</span>
                     <span>•</span>
-                    <span>ID: #{order.algo_id.slice(-8)}</span>
+                    <span>ID: #{(order.algo_id || order.id || '').slice(-8)}</span>
                   </div>
                 </div>
               </div>
               
               <button
-                onClick={() => handleCancel(order.algo_id)}
-                disabled={cancellingId === order.algo_id}
+                onClick={() => handleCancel(order.id)}
+                disabled={cancellingId === order.id}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/20 px-3 py-1.5 text-sm font-medium text-rose-400 hover:bg-rose-500/30 transition-colors disabled:opacity-50"
               >
-                {cancellingId === order.algo_id ? (
+                {cancellingId === order.id ? (
                   <RefreshCw className="h-4 w-4 animate-spin" />
                 ) : (
                   <X className="h-4 w-4" />

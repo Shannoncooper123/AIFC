@@ -261,7 +261,7 @@ export function ReversePositionsTable({ positions, loading, onClosePosition }: R
                 )}
                 {pos.tp_algo_id && (
                   <div className="text-[10px] text-neutral-600 font-mono mt-1">
-                    #{pos.tp_algo_id.slice(-8)}
+                    #{(pos.tp_algo_id || '').slice(-8)}
                   </div>
                 )}
               </div>
@@ -281,7 +281,7 @@ export function ReversePositionsTable({ positions, loading, onClosePosition }: R
                 )}
                 {pos.sl_algo_id && (
                   <div className="text-[10px] text-neutral-600 font-mono mt-1">
-                    #{pos.sl_algo_id.slice(-8)}
+                    #{(pos.sl_algo_id || '').slice(-8)}
                   </div>
                 )}
               </div>

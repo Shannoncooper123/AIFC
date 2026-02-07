@@ -389,13 +389,20 @@ class ReverseEngine:
         return order
     
     def _handle_event(self, event: Dict[str, Any]):
-        """处理 WebSocket 事件"""
+        """处理 WebSocket 事件
+        
+        ReverseEngine 只处理与其开仓订单相关的事件：
+        - ORDER_TRADE_UPDATE: 限价单成交（创建开仓记录）
+        - ALGO_UPDATE: 开仓条件单触发（创建开仓记录）
+        
+        TP/SL 触发由 live_engine 的 AlgoOrderHandler 统一处理。
+        """
         event_type = event.get('e')
         
         if event_type == 'ORDER_TRADE_UPDATE':
             self._handle_order_update(event.get('o', {}))
         elif event_type == 'ALGO_UPDATE':
-            self._handle_algo_update(event)
+            self._handle_entry_algo_update(event)
     
     def _handle_order_update(self, order_data: Dict):
         """处理普通订单更新（限价单成交）"""
@@ -426,8 +433,11 @@ class ReverseEngine:
             del self.pending_limit_orders[order_id]
             self._save_pending_orders()
     
-    def _handle_algo_update(self, event: Dict):
-        """处理策略单更新（条件单触发）
+    def _handle_entry_algo_update(self, event: Dict):
+        """处理开仓条件单更新
+        
+        只处理 ReverseEngine 自己创建的开仓条件单。
+        TP/SL 条件单由 live_engine 的 AlgoOrderHandler 处理。
         
         Binance ALGO_UPDATE 事件格式：
         {
@@ -435,9 +445,9 @@ class ReverseEngine:
             "o": {
                 "s": "BTCUSDT",           # symbol
                 "aid": "123456",          # algo_id
-                "X": "FILLED",            # status
+                "X": "FILLED",            # status: NEW/TRIGGERED/TRIGGERING/FILLED/CANCELLED/EXPIRED/REJECTED
                 "ap": "50000.0",          # avg_price
-                "oi": 789,                # triggered_order_id
+                "ai": "789",              # triggered_order_id
                 ...
             }
         }
@@ -447,11 +457,15 @@ class ReverseEngine:
         status = order_info.get('X', '')
         symbol = order_info.get('s', '')
         
-        if status == 'FILLED' and algo_id in self.pending_algo_orders:
-            order = self.pending_algo_orders[algo_id]
+        if algo_id not in self.pending_algo_orders:
+            return
+        
+        order = self.pending_algo_orders[algo_id]
+        
+        if status in ('TRIGGERED', 'FILLED'):
             filled_price = float(order_info.get('ap', order.trigger_price))
             
-            logger.info(f"[反向] 📦 条件单触发: {symbol} algoId={algo_id} price={filled_price}")
+            logger.info(f"[反向] 📦 开仓条件单触发: {symbol} algoId={algo_id} price={filled_price}")
             
             self.record_service.create_record(
                 symbol=order.symbol,
@@ -469,20 +483,23 @@ class ReverseEngine:
             
             del self.pending_algo_orders[algo_id]
             self._save_pending_orders()
+            self._update_watched_symbols()
         
-        elif status in ('FILLED', 'USER_CANCELLED'):
-            record = self.record_service.find_record_by_tp_algo_id(algo_id)
-            if record:
-                close_price = float(order_info.get('ap', record.tp_price or record.entry_price))
-                self.record_service.cancel_remaining_tpsl(record, 'TP')
-                self.record_service.close_record(record.id, close_price, 'TP_CLOSED')
-                return
-            
-            record = self.record_service.find_record_by_sl_algo_id(algo_id)
-            if record:
-                close_price = float(order_info.get('ap', record.sl_price or record.entry_price))
-                self.record_service.cancel_remaining_tpsl(record, 'SL')
-                self.record_service.close_record(record.id, close_price, 'SL_CLOSED')
+        elif status == 'CANCELLED':
+            logger.info(f"[反向] 开仓条件单已取消: {symbol} algoId={algo_id}")
+            del self.pending_algo_orders[algo_id]
+            self._save_pending_orders()
+        
+        elif status == 'EXPIRED':
+            logger.info(f"[反向] 开仓条件单已过期: {symbol} algoId={algo_id}")
+            del self.pending_algo_orders[algo_id]
+            self._save_pending_orders()
+        
+        elif status == 'REJECTED':
+            reason = order_info.get('rm', '')
+            logger.warning(f"[反向] ⚠️ 开仓条件单被拒绝: {symbol} algoId={algo_id} reason={reason}")
+            del self.pending_algo_orders[algo_id]
+            self._save_pending_orders()
     
     def _start_mark_price_ws(self):
         """启动标记价格 WebSocket"""
