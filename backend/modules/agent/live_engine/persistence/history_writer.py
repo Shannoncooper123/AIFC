@@ -1,9 +1,10 @@
-"""历史记录写入器：记录已平仓的持仓到 position_history.json"""
+"""历史记录写入器：记录已平仓的持仓到 position_history.json
+
+使用 shared/persistence/JsonStateManager 进行 JSON 读写。
+"""
 from typing import Dict, Any
-import json
-import os
 from datetime import datetime, timezone
-from modules.agent.trade_simulator.utils.file_utils import WriteQueue, TaskType
+from modules.agent.shared.persistence import JsonStateManager
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('live_engine.history_writer')
@@ -25,23 +26,18 @@ class HistoryWriter:
         """
         self.config = config
         agent_cfg = config.get('agent', {})
-        self.history_path = agent_cfg.get('position_history_path', 'modules/data/position_history.json')
-        self.write_queue = WriteQueue.get_instance()
+        history_path = agent_cfg.get('position_history_path', 'modules/data/position_history.json')
         
-        # 确保目录存在
-        os.makedirs(os.path.dirname(self.history_path), exist_ok=True)
+        self._state_manager = JsonStateManager(history_path)
         
-        # 如果文件不存在，创建空文件
-        if not os.path.exists(self.history_path):
+        if not self._state_manager.exists():
             self._init_history_file()
     
     def _init_history_file(self):
         """初始化空的历史文件"""
         try:
-            initial_data = {"positions": []}
-            with open(self.history_path, 'w', encoding='utf-8') as f:
-                json.dump(initial_data, f, indent=2, ensure_ascii=False)
-            logger.info(f"已创建历史仓位文件: {self.history_path}")
+            self._state_manager.save({"positions": []})
+            logger.info(f"已创建历史仓位文件: {self._state_manager.file_path}")
         except Exception as e:
             logger.error(f"创建历史文件失败: {e}")
     
@@ -59,7 +55,6 @@ class HistoryWriter:
             is_reverse: 是否为反向交易（用于区分反向交易记录）
         """
         try:
-            # 构造历史记录
             record = {
                 'id': position.id,
                 'symbol': position.symbol,
@@ -78,18 +73,13 @@ class HistoryWriter:
                 'close_order_id': close_order_id,
                 'realized_pnl': realized_pnl if realized_pnl is not None else position.unrealized_pnl(close_price),
                 'fees_open': position.fees_open if hasattr(position, 'fees_open') else 0.0,
-                'fees_close': 0.0,  # 实盘手续费从账户余额变化中体现
-                'is_reverse': is_reverse,  # 标记是否为反向交易
+                'fees_close': 0.0,
+                'is_reverse': is_reverse,
             }
             
-            # 读取现有历史
             history = self._load_history()
-            
-            # 追加记录
             history['positions'].append(record)
-            
-            # 异步写入
-            self.write_queue.enqueue(TaskType.HISTORY, self.history_path, history, indent=2, ensure_ascii=False)
+            self._state_manager.save(history)
             
             logger.info(f"已记录平仓历史: {position.symbol} {position.side} "
                        f"盈亏=${realized_pnl if realized_pnl is not None else 0:.2f} "
@@ -100,16 +90,65 @@ class HistoryWriter:
     
     def _load_history(self) -> Dict[str, Any]:
         """加载历史文件（内部使用）"""
-        try:
-            if not os.path.exists(self.history_path):
-                return {"positions": []}
-            
-            with open(self.history_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if not isinstance(data, dict) or 'positions' not in data:
-                    return {"positions": []}
-                return data
-        except Exception as e:
-            logger.error(f"读取历史文件失败: {e}")
+        data = self._state_manager.load(default={"positions": []})
+        if not isinstance(data, dict) or 'positions' not in data:
             return {"positions": []}
-
+        return data
+    
+    def get_history(self, limit: int = 100, is_reverse: bool = None) -> list:
+        """获取平仓历史
+        
+        Args:
+            limit: 最大返回数量
+            is_reverse: 过滤条件（True=反向交易, False=正向交易, None=全部）
+            
+        Returns:
+            历史记录列表
+        """
+        history = self._load_history()
+        positions = history.get('positions', [])
+        
+        if is_reverse is not None:
+            positions = [p for p in positions if p.get('is_reverse', False) == is_reverse]
+        
+        positions.sort(key=lambda x: x.get('close_time', ''), reverse=True)
+        return positions[:limit]
+    
+    def get_statistics(self, is_reverse: bool = None) -> Dict[str, Any]:
+        """获取统计信息
+        
+        Args:
+            is_reverse: 过滤条件
+            
+        Returns:
+            统计信息字典
+        """
+        positions = self.get_history(limit=10000, is_reverse=is_reverse)
+        
+        if not positions:
+            return {
+                'total_trades': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
+                'win_rate': 0,
+                'total_pnl': 0,
+                'avg_pnl': 0,
+                'max_profit': 0,
+                'max_loss': 0
+            }
+        
+        pnl_list = [p.get('realized_pnl', 0) for p in positions]
+        total_pnl = sum(pnl_list)
+        win_count = sum(1 for pnl in pnl_list if pnl > 0)
+        loss_count = sum(1 for pnl in pnl_list if pnl < 0)
+        
+        return {
+            'total_trades': len(positions),
+            'winning_trades': win_count,
+            'losing_trades': loss_count,
+            'win_rate': round(win_count / len(positions) * 100, 2) if positions else 0,
+            'total_pnl': round(total_pnl, 4),
+            'avg_pnl': round(total_pnl / len(positions), 4) if positions else 0,
+            'max_profit': round(max(pnl_list), 4) if pnl_list else 0,
+            'max_loss': round(min(pnl_list), 4) if pnl_list else 0
+        }

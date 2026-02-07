@@ -188,15 +188,27 @@ async def get_reverse_pending_orders() -> Dict[str, Any]:
         return {"total": 0, "orders": []}
 
 
-@router.delete("/pending-orders/{algo_id}")
-async def cancel_reverse_pending_order(algo_id: str) -> Dict[str, Any]:
-    """撤销待触发的条件单"""
+@router.delete("/pending-orders/{order_id}")
+async def cancel_reverse_pending_order(order_id: str) -> Dict[str, Any]:
+    """撤销待触发的订单（条件单或限价单）
+    
+    Args:
+        order_id: 订单ID（条件单的 algo_id 或限价单格式 LIMIT_{order_id}）
+    """
     engine = _get_reverse_engine()
-    success = engine.cancel_pending_order(algo_id)
-    if success:
-        return {"success": True, "message": f"条件单 {algo_id} 已撤销"}
+    
+    if order_id.startswith('LIMIT_'):
+        binance_order_id = int(order_id.replace('LIMIT_', ''))
+        success = engine.cancel_limit_order(binance_order_id)
+        order_type = "限价单"
     else:
-        raise HTTPException(status_code=400, detail=f"撤销条件单 {algo_id} 失败")
+        success = engine.cancel_pending_order(order_id)
+        order_type = "条件单"
+    
+    if success:
+        return {"success": True, "message": f"{order_type} {order_id} 已撤销"}
+    else:
+        raise HTTPException(status_code=400, detail=f"撤销{order_type} {order_id} 失败")
 
 
 @router.get("/history")

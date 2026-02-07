@@ -415,15 +415,29 @@ class ReverseEngine:
             self._save_pending_orders()
     
     def _handle_algo_update(self, event: Dict):
-        """处理策略单更新（条件单触发）"""
-        algo_id = str(event.get('ai', ''))
-        status = event.get('as', '')
-        symbol = event.get('s', '')
+        """处理策略单更新（条件单触发）
+        
+        Binance ALGO_UPDATE 事件格式：
+        {
+            "e": "ALGO_UPDATE",
+            "o": {
+                "s": "BTCUSDT",           # symbol
+                "aid": "123456",          # algo_id
+                "X": "FILLED",            # status
+                "ap": "50000.0",          # avg_price
+                "oi": 789,                # triggered_order_id
+                ...
+            }
+        }
+        """
+        order_info = event.get('o', {})
+        algo_id = str(order_info.get('aid', ''))
+        status = order_info.get('X', '')
+        symbol = order_info.get('s', '')
         
         if status == 'FILLED' and algo_id in self.pending_algo_orders:
             order = self.pending_algo_orders[algo_id]
-            filled_price = float(event.get('ap', order.trigger_price))
-            triggered_order_id = event.get('oi')
+            filled_price = float(order_info.get('ap', order.trigger_price))
             
             logger.info(f"[反向] 📦 条件单触发: {symbol} algoId={algo_id} price={filled_price}")
             
@@ -447,14 +461,14 @@ class ReverseEngine:
         elif status in ('FILLED', 'USER_CANCELLED'):
             record = self.record_service.find_record_by_tp_algo_id(algo_id)
             if record:
-                close_price = float(event.get('ap', record.tp_price or record.entry_price))
+                close_price = float(order_info.get('ap', record.tp_price or record.entry_price))
                 self.record_service.cancel_remaining_tpsl(record, 'TP')
                 self.record_service.close_record(record.id, close_price, 'TP_CLOSED')
                 return
             
             record = self.record_service.find_record_by_sl_algo_id(algo_id)
             if record:
-                close_price = float(event.get('ap', record.sl_price or record.entry_price))
+                close_price = float(order_info.get('ap', record.sl_price or record.entry_price))
                 self.record_service.cancel_remaining_tpsl(record, 'SL')
                 self.record_service.close_record(record.id, close_price, 'SL_CLOSED')
     
@@ -636,6 +650,25 @@ class ReverseEngine:
             return True
         
         return False
+    
+    def close_all_records_by_symbol(self, symbol: str) -> int:
+        """关闭指定交易对的所有开仓记录
+        
+        Args:
+            symbol: 交易对
+            
+        Returns:
+            关闭的记录数量
+        """
+        records = self.record_service.get_open_records_by_symbol(symbol, source='reverse')
+        closed_count = 0
+        
+        for record in records:
+            if self.close_record(record.id):
+                closed_count += 1
+        
+        logger.info(f"[反向] 已关闭 {symbol} 的 {closed_count} 条开仓记录")
+        return closed_count
     
     def get_summary(self) -> Dict[str, Any]:
         """获取引擎汇总信息"""
