@@ -180,12 +180,19 @@ async def close_reverse_positions_by_symbol(symbol: str) -> Dict[str, Any]:
 
 @router.get("/pending-orders")
 async def get_reverse_pending_orders() -> Dict[str, Any]:
-    """获取待触发的条件单"""
+    """获取待触发的订单（条件单和限价单）"""
     try:
         engine = _get_reverse_engine()
-        return engine.get_pending_orders_summary()
+        summary = engine.get_pending_orders_summary()
+        all_orders = summary.get('conditional_orders', []) + summary.get('limit_orders', [])
+        return {
+            "orders": all_orders,
+            "total": len(all_orders),
+            "total_conditional": summary.get('total_conditional', 0),
+            "total_limit": summary.get('total_limit', 0)
+        }
     except HTTPException:
-        return {"total": 0, "orders": []}
+        return {"orders": [], "total": 0, "total_conditional": 0, "total_limit": 0}
 
 
 @router.delete("/pending-orders/{order_id}")
