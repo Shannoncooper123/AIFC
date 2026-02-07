@@ -142,6 +142,30 @@ class BinanceRestClient:
         return response.json()
     
     @retry_on_exception(max_retries=3, delay=0.5, exceptions=(requests.RequestException,))
+    def get_ticker_price(self, symbol: Optional[str] = None) -> Any:
+        """获取最新价格
+        
+        使用 /fapi/v1/ticker/price 接口，返回最新成交价格。
+        
+        Args:
+            symbol: 交易对符号（None表示获取所有）
+            
+        Returns:
+            最新价格数据，包含：
+            - symbol: 交易对
+            - price: 最新价格
+            - time: 更新时间
+        """
+        url = f"{self.base_url}/fapi/v1/ticker/price"
+        params = {}
+        if symbol:
+            params['symbol'] = symbol
+        
+        response = self.session.get(url, params=params, timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+    
+    @retry_on_exception(max_retries=3, delay=0.5, exceptions=(requests.RequestException,))
     def get_mark_price(self, symbol: Optional[str] = None) -> Any:
         """获取标记价格和资金费率
         

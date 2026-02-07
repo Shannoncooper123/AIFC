@@ -1,9 +1,9 @@
 import { History, TrendingUp, TrendingDown, Target, Shield, Clock, Zap } from 'lucide-react';
-import type { ReverseHistoryEntry } from '../../../types/reverse';
+import type { LiveHistoryEntry } from '../../../types/live';
 import { formatPrice, formatNumber, formatTime } from '../../../utils';
 
-interface ReverseHistoryTableProps {
-  history: ReverseHistoryEntry[];
+interface LiveHistoryTableProps {
+  history: LiveHistoryEntry[];
   loading?: boolean;
 }
 
@@ -71,7 +71,7 @@ function formatDuration(openTime: string, closeTime: string): string {
   }
 }
 
-export function ReverseHistoryTable({ history, loading }: ReverseHistoryTableProps) {
+export function LiveHistoryTable({ history, loading }: LiveHistoryTableProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -84,7 +84,7 @@ export function ReverseHistoryTable({ history, loading }: ReverseHistoryTablePro
     return (
       <div className="flex flex-col items-center justify-center py-12 text-neutral-400">
         <History className="mb-3 h-12 w-12 opacity-30" />
-        <p>No reverse trading history</p>
+        <p>No live trading history</p>
       </div>
     );
   }

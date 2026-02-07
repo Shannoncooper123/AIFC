@@ -4,7 +4,7 @@
 """
 from typing import Dict, Any
 from datetime import datetime, timezone
-from modules.agent.shared.persistence import JsonStateManager
+from modules.agent.live_engine.core.persistence import JsonStateManager
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('live_engine.history_writer')

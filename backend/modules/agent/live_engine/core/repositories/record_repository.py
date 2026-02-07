@@ -8,8 +8,8 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
 from modules.monitor.utils.logger import get_logger
-from modules.agent.shared.persistence import JsonStateManager
-from modules.agent.shared.models import TradeRecord, RecordStatus
+from modules.agent.live_engine.core.persistence import JsonStateManager
+from modules.agent.live_engine.core.models import TradeRecord, RecordStatus
 
 logger = get_logger('shared.record_repository')
 

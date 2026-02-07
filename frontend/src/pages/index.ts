@@ -4,4 +4,4 @@ export { PositionsPage } from './PositionsPage';
 export { WorkflowPage } from './WorkflowPage';
 export { SettingsPage } from './SettingsPage';
 export { BacktestPage } from './BacktestPage';
-export { ReverseTradingPage } from './ReverseTradingPage';
+export { LiveTradingPage } from './LiveTradingPage';

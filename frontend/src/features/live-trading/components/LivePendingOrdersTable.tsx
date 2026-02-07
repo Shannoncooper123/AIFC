@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Clock, X, TrendingUp, TrendingDown, RefreshCw, Target, Shield, Zap, ArrowRight } from 'lucide-react';
-import type { ReversePendingOrder } from '../../../types/reverse';
+import type { LivePendingOrder } from '../../../types/live';
 import { formatPrice, formatPriceChange, formatNumber, formatTime } from '../../../utils';
-import { cancelReversePendingOrder } from '../../../services/api/reverse';
+import { cancelLivePendingOrder } from '../../../services/api/live';
 
-interface ReversePendingOrdersTableProps {
-  orders: ReversePendingOrder[];
+interface LivePendingOrdersTableProps {
+  orders: LivePendingOrder[];
   loading?: boolean;
   onOrderCancelled?: () => void;
   currentPrices?: Record<string, number>;
@@ -51,18 +51,18 @@ function TimeRemaining({ expiresAt }: { expiresAt?: string }) {
   return <span>{remaining}</span>;
 }
 
-export function ReversePendingOrdersTable({ 
+export function LivePendingOrdersTable({ 
   orders, 
   loading, 
   onOrderCancelled,
   currentPrices = {}
-}: ReversePendingOrdersTableProps) {
+}: LivePendingOrdersTableProps) {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const handleCancel = async (orderId: string) => {
     try {
       setCancellingId(orderId);
-      await cancelReversePendingOrder(orderId);
+      await cancelLivePendingOrder(orderId);
       onOrderCancelled?.();
     } catch (err) {
       console.error('Failed to cancel order:', err);
@@ -216,7 +216,7 @@ export function ReversePendingOrdersTable({
                   </span>
                   <span>→</span>
                   <span className={isLong ? 'text-emerald-400' : 'text-rose-400'}>
-                    Reverse {isLong ? 'LONG' : 'SHORT'}
+                    {isLong ? 'LONG' : 'SHORT'}
                   </span>
                 </div>
               </div>

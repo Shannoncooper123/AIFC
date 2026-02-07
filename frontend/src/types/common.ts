@@ -13,6 +13,7 @@ export type EventType =
   | 'position_update'
   | 'trade_executed'
   | 'mark_price_update'
+  | 'config_updated'
   | 'log_message'
   | 'error';
 

@@ -7,8 +7,8 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
 from modules.monitor.utils.logger import get_logger
-from modules.agent.shared.persistence import JsonStateManager
-from modules.agent.shared.models import PendingOrder, AlgoOrderStatus, OrderKind
+from modules.agent.live_engine.core.persistence import JsonStateManager
+from modules.agent.live_engine.core.models import PendingOrder, AlgoOrderStatus, OrderKind
 
 logger = get_logger('shared.order_repository')
 
@@ -221,6 +221,18 @@ class OrderRepository:
             if source:
                 orders = [o for o in orders if o.source == source]
             return orders
+    
+    def get_by_source(self, source: str) -> List[PendingOrder]:
+        """按来源查找"""
+        return self.get_all(source=source)
+    
+    def find_by_algo_id(self, algo_id: str) -> Optional[PendingOrder]:
+        """按条件单 ID 查找（get_by_algo_id 的别名）"""
+        return self.get_by_algo_id(algo_id)
+    
+    def find_by_order_id(self, order_id: int) -> Optional[PendingOrder]:
+        """按限价单 ID 查找（get_by_binance_order_id 的别名）"""
+        return self.get_by_binance_order_id(order_id)
     
     def update(self, order_id: str, **kwargs) -> Optional[PendingOrder]:
         """更新订单"""

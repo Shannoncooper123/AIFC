@@ -1,39 +1,39 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Briefcase, Clock, History } from 'lucide-react';
 import {
-  ReverseConfigPanel,
-  ReversePositionsTable,
-  ReversePendingOrdersTable,
-  ReverseHistoryTable,
-  ReverseStatisticsPanel,
-  ReverseWorkflowPanel,
+  LiveConfigPanel,
+  LivePositionsTable,
+  LivePendingOrdersTable,
+  LiveHistoryTable,
+  LiveStatisticsPanel,
+  LiveWorkflowPanel,
 } from './components';
 import {
-  getReversePositions,
-  getReversePendingOrders,
-  getReverseHistory,
-  getReverseStatistics,
-  closeReversePosition,
-} from '../../services/api/reverse';
+  getLivePositions,
+  getLivePendingOrders,
+  getLiveHistory,
+  getLiveStatistics,
+  closeLivePosition,
+} from '../../services/api/live';
 import type {
-  ReversePosition,
-  ReversePendingOrder,
-  ReverseHistoryEntry,
-  ReverseStatistics,
-} from '../../types/reverse';
+  LivePosition,
+  LivePendingOrder,
+  LiveHistoryEntry,
+  LiveStatistics,
+} from '../../types/live';
 
 type TabType = 'positions' | 'orders' | 'history';
 
-export function ReverseTradingPage() {
+export function LiveTradingPage() {
   const [activeTab, setActiveTab] = useState<TabType>('positions');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [positions, setPositions] = useState<ReversePosition[]>([]);
-  const [pendingOrders, setPendingOrders] = useState<ReversePendingOrder[]>([]);
-  const [history, setHistory] = useState<ReverseHistoryEntry[]>([]);
+  const [positions, setPositions] = useState<LivePosition[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<LivePendingOrder[]>([]);
+  const [history, setHistory] = useState<LiveHistoryEntry[]>([]);
   const [historyLimit, setHistoryLimit] = useState(50);
-  const [statistics, setStatistics] = useState<ReverseStatistics>({
+  const [statistics, setStatistics] = useState<LiveStatistics>({
     total_trades: 0,
     winning_trades: 0,
     losing_trades: 0,
@@ -47,10 +47,10 @@ export function ReverseTradingPage() {
   const fetchData = useCallback(async () => {
     try {
       const [posRes, ordersRes, histRes, statsRes] = await Promise.all([
-        getReversePositions(),
-        getReversePendingOrders(),
-        getReverseHistory(historyLimit),
-        getReverseStatistics(),
+        getLivePositions(),
+        getLivePendingOrders(),
+        getLiveHistory(historyLimit),
+        getLiveStatistics(),
       ]);
 
       setPositions(posRes.positions);
@@ -58,7 +58,7 @@ export function ReverseTradingPage() {
       setHistory(histRes.history);
       setStatistics(statsRes);
     } catch (err) {
-      console.error('Failed to fetch reverse trading data:', err);
+      console.error('Failed to fetch live trading data:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -82,7 +82,7 @@ export function ReverseTradingPage() {
     }
     
     try {
-      const result = await closeReversePosition(recordId);
+      const result = await closeLivePosition(recordId);
       if (result.success) {
         fetchData();
       } else {
@@ -98,9 +98,9 @@ export function ReverseTradingPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Reverse Trading</h1>
+          <h1 className="text-2xl font-bold text-white">Live Trading</h1>
           <p className="text-sm text-neutral-400 mt-1">
-            Automatically create opposite trades when Agent places limit orders
+            Real trading engine with optional reverse mode
           </p>
         </div>
         <button
@@ -113,11 +113,11 @@ export function ReverseTradingPage() {
         </button>
       </div>
 
-      <ReverseConfigPanel onConfigChange={fetchData} />
+      <LiveConfigPanel onConfigChange={fetchData} />
 
-      <ReverseWorkflowPanel onWorkflowChange={fetchData} />
+      <LiveWorkflowPanel onWorkflowChange={fetchData} />
 
-      <ReverseStatisticsPanel statistics={statistics} loading={loading} />
+      <LiveStatisticsPanel statistics={statistics} loading={loading} />
 
       <div className="rounded-xl border border-neutral-800 bg-[#1a1a1a] p-6">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -185,21 +185,21 @@ export function ReverseTradingPage() {
         </div>
 
         {activeTab === 'positions' && (
-          <ReversePositionsTable 
+          <LivePositionsTable 
             positions={positions} 
             loading={loading} 
             onClosePosition={handleClosePosition}
           />
         )}
         {activeTab === 'orders' && (
-          <ReversePendingOrdersTable
+          <LivePendingOrdersTable
             orders={pendingOrders}
             loading={loading}
             onOrderCancelled={fetchData}
           />
         )}
         {activeTab === 'history' && (
-          <ReverseHistoryTable history={history} loading={loading} />
+          <LiveHistoryTable history={history} loading={loading} />
         )}
       </div>
     </div>

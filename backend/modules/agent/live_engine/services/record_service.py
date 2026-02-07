@@ -13,7 +13,7 @@
 
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from modules.monitor.utils.logger import get_logger
-from modules.agent.shared import RecordRepository, RecordStatus, TradeRecord
+from modules.agent.live_engine.core import RecordRepository, RecordStatus, TradeRecord
 
 if TYPE_CHECKING:
     from modules.monitor.clients.binance_rest import BinanceRestClient
@@ -119,6 +119,10 @@ class RecordService:
         
         logger.info(f"[RecordService] ✅ 创建记录: {symbol} {side} qty={qty} "
                    f"entry={entry_price} source={source}")
+        
+        logger.debug(f"[RecordService] auto_place_tpsl={auto_place_tpsl}, "
+                    f"order_manager={self.order_manager is not None}, "
+                    f"tp_price={tp_price}, sl_price={sl_price}")
         
         if auto_place_tpsl and self.order_manager and (tp_price or sl_price):
             tpsl_result = self.order_manager.place_tp_sl_for_position(
@@ -234,6 +238,91 @@ class RecordService:
     def update_mark_price(self, symbol: str, mark_price: float):
         """更新标记价格"""
         self._repository.update_mark_price(symbol, mark_price)
+    
+    def _fetch_trades_by_order_id(self, symbol: str, order_id: int) -> List[Dict]:
+        """通过订单ID精确获取成交记录
+        
+        Args:
+            symbol: 交易对
+            order_id: 订单ID
+            
+        Returns:
+            该订单的所有成交记录
+        """
+        if not self.rest_client:
+            return []
+        
+        try:
+            trades = self.rest_client.get_user_trades(
+                symbol=symbol,
+                order_id=order_id
+            )
+            return trades
+        except Exception as e:
+            logger.warning(f"[RecordService] 获取成交记录失败: {symbol} orderId={order_id} error={e}")
+            return []
+    
+    def _calculate_trade_summary(self, trades: List[Dict]) -> Dict:
+        """计算成交汇总（加权平均价格、总手续费、已实现盈亏）
+        
+        Args:
+            trades: 成交记录列表
+            
+        Returns:
+            汇总信息 {avg_price, total_commission, realized_pnl, total_qty}
+        """
+        if not trades:
+            return {'avg_price': None, 'total_commission': 0.0, 'realized_pnl': 0.0, 'total_qty': 0.0}
+        
+        total_qty = sum(float(t.get('qty', 0)) for t in trades)
+        total_value = sum(float(t.get('price', 0)) * float(t.get('qty', 0)) for t in trades)
+        total_commission = sum(float(t.get('commission', 0)) for t in trades)
+        realized_pnl = sum(float(t.get('realizedPnl', 0)) for t in trades)
+        
+        avg_price = total_value / total_qty if total_qty > 0 else None
+        
+        return {
+            'avg_price': avg_price,
+            'total_commission': total_commission,
+            'realized_pnl': realized_pnl,
+            'total_qty': total_qty
+        }
+    
+    def fetch_entry_commission(self, symbol: str, order_id: int) -> float:
+        """获取开仓手续费
+        
+        Args:
+            symbol: 交易对
+            order_id: 开仓订单ID
+            
+        Returns:
+            手续费金额
+        """
+        trades = self._fetch_trades_by_order_id(symbol, order_id)
+        if trades:
+            summary = self._calculate_trade_summary(trades)
+            return summary['total_commission']
+        return 0.0
+    
+    def fetch_exit_info(self, symbol: str, order_id: int) -> Dict:
+        """获取平仓信息（价格、手续费、已实现盈亏）
+        
+        Args:
+            symbol: 交易对
+            order_id: 平仓订单ID
+            
+        Returns:
+            {close_price, exit_commission, realized_pnl}
+        """
+        trades = self._fetch_trades_by_order_id(symbol, order_id)
+        if trades:
+            summary = self._calculate_trade_summary(trades)
+            return {
+                'close_price': summary['avg_price'],
+                'exit_commission': summary['total_commission'],
+                'realized_pnl': summary['realized_pnl']
+            }
+        return {'close_price': None, 'exit_commission': 0.0, 'realized_pnl': None}
     
     def update_tpsl_ids(
         self,

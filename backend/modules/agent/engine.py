@@ -7,7 +7,6 @@ from typing import Optional, TYPE_CHECKING, Any, Dict, Protocol, List
 if TYPE_CHECKING:
     from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine
     from modules.agent.live_engine.engine import BinanceLiveEngine
-    from modules.agent.reverse_engine.engine import ReverseEngine
 
 
 class EngineProtocol(Protocol):
@@ -104,68 +103,6 @@ def is_engine_initialized() -> bool:
         return _engine is not None
 
 
-_reverse_engine: Optional['ReverseEngine'] = None
-_reverse_engine_lock = threading.RLock()
-
-
-def init_reverse_engine(
-    live_engine: 'BinanceLiveEngine',
-    config: Dict[str, Any]
-) -> 'ReverseEngine':
-    """初始化反向交易引擎
-    
-    Args:
-        live_engine: 实盘引擎实例（必需），用于复用 REST/WS 连接
-        config: 配置字典
-        
-    Returns:
-        ReverseEngine 实例
-        
-    Raises:
-        ValueError: 如果 live_engine 为 None
-    """
-    if live_engine is None:
-        raise ValueError("init_reverse_engine 必须传入 live_engine 参数")
-    
-    global _reverse_engine
-    with _reverse_engine_lock:
-        if _reverse_engine is None:
-            from modules.agent.reverse_engine.engine import ReverseEngine
-            _reverse_engine = ReverseEngine(live_engine, config)
-        return _reverse_engine
-
-
-def get_reverse_engine() -> Optional['ReverseEngine']:
-    """获取反向交易引擎实例
-    
-    Returns:
-        ReverseEngine 实例，如果未初始化则返回 None
-    """
-    with _reverse_engine_lock:
-        return _reverse_engine
-
-
-def start_reverse_engine() -> bool:
-    """启动反向交易引擎
-    
-    Returns:
-        是否成功启动
-    """
-    with _reverse_engine_lock:
-        if _reverse_engine is not None:
-            _reverse_engine.start()
-            return True
-        return False
-
-
-def stop_reverse_engine() -> None:
-    """停止反向交易引擎"""
-    global _reverse_engine
-    with _reverse_engine_lock:
-        if _reverse_engine is not None:
-            _reverse_engine.stop()
-
-
 def ensure_engine(config: Dict[str, Any]) -> EngineProtocol:
     """确保返回一个已初始化的引擎单例。
     若尚未初始化，则根据配置创建对应模式的引擎实例并返回。
@@ -182,3 +119,13 @@ def ensure_engine(config: Dict[str, Any]) -> EngineProtocol:
                 from modules.agent.trade_simulator.engine.simulator import TradeSimulatorEngine
                 _engine = TradeSimulatorEngine(config)
         return _engine
+
+
+def is_reverse_enabled() -> bool:
+    """检查是否启用了反向交易模式
+    
+    Returns:
+        是否启用反向交易
+    """
+    from modules.agent.live_engine.config import get_trading_config_manager
+    return get_trading_config_manager().reverse_enabled

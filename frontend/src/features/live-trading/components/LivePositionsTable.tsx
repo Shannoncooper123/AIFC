@@ -1,16 +1,16 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { TrendingUp, TrendingDown, CheckCircle, XCircle, AlertCircle, Target, Shield, Zap } from 'lucide-react';
-import type { ReversePosition } from '../../../types/reverse';
+import type { LivePosition } from '../../../types/live';
 import { formatPrice, formatPriceChange, calcPriceDistance, formatNumber } from '../../../utils';
 import { useWebSocket } from '../../../hooks/useWebSocket';
 
-interface ReversePositionsTableProps {
-  positions: ReversePosition[];
+interface LivePositionsTableProps {
+  positions: LivePosition[];
   loading?: boolean;
   onClosePosition?: (recordId: string) => void;
 }
 
-function useRealtimePrices(positions: ReversePosition[]) {
+function useRealtimePrices(positions: LivePosition[]) {
   const [prices, setPrices] = useState<Record<string, number>>({});
   
   const handleMessage = useCallback((event: { type: string; data: Record<string, unknown> }) => {
@@ -140,7 +140,7 @@ function PriceDistanceBar({
   );
 }
 
-export function ReversePositionsTable({ positions, loading, onClosePosition }: ReversePositionsTableProps) {
+export function LivePositionsTable({ positions, loading, onClosePosition }: LivePositionsTableProps) {
   const realtimePositions = useRealtimePrices(positions);
   
   if (loading) {
@@ -155,7 +155,7 @@ export function ReversePositionsTable({ positions, loading, onClosePosition }: R
     return (
       <div className="flex flex-col items-center justify-center py-12 text-neutral-400">
         <TrendingUp className="mb-3 h-12 w-12 opacity-30" />
-        <p>No reverse positions</p>
+        <p>No live positions</p>
       </div>
     );
   }

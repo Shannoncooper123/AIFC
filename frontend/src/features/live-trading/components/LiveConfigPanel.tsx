@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Settings, Power, PowerOff, Save, RefreshCw } from 'lucide-react';
-import type { ReverseConfig } from '../../../types/reverse';
-import { getReverseConfig, updateReverseConfig, startReverseEngine, stopReverseEngine } from '../../../services/api/reverse';
+import type { LiveTradingConfig } from '../../../types/live';
+import { getLiveConfig, updateLiveConfig, startLiveEngine, stopLiveEngine, getLiveSummary } from '../../../services/api/live';
 
-interface ReverseConfigPanelProps {
+interface LiveConfigPanelProps {
   onConfigChange?: () => void;
 }
 
@@ -17,8 +17,9 @@ const parseInteger = (value: string, defaultValue: number): number => {
   return isNaN(parsed) ? defaultValue : parsed;
 };
 
-export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) {
-  const [config, setConfig] = useState<ReverseConfig | null>(null);
+export function LiveConfigPanel({ onConfigChange }: LiveConfigPanelProps) {
+  const [config, setConfig] = useState<LiveTradingConfig | null>(null);
+  const [engineRunning, setEngineRunning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -34,13 +35,17 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
   const fetchConfig = async () => {
     try {
       setLoading(true);
-      const data = await getReverseConfig();
-      setConfig(data);
+      const [configData, summaryData] = await Promise.all([
+        getLiveConfig(),
+        getLiveSummary()
+      ]);
+      setConfig(configData);
+      setEngineRunning(summaryData.engine_running);
       setFormData({
-        fixed_margin_usdt: String(data.fixed_margin_usdt),
-        fixed_leverage: String(data.fixed_leverage),
-        expiration_days: String(data.expiration_days),
-        max_positions: String(data.max_positions),
+        fixed_margin_usdt: String(configData.fixed_margin_usdt),
+        fixed_leverage: String(configData.fixed_leverage),
+        expiration_days: String(configData.expiration_days),
+        max_positions: String(configData.max_positions),
       });
       setError(null);
     } catch (err) {
@@ -58,7 +63,7 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
   const handleSave = async () => {
     try {
       setSaving(true);
-      await updateReverseConfig({
+      await updateLiveConfig({
         fixed_margin_usdt: parseNumber(formData.fixed_margin_usdt, 50),
         fixed_leverage: parseInteger(formData.fixed_leverage, 10),
         expiration_days: parseInteger(formData.expiration_days, 10),
@@ -74,17 +79,14 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
     }
   };
 
-  const handleToggle = async () => {
-    if (!config) return;
-    
+  const handleToggleEngine = async () => {
     try {
       setToggling(true);
-      if (config.enabled) {
-        await stopReverseEngine();
+      if (engineRunning) {
+        await stopLiveEngine();
       } else {
-        await startReverseEngine();
+        await startLiveEngine();
       }
-      await updateReverseConfig({ enabled: !config.enabled });
       await fetchConfig();
       onConfigChange?.();
     } catch (err) {
@@ -92,6 +94,18 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
       console.error(err);
     } finally {
       setToggling(false);
+    }
+  };
+
+  const handleToggleReverse = async () => {
+    if (!config) return;
+    try {
+      await updateLiveConfig({ reverse_enabled: !config.reverse_enabled });
+      await fetchConfig();
+      onConfigChange?.();
+    } catch (err) {
+      setError('Failed to toggle reverse mode');
+      console.error(err);
     }
   };
 
@@ -108,25 +122,25 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Settings className="h-5 w-5 text-neutral-400" />
-          <h3 className="text-lg font-semibold text-white">Reverse Trading Config</h3>
+          <h3 className="text-lg font-semibold text-white">Live Trading Config</h3>
         </div>
         <button
-          onClick={handleToggle}
+          onClick={handleToggleEngine}
           disabled={toggling}
           className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
-            config?.enabled
+            engineRunning
               ? 'bg-rose-500/20 text-rose-400 hover:bg-rose-500/30'
               : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
           } ${toggling ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           {toggling ? (
             <RefreshCw className="h-4 w-4 animate-spin" />
-          ) : config?.enabled ? (
+          ) : engineRunning ? (
             <PowerOff className="h-4 w-4" />
           ) : (
             <Power className="h-4 w-4" />
           )}
-          {config?.enabled ? 'Disable' : 'Enable'}
+          {engineRunning ? 'Stop Engine' : 'Start Engine'}
         </button>
       </div>
 
@@ -136,76 +150,75 @@ export function ReverseConfigPanel({ onConfigChange }: ReverseConfigPanelProps) 
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <div>
-          <label className="block text-sm font-medium text-neutral-400 mb-2">
-            Fixed Margin (USDT)
-          </label>
+          <label className="block text-sm text-neutral-400 mb-2">Reverse Mode</label>
+          <button
+            onClick={handleToggleReverse}
+            className={`w-full rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+              config?.reverse_enabled
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                : 'bg-neutral-800 text-neutral-400 border border-neutral-700'
+            }`}
+          >
+            {config?.reverse_enabled ? 'ON' : 'OFF'}
+          </button>
+        </div>
+
+        <div>
+          <label className="block text-sm text-neutral-400 mb-2">Margin (USDT)</label>
           <input
             type="number"
-            min={1}
-            max={100000}
-            step={1}
             value={formData.fixed_margin_usdt}
             onChange={(e) => setFormData({ ...formData, fixed_margin_usdt: e.target.value })}
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
+            min="1"
+            max="100000"
           />
-          <p className="mt-1 text-xs text-neutral-500">Amount of margin per trade (1-100000)</p>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-neutral-400 mb-2">
-            Fixed Leverage
-          </label>
+          <label className="block text-sm text-neutral-400 mb-2">Leverage</label>
           <input
             type="number"
-            min={1}
-            max={125}
             value={formData.fixed_leverage}
             onChange={(e) => setFormData({ ...formData, fixed_leverage: e.target.value })}
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
+            min="1"
+            max="125"
           />
-          <p className="mt-1 text-xs text-neutral-500">Leverage multiplier (1-125x)</p>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-neutral-400 mb-2">
-            Order Expiration (Days)
-          </label>
+          <label className="block text-sm text-neutral-400 mb-2">Expiration (Days)</label>
           <input
             type="number"
-            min={1}
-            max={30}
             value={formData.expiration_days}
             onChange={(e) => setFormData({ ...formData, expiration_days: e.target.value })}
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
+            min="1"
+            max="30"
           />
-          <p className="mt-1 text-xs text-neutral-500">Auto-cancel pending orders after (1-30 days)</p>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-neutral-400 mb-2">
-            Max Positions
-          </label>
+          <label className="block text-sm text-neutral-400 mb-2">Max Positions</label>
           <input
             type="number"
-            min={1}
-            max={100}
             value={formData.max_positions}
             onChange={(e) => setFormData({ ...formData, max_positions: e.target.value })}
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
+            min="1"
+            max="100"
           />
-          <p className="mt-1 text-xs text-neutral-500">Maximum concurrent positions (1-100)</p>
         </div>
       </div>
 
-      <div className="mt-6 flex justify-end">
+      <div className="flex justify-end">
         <button
           onClick={handleSave}
           disabled={saving}
-          className={`flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 ${
-            saving ? 'opacity-50 cursor-not-allowed' : ''
-          }`}
+          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
         >
           {saving ? (
             <RefreshCw className="h-4 w-4 animate-spin" />

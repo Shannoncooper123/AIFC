@@ -639,3 +639,234 @@ class BinanceMarkPriceWSClient:
         """设置关注的交易对集合"""
         self.symbols_filter = symbols
         logger.info(f"[MarkPriceWS] 设置关注交易对: {len(symbols)} 个")
+
+
+class BinancePriceWSClient:
+    """币安 WebSocket API 价格客户端
+    
+    使用 WebSocket API 的 ticker.price 方法获取最新价格。
+    这是请求-响应模式，不是推送流，连接可以复用。
+    
+    文档: https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/market-data/websocket-api/Symbol-Price-Ticker
+    
+    请求格式:
+    {
+        "id": "request-id",
+        "method": "ticker.price",
+        "params": {
+            "symbol": "BTCUSDT"  // 可选，不传则返回所有
+        }
+    }
+    
+    响应格式:
+    {
+        "id": "request-id",
+        "status": 200,
+        "result": {
+            "symbol": "BTCUSDT",
+            "price": "6000.01",
+            "time": 1589437530011
+        }
+    }
+    
+    权重: 单交易对 1，无交易对 2
+    """
+    
+    BASE_URL = "wss://ws-fapi.binance.com/ws-fapi/v1"
+    
+    def __init__(self):
+        self._ws: Optional[websocket.WebSocket] = None
+        self._lock = threading.RLock()
+        self._connected = False
+        
+        self._pending_requests: Dict[str, Any] = {}
+        self._requests_lock = threading.Lock()
+        
+        self._recv_thread: Optional[threading.Thread] = None
+        self._running = False
+        
+        self._prices: Dict[str, float] = {}
+        self._update_times: Dict[str, float] = {}
+        self._cache_lock = threading.RLock()
+        self._cache_ttl = 2.0
+    
+    def connect(self) -> bool:
+        """建立 WebSocket 连接"""
+        with self._lock:
+            if self._connected:
+                return True
+            
+            try:
+                logger.info(f"[PriceWSClient] 正在连接: {self.BASE_URL}")
+                self._ws = websocket.create_connection(
+                    self.BASE_URL,
+                    timeout=10
+                )
+                self._connected = True
+                self._running = True
+                
+                self._recv_thread = threading.Thread(target=self._receive_loop, daemon=True)
+                self._recv_thread.start()
+                
+                logger.info("[PriceWSClient] ✅ 连接成功")
+                return True
+            except Exception as e:
+                logger.error(f"[PriceWSClient] 连接失败: {e}")
+                return False
+    
+    def disconnect(self):
+        """断开连接"""
+        with self._lock:
+            self._running = False
+            self._connected = False
+            
+            if self._ws:
+                try:
+                    self._ws.close()
+                except:
+                    pass
+                self._ws = None
+            
+            logger.info("[PriceWSClient] 已断开连接")
+    
+    def _receive_loop(self):
+        """接收响应的线程"""
+        from queue import Queue
+        
+        while self._running and self._connected:
+            try:
+                if self._ws is None:
+                    break
+                
+                self._ws.settimeout(1.0)
+                try:
+                    message = self._ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    continue
+                
+                if not message:
+                    continue
+                
+                data = json.loads(message)
+                request_id = data.get('id')
+                
+                if request_id:
+                    with self._requests_lock:
+                        if request_id in self._pending_requests:
+                            self._pending_requests[request_id].put(data)
+                
+            except websocket.WebSocketConnectionClosedException:
+                logger.warning("[PriceWSClient] 连接已关闭")
+                self._connected = False
+                break
+            except Exception as e:
+                if self._running:
+                    logger.error(f"[PriceWSClient] 接收错误: {e}")
+    
+    def _send_request(self, method: str, params: Dict[str, Any], timeout: float = 5.0) -> Optional[Dict]:
+        """发送请求并等待响应"""
+        from queue import Queue, Empty
+        import uuid
+        
+        if not self._connected:
+            if not self.connect():
+                return None
+        
+        request_id = str(uuid.uuid4())
+        request = {
+            "id": request_id,
+            "method": method,
+            "params": params
+        }
+        
+        response_queue: Queue = Queue()
+        
+        with self._requests_lock:
+            self._pending_requests[request_id] = response_queue
+        
+        try:
+            with self._lock:
+                if self._ws:
+                    self._ws.send(json.dumps(request))
+            
+            try:
+                response = response_queue.get(timeout=timeout)
+                return response
+            except Empty:
+                logger.warning(f"[PriceWSClient] 请求超时: {method}")
+                return None
+        
+        finally:
+            with self._requests_lock:
+                self._pending_requests.pop(request_id, None)
+    
+    def get_price(self, symbol: str) -> Optional[float]:
+        """获取指定交易对的最新价格
+        
+        优先从缓存获取，缓存未命中或过期则通过 WebSocket API 请求。
+        
+        Args:
+            symbol: 交易对（如 BTCUSDT）
+            
+        Returns:
+            最新价格，失败返回 None
+        """
+        with self._cache_lock:
+            cached_price = self._prices.get(symbol)
+            cached_time = self._update_times.get(symbol, 0)
+            
+            if cached_price and (time.time() - cached_time) < self._cache_ttl:
+                return cached_price
+        
+        response = self._send_request("ticker.price", {"symbol": symbol})
+        
+        if response and response.get('status') == 200:
+            result = response.get('result', {})
+            price_str = result.get('price')
+            if price_str:
+                try:
+                    price = float(price_str)
+                    
+                    with self._cache_lock:
+                        self._prices[symbol] = price
+                        self._update_times[symbol] = time.time()
+                    
+                    return price
+                except (ValueError, TypeError):
+                    pass
+        
+        return None
+    
+    def get_all_prices(self) -> Dict[str, float]:
+        """获取所有交易对的最新价格"""
+        response = self._send_request("ticker.price", {})
+        
+        prices = {}
+        if response and response.get('status') == 200:
+            result = response.get('result', [])
+            if isinstance(result, list):
+                now = time.time()
+                for item in result:
+                    symbol = item.get('symbol')
+                    price_str = item.get('price')
+                    if symbol and price_str:
+                        try:
+                            price = float(price_str)
+                            prices[symbol] = price
+                            
+                            with self._cache_lock:
+                                self._prices[symbol] = price
+                                self._update_times[symbol] = now
+                        except (ValueError, TypeError):
+                            pass
+        
+        return prices
+    
+    def is_connected(self) -> bool:
+        """是否已连接"""
+        return self._connected
+    
+    def get_cached_price(self, symbol: str) -> Optional[float]:
+        """仅从缓存获取价格（不发起请求）"""
+        with self._cache_lock:
+            return self._prices.get(symbol)

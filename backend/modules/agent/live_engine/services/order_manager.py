@@ -12,7 +12,7 @@
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
 from datetime import datetime, timedelta
 from modules.monitor.utils.logger import get_logger
-from modules.agent.shared import ExchangeInfoCache
+from modules.agent.live_engine.core import ExchangeInfoCache
 
 if TYPE_CHECKING:
     from modules.monitor.clients.binance_rest import BinanceRestClient
@@ -520,6 +520,9 @@ class OrderManager:
         position_side = get_position_side(side)
         close_side = get_close_side(position_side)
         
+        logger.info(f"[OrderManager] 📦 下 TP/SL 单: {symbol} side={side} qty={quantity} "
+                   f"tp={tp_price} sl={sl_price} position_side={position_side} close_side={close_side}")
+        
         result = {
             'tp_order_id': None,
             'tp_algo_id': None,
@@ -575,4 +578,5 @@ class OrderManager:
             if sl_algo.get('success'):
                 result['sl_algo_id'] = sl_algo.get('algo_id')
         
+        logger.info(f"[OrderManager] TP/SL 结果: {result}")
         return result

@@ -7,7 +7,7 @@ import {
   getWorkflowStatus,
   type WorkflowStatus,
   type AllWorkflowStatus,
-} from '../../../services/api/reverse';
+} from '../../../services/api/live';
 import { formatTime } from '../../../utils';
 
 const INTERVALS = [
@@ -19,11 +19,11 @@ const INTERVALS = [
   { value: '4h', label: '4 小时' },
 ];
 
-interface ReverseWorkflowPanelProps {
+interface LiveWorkflowPanelProps {
   onWorkflowChange?: () => void;
 }
 
-export function ReverseWorkflowPanel({ onWorkflowChange }: ReverseWorkflowPanelProps) {
+export function LiveWorkflowPanel({ onWorkflowChange }: LiveWorkflowPanelProps) {
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [selectedInterval, setSelectedInterval] = useState('15m');
   const [loading, setLoading] = useState(false);

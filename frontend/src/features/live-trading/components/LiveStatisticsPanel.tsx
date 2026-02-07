@@ -1,13 +1,13 @@
 import { TrendingUp, TrendingDown, BarChart3, Target, Percent } from 'lucide-react';
-import type { ReverseStatistics } from '../../../types/reverse';
+import type { LiveStatistics } from '../../../types/live';
 import { formatCurrency } from '../../../utils';
 
-interface ReverseStatisticsPanelProps {
-  statistics: ReverseStatistics;
+interface LiveStatisticsPanelProps {
+  statistics: LiveStatistics;
   loading?: boolean;
 }
 
-export function ReverseStatisticsPanel({ statistics, loading }: ReverseStatisticsPanelProps) {
+export function LiveStatisticsPanel({ statistics, loading }: LiveStatisticsPanelProps) {
   if (loading) {
     return (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

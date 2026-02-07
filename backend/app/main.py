@@ -14,7 +14,7 @@ if env_path.exists():
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import alerts, backtest, config, positions, reverse, system, workflow
+from app.api.routes import alerts, backtest, config, live, positions, system, workflow
 from app.api.websocket import router as websocket_router
 from app.core.config import get_settings
 from app.services.thread_manager import thread_manager
@@ -97,7 +97,7 @@ app.include_router(positions.router)
 app.include_router(config.router)
 app.include_router(workflow.router)
 app.include_router(backtest.router)
-app.include_router(reverse.router)
+app.include_router(live.router)
 app.include_router(websocket_router)
 
 

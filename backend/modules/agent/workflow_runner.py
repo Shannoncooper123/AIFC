@@ -1,6 +1,7 @@
-"""反向交易 Workflow 运行器
+"""交易 Workflow 运行器
 
 针对单个币种，基于 WebSocket K线更新触发 workflow 进行分析。
+支持正常模式和反向模式。
 """
 
 import json
@@ -23,24 +24,17 @@ from modules.agent.utils.trace_utils import workflow_trace_context
 from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
 
-logger = get_logger('reverse_engine.workflow_runner')
+logger = get_logger('workflow_runner')
 
 
-def _ensure_engines_initialized():
-    """确保 live_engine 和 reverse_engine 都已初始化
+def _ensure_live_engine_initialized():
+    """确保 live_engine 已初始化
     
-    初始化顺序：
-    1. 先初始化 live_engine（反向交易强制依赖）
-    2. 再初始化 reverse_engine（传入 live_engine）
-    
-    反向交易模式始终使用实盘引擎，因为需要在币安真实下单。
+    Returns:
+        BinanceLiveEngine 实例
     """
-    from modules.agent.engine import (
-        get_engine, set_engine, 
-        get_reverse_engine, init_reverse_engine
-    )
+    from modules.agent.engine import get_engine, set_engine
     
-    # 1. 确保 live_engine 已初始化
     live_eng = get_engine()
     if live_eng is None:
         cfg = get_config()
@@ -48,20 +42,13 @@ def _ensure_engines_initialized():
         live_eng = BinanceLiveEngine(cfg)
         set_engine(live_eng)
         live_eng.start()
-        logger.info("[反向] 实盘交易引擎已初始化（反向交易始终使用实盘）")
+        logger.info("[WorkflowRunner] 实盘交易引擎已初始化")
     
-    # 2. 确保 reverse_engine 已初始化（传入 live_engine）
-    reverse_eng = get_reverse_engine()
-    if reverse_eng is None:
-        cfg = get_config()
-        reverse_eng = init_reverse_engine(live_eng, cfg)
-        logger.info("[反向] 反向交易引擎已初始化（复用 live_engine）")
-    
-    return live_eng, reverse_eng
+    return live_eng
 
 
-class ReverseWorkflowRunner:
-    """反向交易 Workflow 运行器
+class TradingWorkflowRunner:
+    """交易 Workflow 运行器
     
     基于 WebSocket 监听 K 线更新，每根新 K 线收盘时触发 workflow 分析。
     
@@ -69,7 +56,7 @@ class ReverseWorkflowRunner:
     1. 启动时立即执行一次分析
     2. 建立 WebSocket 连接订阅 K 线数据
     3. 每根新 K 线收盘时触发 workflow 分析
-    4. Agent 分析后如果开仓，反向交易引擎会自动创建反向条件单
+    4. Agent 分析后如果开仓，引擎会自动创建订单（根据是否启用反向模式）
     """
     
     WS_BASE_URL = "wss://fstream.binance.com/ws"
@@ -103,7 +90,7 @@ class ReverseWorkflowRunner:
         self._workflow_lock = threading.Lock()
         self._workflow_running = False
         
-        logger.info(f"ReverseWorkflowRunner 创建: symbol={symbol}, interval={interval}")
+        logger.info(f"TradingWorkflowRunner 创建: symbol={symbol}, interval={interval}")
     
     def _create_mock_alert(self, kline_data: Optional[Dict] = None) -> Dict[str, Any]:
         """创建模拟警报"""
@@ -112,17 +99,17 @@ class ReverseWorkflowRunner:
             price = float(kline_data.get('c', 0))
         
         return {
-            "type": "reverse_trigger",
+            "type": "trading_trigger",
             "symbols": [self.symbol],
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             "interval": self.interval,
-            "source": "reverse_workflow_runner",
+            "source": "workflow_runner",
             "entries": [{
                 "symbol": self.symbol,
                 "price": price,
                 "price_change_rate": 0.0,
-                "triggered_indicators": ["REVERSE_TRIGGER"],
+                "triggered_indicators": ["WORKFLOW_TRIGGER"],
                 "engulfing_type": "非外包",
             }],
         }
@@ -130,16 +117,20 @@ class ReverseWorkflowRunner:
     def _wrap_config(self, alert: Dict[str, Any], workflow_run_id: str) -> RunnableConfig:
         """包装 workflow 配置"""
         cfg = get_config()
+        
+        from modules.agent.live_engine.config import get_trading_config_manager
+        is_reverse = get_trading_config_manager().reverse_enabled
+        
         return RunnableConfig(
             configurable={
                 "latest_alert": alert,
                 "workflow_run_id": workflow_run_id,
                 "current_trace_id": workflow_run_id,
-                "is_reverse_mode": True,
+                "is_reverse_mode": is_reverse,
             },
             recursion_limit=100,
-            tags=["reverse_workflow"],
-            run_name="reverse_workflow_run",
+            tags=["trading_workflow"],
+            run_name="trading_workflow_run",
             metadata={"env": cfg.get('env', {}), "workflow_run_id": workflow_run_id}
         )
     
@@ -155,15 +146,19 @@ class ReverseWorkflowRunner:
         """
         with self._workflow_lock:
             if self._workflow_running:
-                logger.warning(f"[反向] {self.symbol} workflow 正在运行中，跳过本次触发")
+                logger.warning(f"[WorkflowRunner] {self.symbol} workflow 正在运行中，跳过本次触发")
                 return None
             self._workflow_running = True
         
+        workflow_run_id = None
+        start_iso = None
+        cfg = None
+        
         try:
-            _ensure_engines_initialized()
+            _ensure_live_engine_initialized()
             
             cfg = get_config()
-            workflow_run_id = generate_trace_id("rv")
+            workflow_run_id = generate_trace_id("wf")
             start_iso = datetime.now(timezone.utc).isoformat()
             
             mock_alert = self._create_mock_alert(kline_data)
@@ -175,7 +170,11 @@ class ReverseWorkflowRunner:
                     self._last_kline_close_time / 1000, tz=timezone.utc
                 ).strftime("%Y-%m-%d %H:%M")
             
-            logger.info(f"[反向] 触发 workflow 分析: {self.symbol} @ {self.interval} "
+            from modules.agent.live_engine.config import get_trading_config_manager
+            is_reverse = get_trading_config_manager().reverse_enabled
+            mode_str = "[反向模式]" if is_reverse else "[正常模式]"
+            
+            logger.info(f"[WorkflowRunner] {mode_str} 触发 workflow 分析: {self.symbol} @ {self.interval} "
                        f"(原因: {trigger_reason}, K线时间: {kline_time_str})")
             
             graph = create_workflow(cfg)
@@ -190,7 +189,7 @@ class ReverseWorkflowRunner:
             record_workflow_end(workflow_run_id, start_iso, "success", cfg=cfg)
             
             self._workflow_count += 1
-            logger.info(f"[反向] workflow 分析完成: {self.symbol} (第 {self._workflow_count} 次)")
+            logger.info(f"[WorkflowRunner] workflow 分析完成: {self.symbol} (第 {self._workflow_count} 次)")
             
             if self.on_workflow_complete:
                 self.on_workflow_complete(workflow_run_id, {
@@ -199,14 +198,16 @@ class ReverseWorkflowRunner:
                     "kline_time": kline_time_str,
                     "workflow_count": self._workflow_count,
                     "trigger_reason": trigger_reason,
+                    "reverse_mode": is_reverse,
                 })
             
             return workflow_run_id
             
         except Exception as e:
-            logger.error(f"[反向] workflow 分析失败: {self.symbol} - {e}", exc_info=True)
+            logger.error(f"[WorkflowRunner] workflow 分析失败: {self.symbol} - {e}", exc_info=True)
             try:
-                record_workflow_end(workflow_run_id, start_iso, "error", error=str(e), cfg=cfg)
+                if workflow_run_id and start_iso and cfg:
+                    record_workflow_end(workflow_run_id, start_iso, "error", error=str(e), cfg=cfg)
             except:
                 pass
             return None
@@ -230,7 +231,7 @@ class ReverseWorkflowRunner:
                 if self._last_kline_close_time is None or close_time > self._last_kline_close_time:
                     self._last_kline_close_time = close_time
                     
-                    logger.info(f"[反向] 检测到新 K 线收盘: {self.symbol} @ {self.interval}")
+                    logger.info(f"[WorkflowRunner] 检测到新 K 线收盘: {self.symbol} @ {self.interval}")
                     
                     threading.Thread(
                         target=self._run_workflow,
@@ -238,32 +239,32 @@ class ReverseWorkflowRunner:
                         daemon=True
                     ).start()
         except Exception as e:
-            logger.error(f"[反向] 处理 WebSocket 消息失败: {e}")
+            logger.error(f"[WorkflowRunner] 处理 WebSocket 消息失败: {e}")
     
     def _on_ws_error(self, ws, error):
         """WebSocket 错误回调"""
-        logger.error(f"[反向] WebSocket 错误 ({self.symbol}): {error}")
+        logger.error(f"[WorkflowRunner] WebSocket 错误 ({self.symbol}): {error}")
     
     def _on_ws_close(self, ws, close_status_code, close_msg):
         """WebSocket 关闭回调"""
-        logger.info(f"[反向] WebSocket 连接关闭 ({self.symbol}): {close_status_code} - {close_msg}")
+        logger.info(f"[WorkflowRunner] WebSocket 连接关闭 ({self.symbol}): {close_status_code} - {close_msg}")
         
         if self._running and not self._stop_requested:
-            logger.info(f"[反向] 5 秒后尝试重连 WebSocket ({self.symbol})")
+            logger.info(f"[WorkflowRunner] 5 秒后尝试重连 WebSocket ({self.symbol})")
             time.sleep(5)
             if self._running and not self._stop_requested:
                 self._connect_ws()
     
     def _on_ws_open(self, ws):
         """WebSocket 连接成功回调"""
-        logger.info(f"[反向] WebSocket 连接成功: {self.symbol} @ {self.interval}")
+        logger.info(f"[WorkflowRunner] WebSocket 连接成功: {self.symbol} @ {self.interval}")
     
     def _connect_ws(self):
         """建立 WebSocket 连接"""
         stream_name = f"{self.symbol.lower()}@kline_{self.interval}"
         ws_url = f"{self.WS_BASE_URL}/{stream_name}"
         
-        logger.info(f"[反向] 连接 WebSocket: {ws_url}")
+        logger.info(f"[WorkflowRunner] 连接 WebSocket: {ws_url}")
         
         self._ws = websocket.WebSocketApp(
             ws_url,
@@ -287,16 +288,16 @@ class ReverseWorkflowRunner:
             是否成功启动
         """
         if self._running:
-            logger.warning(f"[反向] 运行器已在运行: {self.symbol}")
+            logger.warning(f"[WorkflowRunner] 运行器已在运行: {self.symbol}")
             return False
         
         self._running = True
         self._stop_requested = False
         self._start_time = datetime.now(timezone.utc)
         
-        logger.info(f"[反向] Workflow 运行器启动: {self.symbol} @ {self.interval}")
+        logger.info(f"[WorkflowRunner] Workflow 运行器启动: {self.symbol} @ {self.interval}")
         
-        logger.info(f"[反向] 启动时立即执行一次分析: {self.symbol}")
+        logger.info(f"[WorkflowRunner] 启动时立即执行一次分析: {self.symbol}")
         threading.Thread(
             target=self._run_workflow,
             args=(None, "startup"),
@@ -312,7 +313,7 @@ class ReverseWorkflowRunner:
         if not self._running:
             return
         
-        logger.info(f"[反向] 请求停止运行器: {self.symbol}")
+        logger.info(f"[WorkflowRunner] 请求停止运行器: {self.symbol}")
         self._stop_requested = True
         self._running = False
         
@@ -323,7 +324,7 @@ class ReverseWorkflowRunner:
                 pass
             self._ws = None
         
-        logger.info(f"[反向] Workflow 运行器已停止: {self.symbol}")
+        logger.info(f"[WorkflowRunner] Workflow 运行器已停止: {self.symbol}")
     
     def get_status(self) -> Dict[str, Any]:
         """获取运行状态"""
@@ -333,6 +334,9 @@ class ReverseWorkflowRunner:
                 self._last_kline_close_time / 1000, tz=timezone.utc
             ).isoformat()
         
+        from modules.agent.live_engine.config import get_trading_config_manager
+        is_reverse = get_trading_config_manager().reverse_enabled
+        
         return {
             "symbol": self.symbol,
             "interval": self.interval,
@@ -340,6 +344,7 @@ class ReverseWorkflowRunner:
             "workflow_count": self._workflow_count,
             "start_time": self._start_time.isoformat() if self._start_time else None,
             "last_kline_time": last_kline_str,
+            "reverse_mode": is_reverse,
         }
     
     @property
@@ -348,14 +353,14 @@ class ReverseWorkflowRunner:
         return self._running
 
 
-class ReverseWorkflowManager:
-    """反向交易 Workflow 管理器
+class WorkflowManager:
+    """Workflow 管理器
     
     管理多个币种的 Workflow 运行器
     """
     
     def __init__(self):
-        self._runners: Dict[str, ReverseWorkflowRunner] = {}
+        self._runners: Dict[str, TradingWorkflowRunner] = {}
         self._lock = threading.RLock()
     
     def start_symbol(
@@ -376,10 +381,10 @@ class ReverseWorkflowManager:
         """
         with self._lock:
             if symbol in self._runners and self._runners[symbol].is_running:
-                logger.warning(f"[反向] 币种 {symbol} 已在运行")
+                logger.warning(f"[WorkflowManager] 币种 {symbol} 已在运行")
                 return False
             
-            runner = ReverseWorkflowRunner(
+            runner = TradingWorkflowRunner(
                 symbol=symbol,
                 interval=interval,
                 on_workflow_complete=on_workflow_complete,
@@ -387,7 +392,7 @@ class ReverseWorkflowManager:
             
             if runner.start():
                 self._runners[symbol] = runner
-                logger.info(f"[反向] 币种 {symbol} workflow 运行器已启动")
+                logger.info(f"[WorkflowManager] 币种 {symbol} workflow 运行器已启动")
                 return True
             
             return False
@@ -403,12 +408,12 @@ class ReverseWorkflowManager:
         """
         with self._lock:
             if symbol not in self._runners:
-                logger.warning(f"[反向] 币种 {symbol} 未在运行")
+                logger.warning(f"[WorkflowManager] 币种 {symbol} 未在运行")
                 return False
             
             self._runners[symbol].stop()
             del self._runners[symbol]
-            logger.info(f"[反向] 币种 {symbol} workflow 运行器已停止")
+            logger.info(f"[WorkflowManager] 币种 {symbol} workflow 运行器已停止")
             return True
     
     def stop_all(self) -> None:
@@ -417,7 +422,7 @@ class ReverseWorkflowManager:
             for symbol, runner in list(self._runners.items()):
                 runner.stop()
             self._runners.clear()
-            logger.info("[反向] 所有 workflow 运行器已停止")
+            logger.info("[WorkflowManager] 所有 workflow 运行器已停止")
     
     def get_running_symbols(self) -> List[str]:
         """获取正在运行的币种列表"""
@@ -443,3 +448,16 @@ class ReverseWorkflowManager:
                 "running_count": len([r for r in self._runners.values() if r.is_running]),
                 "symbols": {s: r.get_status() for s, r in self._runners.items()},
             }
+
+
+_workflow_manager: Optional[WorkflowManager] = None
+_manager_lock = threading.RLock()
+
+
+def get_workflow_manager() -> WorkflowManager:
+    """获取 Workflow 管理器单例"""
+    global _workflow_manager
+    with _manager_lock:
+        if _workflow_manager is None:
+            _workflow_manager = WorkflowManager()
+        return _workflow_manager

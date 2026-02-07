@@ -558,21 +558,217 @@ class OrderService:
         data = self.get_tpsl_prices(symbol)
         return data.get(symbol, {'tp_price': None, 'sl_price': None})
     
-    def _get_price_precision(self, symbol: str) -> int:
-        """获取交易对的价格精度
+    def create_smart_limit_order(
+        self,
+        symbol: str,
+        side: str,
+        limit_price: float,
+        quantity: float,
+        tp_price: float,
+        sl_price: float,
+        source: str = 'live',
+        expiration_days: int = 10
+    ) -> Dict[str, Any]:
+        """智能创建限价单（根据当前价格自动选择限价单或条件单）
+        
+        判断逻辑：
+        - BUY (做多): 当前价格 > 触发价 → 限价单 (Maker)，否则 → 条件单 (Taker)
+        - SELL (做空): 当前价格 < 触发价 → 限价单 (Maker)，否则 → 条件单 (Taker)
         
         Args:
             symbol: 交易对
+            side: 方向 ('BUY'/'SELL' 或 'long'/'short')
+            limit_price: 挂单/触发价格
+            quantity: 数量
+            tp_price: 止盈价格
+            sl_price: 止损价格
+            source: 订单来源 ('live'/'reverse'/'agent')
+            expiration_days: 条件单过期天数
             
         Returns:
-            价格精度（小数位数）
+            结果字典，包含订单信息或错误
+        """
+        from modules.agent.live_engine.core import ExchangeInfoCache
+        
+        try:
+            side_upper = side.upper()
+            if side_upper in ('LONG', 'BUY'):
+                order_side = 'BUY'
+                position_side = 'LONG'
+            else:
+                order_side = 'SELL'
+                position_side = 'SHORT'
+            
+            current_price = self._get_last_price(symbol)
+            if not current_price:
+                current_price = limit_price
+            
+            limit_price = ExchangeInfoCache.format_price(symbol, limit_price)
+            tp_price = ExchangeInfoCache.format_price(symbol, tp_price) if tp_price else None
+            sl_price = ExchangeInfoCache.format_price(symbol, sl_price) if sl_price else None
+            
+            use_limit_order = False
+            if order_side == 'BUY' and current_price > limit_price:
+                use_limit_order = True
+                logger.info(f"[SmartOrder] 当前价格 {current_price} > 触发价 {limit_price}，使用限价单 (Maker)")
+            elif order_side == 'SELL' and current_price < limit_price:
+                use_limit_order = True
+                logger.info(f"[SmartOrder] 当前价格 {current_price} < 触发价 {limit_price}，使用限价单 (Maker)")
+            else:
+                logger.info(f"[SmartOrder] 使用条件单 (Taker)")
+            
+            if use_limit_order:
+                return self._place_limit_entry_order(
+                    symbol=symbol,
+                    side=order_side,
+                    price=limit_price,
+                    quantity=quantity,
+                    position_side=position_side,
+                    tp_price=tp_price,
+                    sl_price=sl_price,
+                    source=source
+                )
+            else:
+                return self._place_algo_entry_order(
+                    symbol=symbol,
+                    side=order_side,
+                    trigger_price=limit_price,
+                    quantity=quantity,
+                    position_side=position_side,
+                    tp_price=tp_price,
+                    sl_price=sl_price,
+                    source=source,
+                    expiration_days=expiration_days,
+                    current_price=current_price
+                )
+        
+        except Exception as e:
+            logger.error(f"[SmartOrder] 创建订单失败: {e}", exc_info=True)
+            return {'error': str(e)}
+    
+    def _place_limit_entry_order(
+        self,
+        symbol: str,
+        side: str,
+        price: float,
+        quantity: float,
+        position_side: str,
+        tp_price: float,
+        sl_price: float,
+        source: str
+    ) -> Dict[str, Any]:
+        """下限价单（开仓）"""
+        try:
+            result = self.rest_client.place_order(
+                symbol=symbol,
+                side=side,
+                order_type='LIMIT',
+                quantity=quantity,
+                price=price,
+                time_in_force='GTC',
+                position_side=position_side
+            )
+            
+            order_id = result.get('orderId')
+            
+            logger.info(f"[SmartOrder] ✅ 限价单创建成功: {symbol} {side} @ {price} orderId={order_id}")
+            
+            return {
+                'success': True,
+                'order_id': order_id,
+                'order_kind': 'LIMIT',
+                'symbol': symbol,
+                'side': side.lower(),
+                'price': price,
+                'quantity': quantity,
+                'tp_price': tp_price,
+                'sl_price': sl_price,
+                'source': source,
+                'position_side': position_side
+            }
+        
+        except Exception as e:
+            logger.error(f"[SmartOrder] 限价单下单失败: {e}")
+            return {'error': str(e)}
+    
+    def _place_algo_entry_order(
+        self,
+        symbol: str,
+        side: str,
+        trigger_price: float,
+        quantity: float,
+        position_side: str,
+        tp_price: float,
+        sl_price: float,
+        source: str,
+        expiration_days: int,
+        current_price: float
+    ) -> Dict[str, Any]:
+        """下条件单（开仓）"""
+        try:
+            if side == 'BUY':
+                order_type = 'STOP_MARKET' if trigger_price > current_price else 'TAKE_PROFIT_MARKET'
+            else:
+                order_type = 'STOP_MARKET' if trigger_price < current_price else 'TAKE_PROFIT_MARKET'
+            
+            from datetime import datetime, timezone, timedelta
+            expire_time = datetime.now(timezone.utc) + timedelta(days=expiration_days)
+            good_till_date = int(expire_time.timestamp() * 1000)
+            
+            result = self.rest_client.place_order(
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                quantity=quantity,
+                stop_price=trigger_price,
+                position_side=position_side,
+                time_in_force='GTD',
+                good_till_date=good_till_date,
+                working_type='MARK_PRICE'
+            )
+            
+            algo_id = str(result.get('orderId'))
+            
+            logger.info(f"[SmartOrder] ✅ 条件单创建成功: {symbol} {side} {order_type} @ {trigger_price} algoId={algo_id}")
+            
+            return {
+                'success': True,
+                'algo_id': algo_id,
+                'order_kind': 'CONDITIONAL',
+                'symbol': symbol,
+                'side': side.lower(),
+                'trigger_price': trigger_price,
+                'quantity': quantity,
+                'tp_price': tp_price,
+                'sl_price': sl_price,
+                'source': source,
+                'position_side': position_side,
+                'order_type': order_type
+            }
+        
+        except Exception as e:
+            logger.error(f"[SmartOrder] 条件单下单失败: {e}")
+            return {'error': str(e)}
+    
+    def _get_last_price(self, symbol: str) -> Optional[float]:
+        """获取当前最新成交价格
+        
+        优先使用 WebSocket API（连接复用，权重低），
+        失败时回退到 REST API。
         """
         try:
-            exchange_info = self.rest_client.get_exchange_info()
-            for s in exchange_info.get('symbols', []):
-                if s['symbol'] == symbol:
-                    return s.get('pricePrecision', 2)
-            return 2  # 默认精度
+            from modules.agent.live_engine.core.exchange_utils import get_latest_price
+            price = get_latest_price(symbol)
+            if price:
+                return price
         except Exception as e:
-            logger.warning(f"获取 {symbol} 价格精度失败，使用默认值2: {e}")
-            return 2
+            logger.debug(f"WebSocket API 获取价格失败，回退到 REST: {e}")
+        
+        try:
+            ticker = self.rest_client.get_ticker_price(symbol)
+            if isinstance(ticker, list) and len(ticker) > 0:
+                ticker = ticker[0]
+            return float(ticker.get('price', 0))
+        except Exception as e:
+            logger.warning(f"获取 {symbol} 最新价格失败: {e}")
+            return None

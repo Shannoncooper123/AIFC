@@ -5,10 +5,11 @@
 职责：
 - 监听 ALGO_UPDATE 事件（条件单状态变化）
 - 区分三种条件单：开仓条件单、止盈条件单、止损条件单
+- 开仓条件单触发后创建记录并下 TP/SL
 - 止盈/止损触发后自动关闭记录并取消另一个条件单
 
 事件流程：
-1. 开仓条件单触发 (TRIGGERED/FILLED) -> RecordService.create_record
+1. 开仓条件单触发 (TRIGGERED/FILLED) -> 查找 pending_orders -> 创建 TradeRecord -> 下 TP/SL
 2. TP 条件单触发 -> 关闭记录 (TP_CLOSED) -> 取消 SL 条件单
 3. SL 条件单触发 -> 关闭记录 (SL_CLOSED) -> 取消 TP 条件单
 
@@ -33,6 +34,7 @@ from typing import Dict, Any, Optional, TYPE_CHECKING, Callable
 from modules.monitor.utils.logger import get_logger
 
 if TYPE_CHECKING:
+    from modules.agent.live_engine.core.repositories import OrderRepository
     from ..services.record_service import RecordService
     from ..services.order_manager import OrderManager
 
@@ -44,7 +46,7 @@ class AlgoOrderHandler:
     
     职责：
     - 处理条件单状态变化事件
-    - 区分开仓条件单和 TP/SL 条件单
+    - 开仓条件单触发后创建记录并下 TP/SL
     - 止盈止损触发后自动关闭记录
     """
     
@@ -52,30 +54,18 @@ class AlgoOrderHandler:
         self,
         record_service: 'RecordService',
         order_manager: 'OrderManager' = None,
-        pending_orders_getter: Callable[[], Dict[str, Any]] = None
+        order_repository: 'OrderRepository' = None
     ):
         """初始化
         
         Args:
             record_service: 记录服务
             order_manager: 订单管理器（用于取消订单）
-            pending_orders_getter: 获取待触发开仓条件单的回调函数
+            order_repository: 订单仓库（用于查找 pending orders）
         """
         self.record_service = record_service
         self.order_manager = order_manager
-        self._pending_orders_getter = pending_orders_getter
-        
-        self._entry_order_callback: Optional[Callable[[str, Any, str, Dict], None]] = None
-    
-    def set_entry_order_callback(self, callback: Callable[[str, Any, str, Dict], None]):
-        """设置开仓条件单触发的回调
-        
-        用于 ReverseEngine 处理其自己的开仓条件单。
-        
-        Args:
-            callback: 回调函数 (algo_id, order, status, order_info)
-        """
-        self._entry_order_callback = callback
+        self.order_repository = order_repository
     
     def handle(self, data: Dict[str, Any]):
         """处理 ALGO_UPDATE 事件
@@ -96,23 +86,15 @@ class AlgoOrderHandler:
             
             logger.debug(f"[AlgoOrderHandler] ALGO_UPDATE: {symbol} status={status} algoId={algo_id}")
             
-            if self._pending_orders_getter:
-                pending_orders = self._pending_orders_getter()
-                if algo_id in pending_orders:
-                    if self._entry_order_callback:
-                        self._entry_order_callback(algo_id, pending_orders[algo_id], status, order_info)
+            if self.order_repository:
+                pending_order = self.order_repository.find_by_algo_id(algo_id)
+                if pending_order and pending_order.order_kind == 'CONDITIONAL':
+                    self._handle_entry_algo_update(algo_id, pending_order, status, order_info)
                     return
             
             tp_record = self.record_service.find_record_by_tp_algo_id(algo_id)
             if tp_record:
                 self._handle_tp_order_update(algo_id, tp_record, status, order_info)
-                return
-            
-            tp_record_by_order = self.record_service.find_record_by_tp_order_id(
-                int(order_info.get('ai', 0)) if order_info.get('ai') else 0
-            )
-            if tp_record_by_order:
-                self._handle_tp_order_update(algo_id, tp_record_by_order, status, order_info)
                 return
             
             sl_record = self.record_service.find_record_by_sl_algo_id(algo_id)
@@ -124,6 +106,62 @@ class AlgoOrderHandler:
             
         except Exception as e:
             logger.error(f"[AlgoOrderHandler] 处理事件失败: {e}", exc_info=True)
+    
+    def _handle_entry_algo_update(self, algo_id: str, pending_order, status: str, order_info: Dict):
+        """处理开仓条件单状态更新
+        
+        Args:
+            algo_id: 条件单ID
+            pending_order: pending order 对象
+            status: 状态
+            order_info: 订单信息
+        """
+        symbol = pending_order.symbol
+        
+        if status in ('TRIGGERED', 'FILLED'):
+            filled_price = float(order_info.get('ap', pending_order.trigger_price))
+            triggered_order_id = self._extract_order_id(order_info)
+            
+            logger.info(f"[AlgoOrderHandler] 📦 开仓条件单触发: {symbol} algoId={algo_id} "
+                       f"price={filled_price} orderId={triggered_order_id}")
+            
+            entry_commission = 0.0
+            if triggered_order_id:
+                entry_commission = self.record_service.fetch_entry_commission(symbol, triggered_order_id)
+                if entry_commission > 0:
+                    logger.info(f"[AlgoOrderHandler] 💰 开仓手续费: {entry_commission:.6f} USDT")
+            
+            self.record_service.create_record(
+                symbol=pending_order.symbol,
+                side=pending_order.side,
+                qty=pending_order.quantity,
+                entry_price=filled_price,
+                leverage=pending_order.leverage,
+                tp_price=pending_order.tp_price,
+                sl_price=pending_order.sl_price,
+                source=pending_order.source,
+                entry_algo_id=algo_id,
+                entry_order_id=triggered_order_id,
+                agent_order_id=pending_order.agent_order_id,
+                entry_commission=entry_commission,
+                auto_place_tpsl=True
+            )
+            
+            self.order_repository.remove(pending_order.id)
+            logger.info(f"[AlgoOrderHandler] ✅ 开仓记录已创建，pending order 已移除: {pending_order.id}")
+        
+        elif status == 'CANCELLED':
+            logger.info(f"[AlgoOrderHandler] 开仓条件单已取消: {symbol} algoId={algo_id}")
+            self.order_repository.remove(pending_order.id)
+        
+        elif status == 'EXPIRED':
+            logger.info(f"[AlgoOrderHandler] 开仓条件单已过期: {symbol} algoId={algo_id}")
+            self.order_repository.remove(pending_order.id)
+        
+        elif status == 'REJECTED':
+            reason = order_info.get('rm', '')
+            logger.warning(f"[AlgoOrderHandler] ⚠️ 开仓条件单被拒绝: {symbol} algoId={algo_id} reason={reason}")
+            self.order_repository.remove(pending_order.id)
     
     def _extract_order_id(self, order_info: Dict) -> Optional[int]:
         """从 ALGO_UPDATE 事件中提取触发后生成的市价单 ID
@@ -163,10 +201,22 @@ class AlgoOrderHandler:
             
             self.record_service.cancel_remaining_tpsl(record, 'TP')
             
+            exit_commission = 0.0
+            realized_pnl = None
+            if order_id:
+                exit_info = self.record_service.fetch_exit_info(symbol, order_id)
+                if exit_info.get('close_price'):
+                    avg_price = exit_info['close_price']
+                exit_commission = exit_info.get('exit_commission', 0.0)
+                realized_pnl = exit_info.get('realized_pnl')
+                logger.info(f"[AlgoOrderHandler] 📊 平仓信息: price={avg_price} fee={exit_commission} pnl={realized_pnl}")
+            
             self.record_service.close_record(
                 record_id=record.id,
                 close_price=avg_price,
-                close_reason='TP_CLOSED'
+                close_reason='TP_CLOSED',
+                exit_commission=exit_commission,
+                realized_pnl=realized_pnl
             )
         
         elif status == 'CANCELLED':
@@ -203,10 +253,22 @@ class AlgoOrderHandler:
             
             self.record_service.cancel_remaining_tpsl(record, 'SL')
             
+            exit_commission = 0.0
+            realized_pnl = None
+            if order_id:
+                exit_info = self.record_service.fetch_exit_info(symbol, order_id)
+                if exit_info.get('close_price'):
+                    avg_price = exit_info['close_price']
+                exit_commission = exit_info.get('exit_commission', 0.0)
+                realized_pnl = exit_info.get('realized_pnl')
+                logger.info(f"[AlgoOrderHandler] 📊 平仓信息: price={avg_price} fee={exit_commission} pnl={realized_pnl}")
+            
             self.record_service.close_record(
                 record_id=record.id,
                 close_price=avg_price,
-                close_reason='SL_CLOSED'
+                close_reason='SL_CLOSED',
+                exit_commission=exit_commission,
+                realized_pnl=realized_pnl
             )
         
         elif status == 'CANCELLED':

@@ -1,16 +1,16 @@
 /**
- * 反向交易相关类型定义
+ * 实盘交易相关类型定义
  */
 
-export interface ReverseConfig {
-  enabled: boolean;
+export interface LiveTradingConfig {
+  reverse_enabled: boolean;
   fixed_margin_usdt: number;
   fixed_leverage: number;
   expiration_days: number;
   max_positions: number;
 }
 
-export interface ReversePosition {
+export interface LivePosition {
   id: string;
   symbol: string;
   side: 'LONG' | 'SHORT' | string;
@@ -28,9 +28,10 @@ export interface ReversePosition {
   opened_at?: string;
   algo_order_id?: string;
   agent_order_id?: string;
+  source?: string;
 }
 
-export interface ReversePendingOrder {
+export interface LivePendingOrder {
   id: string;
   algo_id?: string;
   order_id?: number;
@@ -48,9 +49,14 @@ export interface ReversePendingOrder {
   expires_at?: string;
   agent_order_id?: string;
   agent_side?: string;
+  agent_limit_price?: number;
+  source?: string;
+  triggered_at?: string;
+  filled_at?: string;
+  filled_price?: number;
 }
 
-export interface ReverseHistoryEntry {
+export interface LiveHistoryEntry {
   id: string;
   symbol: string;
   side: string;
@@ -69,9 +75,10 @@ export interface ReverseHistoryEntry {
   entry_commission?: number;
   exit_commission?: number;
   total_commission?: number;
+  source?: string;
 }
 
-export interface ReverseStatistics {
+export interface LiveStatistics {
   total_trades: number;
   winning_trades: number;
   losing_trades: number;
@@ -81,27 +88,31 @@ export interface ReverseStatistics {
   max_profit: number;
   max_loss: number;
   total_commission?: number;
+  open_count?: number;
 }
 
-export interface ReverseSummary {
-  enabled: boolean;
-  config: ReverseConfig;
+export interface LiveSummary {
+  engine_running: boolean;
+  reverse_enabled: boolean;
+  config: LiveTradingConfig;
   pending_orders_count: number;
   positions_count: number;
-  statistics: ReverseStatistics;
+  statistics: LiveStatistics;
 }
 
-export interface ReversePositionsResponse {
-  positions: ReversePosition[];
+export interface LivePositionsResponse {
+  positions: LivePosition[];
   total: number;
 }
 
-export interface ReversePendingOrdersResponse {
-  orders: ReversePendingOrder[];
+export interface LivePendingOrdersResponse {
+  orders: LivePendingOrder[];
   total: number;
+  total_conditional: number;
+  total_limit: number;
 }
 
-export interface ReverseHistoryResponse {
-  history: ReverseHistoryEntry[];
+export interface LiveHistoryResponse {
+  history: LiveHistoryEntry[];
   total: number;
 }

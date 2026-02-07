@@ -9,7 +9,7 @@ import {
   WorkflowPage,
   SettingsPage,
   BacktestPage,
-  ReverseTradingPage,
+  LiveTradingPage,
 } from './pages';
 import { useWebSocket } from './hooks';
 import { useAppStore } from './stores';
@@ -41,7 +41,7 @@ function AppContent() {
         <Route path="/positions" element={<PositionsPage />} />
         <Route path="/workflow" element={<WorkflowPage />} />
         <Route path="/backtest" element={<BacktestPage />} />
-        <Route path="/reverse" element={<ReverseTradingPage />} />
+        <Route path="/live" element={<LiveTradingPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Layout>

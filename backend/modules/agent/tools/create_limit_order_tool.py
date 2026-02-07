@@ -1,38 +1,53 @@
-"""创建限价单工具"""
+"""创建限价单工具
+
+支持正常模式和反向模式。反向模式下会自动进行参数转换：
+- 方向反转：Agent BUY -> 我们 SELL
+- TP/SL 互换：Agent 的 TP 变成我们的 SL，Agent 的 SL 变成我们的 TP
+"""
 from langchain.tools import tool
 from typing import Optional, Dict, Any
-from modules.agent.engine import get_engine
+from modules.agent.engine import get_engine, is_reverse_enabled
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.tool.create_limit_order')
 
 
-def _format_limit_order_result(res: Dict[str, Any]) -> str:
-    """格式化限价单结果"""
+def _format_order_result(res: Dict[str, Any], is_reverse: bool = False) -> str:
+    """格式化订单结果"""
     symbol = res.get('symbol', 'UNKNOWN')
     side = res.get('side', 'unknown')
-    limit_price = res.get('limit_price', 0)
+    order_kind = res.get('order_kind', 'LIMIT')
+    price = res.get('price') or res.get('trigger_price') or res.get('limit_price', 0)
     tp_price = res.get('tp_price')
     sl_price = res.get('sl_price')
-    order_id = res.get('id', 'unknown')
+    order_id = res.get('order_id') or res.get('algo_id') or res.get('id', 'unknown')
     margin_usdt = res.get('margin_usdt', 0)
     leverage = res.get('leverage', 10)
     
-    side_cn = '做多' if side == 'long' else '做空'
-    notional = margin_usdt * leverage
+    if is_reverse:
+        agent_side = res.get('agent_side') or ('long' if side == 'sell' else 'short')
+        mode_label = f"反向{'做空' if agent_side == 'long' else '做多'}"
+    else:
+        mode_label = '做多' if side in ('buy', 'long') else '做空'
+    
+    order_type_cn = '条件单' if order_kind == 'CONDITIONAL' else '限价单'
+    fee_type = 'Taker' if order_kind == 'CONDITIONAL' else 'Maker'
+    
+    notional = margin_usdt * leverage if margin_usdt > 0 else 0
     
     tp_str = f"${tp_price:.6g}" if tp_price else "未设置"
     sl_str = f"${sl_price:.6g}" if sl_price else "未设置"
     
-    return f"""✅ 限价单创建成功
+    return f"""✅ {order_type_cn}创建成功
 
-【{symbol}】{side_cn} (Limit) | {leverage}x杠杆
+【{symbol}】{mode_label} ({order_type_cn}/{fee_type}) | {leverage}x杠杆
   订单ID: {order_id}
-  挂单价格: ${limit_price:.6g}
+  挂单价格: ${price:.6g}
   保证金: ${margin_usdt:.2f} | 名义价值: ${notional:.2f}
   止盈: {tp_str}
   止损: {sl_str}
-  状态: Pending"""
+  状态: 等待触发"""
+
 
 @tool("create_limit_order", description="创建限价单（挂单）。当当前价格不理想但想在特定价格入场时使用。注意：必须同时设置止盈和止损。", parse_docstring=True)
 def create_limit_order_tool(
@@ -45,6 +60,7 @@ def create_limit_order_tool(
     """创建限价单（开仓信号）。
     
     Agent 只需要提供开仓信号，实际金额由引擎配置决定。
+    如果启用了反向交易模式，会自动创建反向订单。
     
     Args:
         symbol: 交易对 (e.g. "BTCUSDT")
@@ -88,53 +104,41 @@ def create_limit_order_tool(
             logger.error("create_limit_order_tool: 引擎未初始化")
             return {"error": "TOOL_RUNTIME_ERROR: 交易引擎未初始化"}
 
-        from modules.agent.engine import get_reverse_engine
-        reverse_engine = get_reverse_engine()
-        is_reverse_mode = reverse_engine and reverse_engine.is_enabled()
+        is_reverse_mode = is_reverse_enabled()
+        
+        final_side = side_lower
+        final_tp = tp_price
+        final_sl = sl_price
+        source = 'live'
+        agent_side = None
         
         if is_reverse_mode:
-            logger.info(f"[反向模式] 创建反向条件单: {symbol} {side_lower} @ {limit_price}")
+            final_side = 'short' if side_lower == 'long' else 'long'
+            final_tp = sl_price
+            final_sl = tp_price
+            source = 'reverse'
+            agent_side = side_lower
             
-            order = reverse_engine.on_agent_limit_order(
-                symbol=symbol,
-                side=side_lower,
-                limit_price=limit_price,
-                tp_price=tp_price,
-                sl_price=sl_price,
-            )
-            
-            if not order:
-                logger.error(f"[反向模式] 反向条件单创建失败: {symbol}")
-                return {"error": "TOOL_RUNTIME_ERROR: 反向条件单创建失败"}
-            
-            logger.info(f"[反向模式] 反向条件单创建成功: {symbol} algoId={order.algo_id}")
-            leverage = reverse_engine.config_manager.fixed_leverage
-            reverse_side_cn = '做空' if side_lower == 'long' else '做多'
-            
-            return f"""✅ 反向条件单创建成功
-
-【{symbol}】反向{reverse_side_cn} (Conditional) | {leverage}x杠杆
-  条件单ID: {order.algo_id}
-  触发价格: ${limit_price:.6g}
-  止盈: ${order.tp_price:.6g} (Agent止损位)
-  止损: ${order.sl_price:.6g} (Agent止盈位)
-  状态: 等待触发"""
-        
-        logger.info(f"create_limit_order: {symbol} {side_lower} @ {limit_price}")
+            logger.info(f"[反向模式] Agent 信号: {symbol} {side_lower} @ {limit_price}")
+            logger.info(f"[反向模式] 反向订单: {final_side} TP={final_tp} SL={final_sl}")
+        else:
+            logger.info(f"create_limit_order: {symbol} {side_lower} @ {limit_price}")
         
         res = eng.create_limit_order(
             symbol=symbol,
-            side=side_lower,
+            side=final_side,
             limit_price=limit_price,
-            tp_price=tp_price,
-            sl_price=sl_price
+            tp_price=final_tp,
+            sl_price=final_sl,
+            source=source,
+            agent_side=agent_side
         )
         
         if isinstance(res, dict) and 'error' in res:
             logger.error(f"create_limit_order failed: {res['error']}")
             return res
         
-        return _format_limit_order_result(res)
+        return _format_order_result(res, is_reverse=is_reverse_mode)
         
     except Exception as e:
         logger.error(f"create_limit_order_tool exception: {e}", exc_info=True)
