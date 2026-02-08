@@ -91,7 +91,8 @@ export function LivePendingOrdersTable({
   return (
     <div className="space-y-3">
       {orders.map((order) => {
-        const isLong = order.side.toUpperCase() === 'BUY';
+        const sideUpper = order.side.toUpperCase();
+        const isLong = sideUpper === 'LONG' || sideUpper === 'BUY';
         const currentPrice = currentPrices[order.symbol];
         const distancePercent = currentPrice 
           ? ((order.trigger_price - currentPrice) / currentPrice) * 100 
