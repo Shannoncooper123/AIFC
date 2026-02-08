@@ -2,9 +2,9 @@
 
 负责开仓、平仓等核心操作。
 """
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from modules.agent.live_engine.core import ExchangeInfoCache, RecordRepository, RecordStatus, TradeRecord
+from modules.agent.live_engine.core import ExchangeInfoCache, RecordStatus, TradeRecord
 from modules.agent.live_engine.core.models import OrderPurpose
 from modules.agent.live_engine.manager.order import get_close_side, get_position_side
 from modules.monitor.utils.logger import get_logger
@@ -13,6 +13,24 @@ if TYPE_CHECKING:
     from modules.agent.live_engine.manager.position.position_manager import PositionManager
 
 logger = get_logger('live_engine.position_operations')
+
+
+def fetch_entry_info(pm: 'PositionManager', symbol: str, order_id: int) -> Dict[str, Any]:
+    """获取入场成交信息
+
+    Args:
+        pm: PositionManager 实例
+        symbol: 交易对
+        order_id: 订单 ID
+
+    Returns:
+        包含 avg_price 和 commission 的字典
+    """
+    entry_info = pm.trade_info_service.get_entry_info(symbol, order_id)
+    return {
+        'avg_price': entry_info.avg_price,
+        'commission': entry_info.commission
+    }
 
 
 def open_position(

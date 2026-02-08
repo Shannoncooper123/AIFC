@@ -393,3 +393,43 @@ def handle_order_cancelled(pm: 'PositionManager', symbol: str, order_id: int):
 
         if not orders.get('tp_order_id') and not orders.get('sl_order_id'):
             del pm.tpsl_orders[symbol]
+
+
+def clear_tpsl_ids(pm: 'PositionManager', record_id: str):
+    """清除记录的 TP/SL 订单 ID"""
+    pm._repository.update(record_id, tp_order_id=None, tp_algo_id=None, sl_algo_id=None)
+
+
+def restore_from_state(pm: 'PositionManager'):
+    """从 trade_state.json 恢复订单 ID 记录"""
+    import json
+    import os
+
+    try:
+        state_path = pm.config.get('agent', {}).get('trade_state_path', 'agent/trade_state.json')
+        if not os.path.exists(state_path):
+            return
+
+        with open(state_path, 'r', encoding='utf-8') as f:
+            state_data = json.load(f)
+
+        positions = state_data.get('positions', {})
+        restored_count = 0
+
+        for symbol, pos_data in positions.items():
+            tp_id = pos_data.get('tp_order_id')
+            sl_id = pos_data.get('sl_order_id')
+
+            if tp_id or sl_id:
+                pm.tpsl_orders[symbol] = {
+                    'tp_order_id': tp_id,
+                    'sl_order_id': sl_id
+                }
+                restored_count += 1
+                logger.info(f"恢复订单 ID 记录: {symbol} tp={tp_id}, sl={sl_id}")
+
+        if restored_count > 0:
+            logger.info(f"✓ 从 trade_state.json 恢复了 {restored_count} 个币种的订单 ID 记录")
+
+    except Exception as e:
+        logger.warning(f"从 trade_state.json 恢复订单 ID 失败: {e}")
