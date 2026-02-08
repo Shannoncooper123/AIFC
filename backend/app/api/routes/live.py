@@ -44,11 +44,18 @@ def _ensure_live_engine_initialized():
     return live_engine
 
 
-def _get_live_engine():
-    """获取实盘交易引擎实例"""
+def _get_live_engine(raise_if_none: bool = True):
+    """获取实盘交易引擎实例
+
+    Args:
+        raise_if_none: 如果引擎未初始化是否抛出异常，默认 True
+
+    Returns:
+        引擎实例或 None
+    """
     from modules.agent.engine import get_engine
     engine = get_engine()
-    if engine is None:
+    if engine is None and raise_if_none:
         raise HTTPException(status_code=503, detail="交易引擎未初始化，请先启动引擎")
     return engine
 
@@ -75,20 +82,22 @@ async def update_trading_config(config: TradingConfigUpdate) -> Dict[str, Any]:
 async def get_positions(source: Optional[str] = Query(None, description="数据来源过滤: live/reverse")) -> Dict[str, Any]:
     """获取持仓列表"""
     try:
-        engine = _get_live_engine()
+        engine = _get_live_engine(raise_if_none=False)
+        if engine is None:
+            return {"positions": [], "total": 0, "engine_running": False}
+
         if source:
             positions = engine.get_positions_summary_by_source(source)
         else:
             positions = engine.get_positions_summary()
         return {
             "positions": positions,
-            "total": len(positions)
+            "total": len(positions),
+            "engine_running": True
         }
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"获取持仓失败: {e}")
-        return {"positions": [], "total": 0}
+        return {"positions": [], "total": 0, "engine_running": False}
 
 
 @router.delete("/positions/{record_id}")
@@ -118,20 +127,22 @@ async def close_positions_by_symbol(symbol: str, source: Optional[str] = None) -
 async def get_pending_orders(source: Optional[str] = Query(None, description="数据来源过滤: live/reverse")) -> Dict[str, Any]:
     """获取待触发订单（条件单和限价单）"""
     try:
-        engine = _get_live_engine()
+        engine = _get_live_engine(raise_if_none=False)
+        if engine is None:
+            return {"orders": [], "total": 0, "total_conditional": 0, "total_limit": 0, "engine_running": False}
+
         summary = engine.get_pending_orders_summary(source=source)
         all_orders = summary.get('conditional_orders', []) + summary.get('limit_orders', [])
         return {
             "orders": all_orders,
             "total": len(all_orders),
             "total_conditional": summary.get('total_conditional', 0),
-            "total_limit": summary.get('total_limit', 0)
+            "total_limit": summary.get('total_limit', 0),
+            "engine_running": True
         }
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"获取挂单失败: {e}")
-        return {"orders": [], "total": 0, "total_conditional": 0, "total_limit": 0}
+        return {"orders": [], "total": 0, "total_conditional": 0, "total_limit": 0, "engine_running": False}
 
 
 @router.delete("/pending-orders/{order_id}")
@@ -153,45 +164,54 @@ async def get_history(
 ) -> Dict[str, Any]:
     """获取交易历史"""
     try:
-        engine = _get_live_engine()
+        engine = _get_live_engine(raise_if_none=False)
+        if engine is None:
+            return {"history": [], "total": 0, "engine_running": False}
+
         if source:
             history = engine.get_history_by_source(source, limit)
         else:
             history = engine.get_history(limit)
         return {
             "history": history,
-            "total": len(history)
+            "total": len(history),
+            "engine_running": True
         }
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"获取历史失败: {e}")
-        return {"history": [], "total": 0}
+        return {"history": [], "total": 0, "engine_running": False}
 
 
 @router.get("/statistics")
 async def get_statistics(source: Optional[str] = Query(None, description="数据来源过滤: live/reverse")) -> Dict[str, Any]:
     """获取交易统计"""
+    empty_stats = {
+        "total_trades": 0,
+        "winning_trades": 0,
+        "losing_trades": 0,
+        "win_rate": 0.0,
+        "total_pnl": 0.0,
+        "avg_pnl": 0.0,
+        "max_profit": 0.0,
+        "max_loss": 0.0,
+        "open_count": 0,
+        "total_commission": 0.0,
+        "engine_running": False
+    }
     try:
-        engine = _get_live_engine()
+        engine = _get_live_engine(raise_if_none=False)
+        if engine is None:
+            return empty_stats
+
         if source:
-            return engine.get_statistics_by_source(source)
+            stats = engine.get_statistics_by_source(source)
         else:
-            return engine.get_statistics()
-    except HTTPException:
-        raise
+            stats = engine.get_statistics()
+        stats["engine_running"] = True
+        return stats
     except Exception as e:
         logger.error(f"获取统计失败: {e}")
-        return {
-            "total_trades": 0,
-            "winning_trades": 0,
-            "losing_trades": 0,
-            "win_rate": 0.0,
-            "total_pnl": 0.0,
-            "avg_pnl": 0.0,
-            "max_profit": 0.0,
-            "max_loss": 0.0
-        }
+        return empty_stats
 
 
 @router.get("/summary")

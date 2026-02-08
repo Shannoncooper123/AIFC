@@ -90,6 +90,7 @@ export interface LiveStatistics {
   max_loss: number;
   total_commission?: number;
   open_count?: number;
+  engine_running?: boolean;
 }
 
 export interface LiveSummary {
@@ -104,6 +105,7 @@ export interface LiveSummary {
 export interface LivePositionsResponse {
   positions: LivePosition[];
   total: number;
+  engine_running?: boolean;
 }
 
 export interface LivePendingOrdersResponse {
@@ -111,9 +113,11 @@ export interface LivePendingOrdersResponse {
   total: number;
   total_conditional: number;
   total_limit: number;
+  engine_running?: boolean;
 }
 
 export interface LiveHistoryResponse {
   history: LiveHistoryEntry[];
   total: number;
+  engine_running?: boolean;
 }

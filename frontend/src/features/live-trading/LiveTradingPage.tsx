@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Briefcase, Clock, History } from 'lucide-react';
+import { RefreshCw, Briefcase, Clock, History, AlertTriangle } from 'lucide-react';
 import {
   LiveConfigPanel,
   LivePositionsTable,
@@ -28,6 +28,7 @@ export function LiveTradingPage() {
   const [activeTab, setActiveTab] = useState<TabType>('positions');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [engineRunning, setEngineRunning] = useState<boolean | null>(null);
 
   const [positions, setPositions] = useState<LivePosition[]>([]);
   const [pendingOrders, setPendingOrders] = useState<LivePendingOrder[]>([]);
@@ -57,8 +58,12 @@ export function LiveTradingPage() {
       setPendingOrders(ordersRes.orders);
       setHistory(histRes.history);
       setStatistics(statsRes);
+
+      const isRunning = posRes.engine_running ?? statsRes.engine_running ?? true;
+      setEngineRunning(isRunning);
     } catch (err) {
       console.error('Failed to fetch live trading data:', err);
+      setEngineRunning(false);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -112,6 +117,22 @@ export function LiveTradingPage() {
           Refresh
         </button>
       </div>
+
+      {engineRunning === false && (
+        <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-yellow-500 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-yellow-500">
+                Trading Engine Not Running
+              </p>
+              <p className="text-xs text-yellow-500/70 mt-0.5">
+                The live trading engine is not started. Start a workflow to auto-initialize the engine, or start it manually from the backend.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <LiveConfigPanel onConfigChange={fetchData} />
 
