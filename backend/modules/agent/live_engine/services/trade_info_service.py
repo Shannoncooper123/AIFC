@@ -1,11 +1,15 @@
 """成交信息服务
 
-统一管理从 Binance API 获取成交记录（Trades）的逻辑。
+统一管理从 Binance API 获取订单成交信息的逻辑。
 
 职责：
-- 获取订单的成交记录
-- 计算成交汇总（加权平均价、手续费、已实现盈亏）
+- 通过 GET /fapi/v1/order 获取订单的平均成交价
+- 通过 GET /fapi/v1/userTrades 获取手续费和已实现盈亏（仅平仓时需要）
 - 提供开仓/平仓信息查询接口
+
+接口选择说明：
+- 平均成交价：使用 GET /fapi/v1/order (权重=1)，直接返回 avgPrice
+- 手续费/盈亏：使用 GET /fapi/v1/userTrades (权重=5)，仅在需要时调用
 """
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -53,7 +57,7 @@ class ExitInfo:
 class TradeInfoService:
     """成交信息服务
 
-    统一管理所有成交信息的获取和计算。
+    统一管理所有成交信息的获取。
     """
 
     def __init__(self, rest_client: 'BinanceRestClient'):
@@ -64,12 +68,35 @@ class TradeInfoService:
         """
         self.rest_client = rest_client
 
-    def fetch_trades_by_order_id(
-        self,
-        symbol: str,
-        order_id: int
-    ) -> List[Dict]:
+    def get_order_avg_price(self, symbol: str, order_id: int) -> Optional[float]:
+        """获取订单的平均成交价
+
+        使用 GET /fapi/v1/order 接口，权重=1，直接返回 avgPrice。
+
+        Args:
+            symbol: 交易对
+            order_id: Binance 订单 ID
+
+        Returns:
+            平均成交价，获取失败返回 None
+        """
+        try:
+            order_info = self.rest_client.get_order(symbol, order_id=order_id)
+            if order_info:
+                avg_price = float(order_info.get('avgPrice', 0) or 0)
+                if avg_price > 0:
+                    logger.debug(f"[TradeInfoService] 订单 {order_id} avgPrice={avg_price}")
+                    return avg_price
+            return None
+        except Exception as e:
+            logger.warning(f"[TradeInfoService] 获取订单失败: {symbol} orderId={order_id} error={e}")
+            return None
+
+    def fetch_trades_by_order_id(self, symbol: str, order_id: int) -> List[Dict]:
         """获取订单的原始成交记录
+
+        使用 GET /fapi/v1/userTrades 接口，权重=5。
+        仅在需要手续费和已实现盈亏时调用。
 
         Args:
             symbol: 交易对
@@ -82,55 +109,34 @@ class TradeInfoService:
             trades = self.rest_client.get_user_trades(symbol=symbol, order_id=order_id)
             return trades if trades else []
         except Exception as e:
-            logger.warning(f"[TradeInfoService] 获取成交失败: {symbol} orderId={order_id} error={e}")
+            logger.warning(f"[TradeInfoService] 获取成交记录失败: {symbol} orderId={order_id} error={e}")
             return []
 
-    def calculate_summary(self, trades: List[Dict]) -> TradeSummary:
-        """计算成交汇总
+    def calculate_commission_and_pnl(self, trades: List[Dict]) -> Dict[str, float]:
+        """从成交记录计算手续费和已实现盈亏
 
         Args:
             trades: 原始成交记录列表
 
         Returns:
-            成交汇总
+            {'commission': float, 'realized_pnl': float}
         """
         if not trades:
-            return TradeSummary(
-                avg_price=None,
-                total_qty=0.0,
-                total_commission=0.0,
-                realized_pnl=0.0
-            )
+            return {'commission': 0.0, 'realized_pnl': 0.0}
 
-        total_qty = sum(float(t.get('qty', 0)) for t in trades)
-        total_value = sum(float(t.get('price', 0)) * float(t.get('qty', 0)) for t in trades)
         total_commission = sum(float(t.get('commission', 0)) for t in trades)
         realized_pnl = sum(float(t.get('realizedPnl', 0)) for t in trades)
 
-        avg_price = total_value / total_qty if total_qty > 0 else None
-
-        return TradeSummary(
-            avg_price=avg_price,
-            total_qty=total_qty,
-            total_commission=total_commission,
-            realized_pnl=realized_pnl
-        )
-
-    def get_trade_summary(self, symbol: str, order_id: int) -> TradeSummary:
-        """获取订单的成交汇总
-
-        Args:
-            symbol: 交易对
-            order_id: Binance 订单 ID
-
-        Returns:
-            成交汇总
-        """
-        trades = self.fetch_trades_by_order_id(symbol, order_id)
-        return self.calculate_summary(trades)
+        return {
+            'commission': total_commission,
+            'realized_pnl': realized_pnl
+        }
 
     def get_entry_info(self, symbol: str, order_id: int) -> EntryInfo:
         """获取开仓信息
+
+        开仓时只需要平均成交价，手续费可选。
+        使用 GET /fapi/v1/order 获取 avgPrice (权重=1)。
 
         Args:
             symbol: 交易对
@@ -139,14 +145,25 @@ class TradeInfoService:
         Returns:
             开仓信息（价格、手续费）
         """
-        summary = self.get_trade_summary(symbol, order_id)
+        avg_price = self.get_order_avg_price(symbol, order_id)
+
+        commission = 0.0
+        trades = self.fetch_trades_by_order_id(symbol, order_id)
+        if trades:
+            fee_info = self.calculate_commission_and_pnl(trades)
+            commission = fee_info['commission']
+
         return EntryInfo(
-            avg_price=summary.avg_price,
-            commission=summary.total_commission
+            avg_price=avg_price,
+            commission=commission
         )
 
     def get_exit_info(self, symbol: str, order_id: int) -> ExitInfo:
         """获取平仓信息
+
+        平仓时需要平均成交价、手续费和已实现盈亏。
+        使用 GET /fapi/v1/order 获取 avgPrice (权重=1)，
+        使用 GET /fapi/v1/userTrades 获取手续费和盈亏 (权重=5)。
 
         Args:
             symbol: 交易对
@@ -155,9 +172,52 @@ class TradeInfoService:
         Returns:
             平仓信息（价格、手续费、已实现盈亏）
         """
-        summary = self.get_trade_summary(symbol, order_id)
+        close_price = self.get_order_avg_price(symbol, order_id)
+
+        exit_commission = 0.0
+        realized_pnl = 0.0
+
+        trades = self.fetch_trades_by_order_id(symbol, order_id)
+        if trades:
+            fee_info = self.calculate_commission_and_pnl(trades)
+            exit_commission = fee_info['commission']
+            realized_pnl = fee_info['realized_pnl']
+
         return ExitInfo(
-            close_price=summary.avg_price,
-            exit_commission=summary.total_commission,
-            realized_pnl=summary.realized_pnl
+            close_price=close_price,
+            exit_commission=exit_commission,
+            realized_pnl=realized_pnl
+        )
+
+    def get_trade_summary(self, symbol: str, order_id: int) -> TradeSummary:
+        """获取订单的完整成交汇总
+
+        同时获取平均成交价、成交量、手续费和已实现盈亏。
+
+        Args:
+            symbol: 交易对
+            order_id: Binance 订单 ID
+
+        Returns:
+            成交汇总
+        """
+        avg_price = self.get_order_avg_price(symbol, order_id)
+
+        trades = self.fetch_trades_by_order_id(symbol, order_id)
+        if not trades:
+            return TradeSummary(
+                avg_price=avg_price,
+                total_qty=0.0,
+                total_commission=0.0,
+                realized_pnl=0.0
+            )
+
+        total_qty = sum(float(t.get('qty', 0)) for t in trades)
+        fee_info = self.calculate_commission_and_pnl(trades)
+
+        return TradeSummary(
+            avg_price=avg_price,
+            total_qty=total_qty,
+            total_commission=fee_info['commission'],
+            realized_pnl=fee_info['realized_pnl']
         )

@@ -120,7 +120,7 @@ class TradeService:
         order_id = event.order_id
 
         filled_price = event.avg_price
-        if filled_price == 0:
+        if not filled_price or filled_price == 0:
             filled_price = pending_order.trigger_price
 
         logger.info(f"[TradeService] 📦 入场限价单成交: {symbol} orderId={order_id} price={filled_price}")
@@ -130,9 +130,14 @@ class TradeService:
             entry_info = self.position_manager.fetch_entry_info(symbol, order_id)
             if entry_info.get('avg_price') and entry_info['avg_price'] > 0:
                 filled_price = entry_info['avg_price']
-            entry_commission = entry_info.get('commission', 0)
+            entry_commission = entry_info.get('commission', 0) or 0
             if entry_commission > 0:
                 logger.info(f"[TradeService] 💰 开仓手续费: {entry_commission:.6f} USDT")
+
+        if not filled_price:
+            logger.error(f"[TradeService] ❌ 无法确定成交价格: {symbol}")
+            self.order_manager.remove_pending_order(pending_order.id)
+            return False
 
         self.position_manager._create_record(
             symbol=pending_order.symbol,
@@ -174,12 +179,19 @@ class TradeService:
             return False
 
         entry_info = self.position_manager.fetch_entry_info(symbol, triggered_order_id)
-        filled_price = entry_info.get('avg_price', 0)
-        entry_commission = entry_info.get('commission', 0)
+        filled_price = entry_info.get('avg_price')
+        entry_commission = entry_info.get('commission', 0) or 0
 
-        if filled_price == 0:
+        if filled_price and filled_price > 0:
+            logger.info(f"[TradeService] 📊 成交价: {filled_price} (来自 REST API)")
+        else:
             filled_price = pending_order.trigger_price
-            logger.warning(f"[TradeService] 无法获取成交价，使用触发价: {filled_price}")
+            logger.warning(f"[TradeService] ⚠️ REST API 无成交记录，使用触发价: {filled_price}")
+
+        if not filled_price:
+            logger.error(f"[TradeService] ❌ 无法确定成交价格: {symbol}")
+            self.order_manager.remove_pending_order(pending_order.id)
+            return False
 
         logger.info(f"[TradeService] 📦 入场条件单完成: {symbol} algoId={algo_id} "
                    f"price={filled_price} orderId={triggered_order_id} commission={entry_commission:.6f}")
