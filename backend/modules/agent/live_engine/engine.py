@@ -80,9 +80,10 @@ class BinanceLiveEngine:
 
         self.position_manager = PositionManager(
             order_executor=self.order_executor,
-            config=config,
             price_service=self.price_service,
+            trade_info_service=self.trade_info_service,
             rest_client=self.rest_client,
+            config=config,
             linked_order_repo=self.linked_order_repo,
             commission_service=self.commission_service
         )
