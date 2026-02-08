@@ -171,7 +171,7 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
               }
               min={1}
               max={10000}
-              step={10}
+              step={1}
               className="w-full px-4 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:border-blue-500 focus:outline-none"
             />
           </div>
