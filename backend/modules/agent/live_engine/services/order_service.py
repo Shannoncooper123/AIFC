@@ -643,6 +643,7 @@ class OrderService:
                 current_price = limit_price
 
             limit_price = ExchangeInfoCache.format_price(symbol, limit_price)
+            quantity = ExchangeInfoCache.format_quantity(symbol, quantity)
             tp_price = ExchangeInfoCache.format_price(symbol, tp_price) if tp_price else None
             sl_price = ExchangeInfoCache.format_price(symbol, sl_price) if sl_price else None
 
