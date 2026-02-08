@@ -30,12 +30,12 @@ def _validate_min_distance(symbol: str, entry_price: float, sl_dist: float, tp_d
             if min_dist > 0:
                 if sl_dist < min_dist:
                     return make_input_error(
-                        f"止损距离过近 ({sl_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止损距离，同时确保 R:R < 0.8（即亏损空间 > 盈利空间）以符合亏钱原则。",
+                        f"止损距离过近 ({sl_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止损距离以防止被噪音扫损，同时确保 R:R > 1.5（即盈利空间 > 亏损空间）。",
                         feedback
                     )
                 if tp_dist < min_dist:
                     return make_input_error(
-                        f"止盈距离过近 ({tp_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止盈距离，同时确保 R:R < 0.8（即亏损空间 > 盈利空间）以符合亏钱原则。",
+                        f"止盈距离过近 ({tp_dist:.4f})，小于 1.0倍ATR ({min_dist:.4f})。请扩大止盈距离以获取更大盈利空间，同时确保 R:R > 1.5（即盈利空间 > 亏损空间）。",
                         feedback
                     )
                 return None
@@ -77,12 +77,14 @@ def calc_metrics_tool(
     概要:
         - 市价模式：不传入 limit_price，自动获取 symbol 的最新价格作为入场价
         - 挂单模式：传入 limit_price，以此价格作为入场价计算
-        - 自动计算 R:R（风险回报率）
+        - 自动计算 R:R（风险回报率），R:R > 1.5 表示盈利空间大于亏损空间
 
     返回结构化字典，包含：
-        - inputs: 原始入参回显（含使用的 entry_price）
-        - metrics: entry_price, sl_distance, tp_distance, rr
-        - checks: sl_distance_pct（止损距离百分比）
+        - summary: 易读的计算结果摘要
+        - prices: 入场价、止盈价、止损价
+        - distances: 止盈/止损距离（绝对值和百分比）
+        - rr: 风险回报率（value 和 text）
+        - inputs: 原始入参回显
         - feedback: 原路返回的分析进度说明
     错误时返回 {"error": "...", "feedback": ...}
 
@@ -206,10 +208,6 @@ def calc_metrics_tool(
             "rr": {
                 "value": round(rr, 6),
                 "text": f"{rr:.2f}:1",
-            },
-            "checks": {
-                "rr_lt_1": rr < 1,
-                "rr_lt_0_8": rr < 0.8,
             },
             "inputs": {
                 "symbol": symbol,
