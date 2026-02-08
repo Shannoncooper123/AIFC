@@ -743,30 +743,42 @@ class OrderService:
         expiration_days: int,
         current_price: float
     ) -> Dict[str, Any]:
-        """下条件单（开仓）"""
+        """下条件单（开仓）
+        
+        使用 Binance Algo Order API 创建条件单。
+        
+        Binance 条件单触发规则：
+        - STOP_MARKET (BUY): 价格 >= trigger 时触发 → 触发价需在当前价上方
+        - STOP_MARKET (SELL): 价格 <= trigger 时触发 → 触发价需在当前价下方
+        - TAKE_PROFIT_MARKET (BUY): 价格 <= trigger 时触发 → 触发价需在当前价下方
+        - TAKE_PROFIT_MARKET (SELL): 价格 >= trigger 时触发 → 触发价需在当前价上方
+        """
         try:
             if side == 'BUY':
-                order_type = OrderType.STOP_MARKET.value if trigger_price > current_price else OrderType.TAKE_PROFIT_MARKET.value
+                order_type = 'STOP_MARKET' if trigger_price > current_price else 'TAKE_PROFIT_MARKET'
             else:
-                order_type = OrderType.STOP_MARKET.value if trigger_price < current_price else OrderType.TAKE_PROFIT_MARKET.value
+                order_type = 'STOP_MARKET' if trigger_price < current_price else 'TAKE_PROFIT_MARKET'
 
             from datetime import datetime, timedelta, timezone
             expire_time = datetime.now(timezone.utc) + timedelta(days=expiration_days)
             good_till_date = int(expire_time.timestamp() * 1000)
 
-            result = self.rest_client.place_order(
+            logger.info(f"[SmartOrder] 当前价格: {current_price}, 触发价: {trigger_price}")
+            logger.info(f"[SmartOrder] 条件单类型: {order_type} ({side} {position_side})")
+
+            result = self.rest_client.place_algo_order(
                 symbol=symbol,
                 side=side,
-                order_type=order_type,
+                algo_type='CONDITIONAL',
+                trigger_price=trigger_price,
                 quantity=quantity,
-                stop_price=trigger_price,
-                position_side=position_side,
-                time_in_force='GTD',
+                order_type='MARKET',
+                working_type='CONTRACT_PRICE',
                 good_till_date=good_till_date,
-                working_type='MARK_PRICE'
+                position_side=position_side
             )
 
-            algo_id = str(result.get('orderId'))
+            algo_id = str(result.get('algoId'))
 
             logger.info(f"[SmartOrder] ✅ 条件单创建成功: {symbol} {side} {order_type} @ {trigger_price} algoId={algo_id}")
 
