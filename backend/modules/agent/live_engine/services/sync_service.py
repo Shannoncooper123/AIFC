@@ -1,14 +1,13 @@
 """统一同步服务
 
-合并原 sync/ 目录下的所有同步器：
-- SyncManager → 定时同步调度
-- TPSLSyncer → TP/SL 订单状态同步
-- PositionSyncer → 持仓状态同步
+提供订单和持仓状态同步方法：
+- TP/SL 订单状态同步
+- 挂单状态同步
+- 持仓状态同步
 
-作为 WebSocket 事件的兜底机制，定期检查订单和持仓状态。
+注意：同步调度由 engine._periodic_sync_loop 负责（10秒间隔），
+本模块只提供同步方法，不自行管理线程。
 """
-import threading
-import time
 from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 
 from modules.agent.live_engine.core.models import RecordStatus
@@ -29,14 +28,13 @@ class SyncService:
     """统一同步服务
 
     职责：
-    - 定时同步调度（start/stop）
     - TP/SL 订单状态检查
+    - 挂单状态检查
     - 持仓状态检查
     - 支持按 source 过滤同步范围
-    """
 
-    SYNC_INTERVAL = 5
-    POSITION_SYNC_MULTIPLIER = 6
+    注意：同步调度由 engine._periodic_sync_loop 负责，本类只提供同步方法。
+    """
 
     def __init__(
         self,
@@ -61,74 +59,14 @@ class SyncService:
         self.position_manager = position_manager
         self.order_repository = order_repository
 
-        self._running = False
-        self._thread = None
-        self._source_filter: Optional[str] = None
-
-    def set_source_filter(self, source: Optional[str]):
-        """设置同步的来源过滤"""
-        self._source_filter = source
-        logger.info(f"[SyncService] 同步范围设置为: {source or '全部'}")
-
-    def start(self, source: Optional[str] = None):
-        """启动同步线程"""
-        if self._running:
-            logger.warning("[SyncService] 已在运行")
-            return
-
-        self._source_filter = source
-        self._running = True
-        self._thread = threading.Thread(target=self._sync_loop, daemon=True)
-        self._thread.start()
-
-        position_interval = self.SYNC_INTERVAL * self.POSITION_SYNC_MULTIPLIER
-        logger.info(f"[SyncService] 已启动 (同步间隔={self.SYNC_INTERVAL}s, "
-                   f"持仓同步间隔={position_interval}s, 范围={source or '全部'})")
-
-    def stop(self):
-        """停止同步线程"""
-        if not self._running:
-            return
-
-        self._running = False
-        if self._thread and self._thread.is_alive():
-            time.sleep(0.5)
-
-        logger.info("[SyncService] 已停止")
-
-    def _sync_loop(self):
-        """定时同步循环"""
-        position_sync_counter = 0
-
-        while self._running:
-            try:
-                time.sleep(self.SYNC_INTERVAL)
-
-                if not self._running:
-                    break
-
-                self.sync_tpsl_orders(source=self._source_filter)
-                self.sync_pending_orders(source=self._source_filter)
-
-                position_sync_counter += 1
-                if position_sync_counter >= self.POSITION_SYNC_MULTIPLIER:
-                    position_sync_counter = 0
-                    self.sync_positions(source=self._source_filter)
-
-            except Exception as e:
-                logger.error(f"[SyncService] 同步失败: {e}", exc_info=True)
-
-        logger.info("[SyncService] 同步线程已退出")
-
     def force_sync(self, source: Optional[str] = None):
         """强制立即执行一次完整同步"""
-        src = source if source is not None else self._source_filter
-        logger.info(f"[SyncService] 执行强制同步 (范围={src or '全部'})...")
+        logger.info(f"[SyncService] 执行强制同步 (范围={source or '全部'})...")
 
         try:
-            self.sync_tpsl_orders(source=src)
-            self.sync_pending_orders(source=src)
-            self.sync_positions(source=src)
+            self.sync_tpsl_orders(source=source)
+            self.sync_pending_orders(source=source)
+            self.sync_positions(source=source)
             logger.info("[SyncService] 强制同步完成")
         except Exception as e:
             logger.error(f"[SyncService] 强制同步失败: {e}")

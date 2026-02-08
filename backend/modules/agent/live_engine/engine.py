@@ -173,6 +173,11 @@ class BinanceLiveEngine:
                 logger.info("3. 同步 TP/SL 订单...")
                 self.position_manager.sync_tpsl_orders()
 
+                logger.info("3.1 同步挂单状态（清理已取消的订单）...")
+                cleaned = self.sync_service.sync_pending_orders()
+                if cleaned > 0:
+                    logger.info(f"已清理 {cleaned} 个已取消的挂单")
+
                 logger.info("4. 启动用户数据流...")
                 self.user_data_ws = BinanceUserDataWSClient(
                     self.config,
@@ -240,6 +245,7 @@ class BinanceLiveEngine:
                 self.account_service.sync_from_api()
 
                 self.sync_service.sync_tpsl_orders()
+                self.sync_service.sync_pending_orders()
 
                 active_symbols = self.position_manager.get_open_symbols()
                 cleaned = self.position_manager.cleanup_orphan_orders(active_symbols)
