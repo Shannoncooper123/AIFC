@@ -79,7 +79,7 @@ class OrderService:
             market_order = self.rest_client.place_order(
                 symbol=symbol,
                 side=order_side,
-                order_type='MARKET',
+                order_type=OrderType.MARKET.value,
                 quantity=quantity,
                 position_side=position_side
             )
@@ -96,7 +96,7 @@ class OrderService:
                 tp_order = self.rest_client.place_order(
                     symbol=symbol,
                     side=tp_side,
-                    order_type='TAKE_PROFIT_MARKET',
+                    order_type=OrderType.TAKE_PROFIT_MARKET.value,
                     stop_price=tp_price_formatted,
                     close_position=True,
                     working_type='MARK_PRICE',
@@ -756,16 +756,16 @@ class OrderService:
         """
         try:
             if side == 'BUY':
-                order_type = 'STOP_MARKET' if trigger_price > current_price else 'TAKE_PROFIT_MARKET'
+                order_type = OrderType.STOP_MARKET if trigger_price > current_price else OrderType.TAKE_PROFIT_MARKET
             else:
-                order_type = 'STOP_MARKET' if trigger_price < current_price else 'TAKE_PROFIT_MARKET'
+                order_type = OrderType.STOP_MARKET if trigger_price < current_price else OrderType.TAKE_PROFIT_MARKET
 
             from datetime import datetime, timedelta, timezone
             expire_time = datetime.now(timezone.utc) + timedelta(days=expiration_days)
             good_till_date = int(expire_time.timestamp() * 1000)
 
             logger.info(f"[SmartOrder] 当前价格: {current_price}, 触发价: {trigger_price}")
-            logger.info(f"[SmartOrder] 条件单类型: {order_type} ({side} {position_side})")
+            logger.info(f"[SmartOrder] 条件单类型: {order_type.value} ({side} {position_side})")
 
             result = self.rest_client.place_algo_order(
                 symbol=symbol,
@@ -773,7 +773,7 @@ class OrderService:
                 algo_type='CONDITIONAL',
                 trigger_price=trigger_price,
                 quantity=quantity,
-                order_type='MARKET',
+                order_type=order_type.value,
                 working_type='CONTRACT_PRICE',
                 good_till_date=good_till_date,
                 position_side=position_side
@@ -781,7 +781,7 @@ class OrderService:
 
             algo_id = str(result.get('algoId'))
 
-            logger.info(f"[SmartOrder] ✅ 条件单创建成功: {symbol} {side} {order_type} @ {trigger_price} algoId={algo_id}")
+            logger.info(f"[SmartOrder] ✅ 条件单创建成功: {symbol} {side} {order_type.value} @ {trigger_price} algoId={algo_id}")
 
             return {
                 'success': True,
@@ -795,7 +795,7 @@ class OrderService:
                 'sl_price': sl_price,
                 'source': source,
                 'position_side': position_side,
-                'order_type': order_type
+                'order_type': order_type.value
             }
 
         except Exception as e:
