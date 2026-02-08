@@ -398,6 +398,8 @@ class BinanceRestClient:
         # 使用更长的超时时间，下单操作可能需要更多时间
         order_timeout = max(self.timeout, 20)  # 至少20秒
         response = self.session.post(url, params=params, headers=self._get_headers(), timeout=order_timeout)
+        if not response.ok:
+            logger.error(f"[Order] API 错误: {response.status_code} - {response.text}")
         response.raise_for_status()
         return response.json()
     

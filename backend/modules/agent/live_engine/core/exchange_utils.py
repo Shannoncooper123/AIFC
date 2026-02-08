@@ -156,20 +156,33 @@ class ExchangeInfoCache:
 
     @classmethod
     def format_price(cls, symbol: str, price: float) -> float:
-        """格式化价格到正确精度"""
+        """格式化价格到正确精度
+        
+        使用 tickSize 或 pricePrecision 进行舍入。
+        """
         tick_size = cls._get_tick_size(symbol)
         if tick_size and tick_size > 0:
-            return float(Decimal(str(price)).quantize(Decimal(str(tick_size))))
+            price_filter = cls._get_filter(symbol, 'PRICE_FILTER')
+            tick_str = price_filter.get('tickSize', str(tick_size)) if price_filter else str(tick_size)
+            tick_decimal = Decimal(tick_str)
+            return float(Decimal(str(price)).quantize(tick_decimal))
 
         precision = cls._get_price_precision(symbol)
         return round(price, precision)
 
     @classmethod
     def format_quantity(cls, symbol: str, quantity: float) -> float:
-        """格式化数量到正确精度"""
+        """格式化数量到正确精度
+        
+        使用 stepSize 或 quantityPrecision 进行舍入。
+        注意：stepSize 可能是整数（如 '1'）需要正确处理。
+        """
         step_size = cls._get_step_size(symbol)
         if step_size and step_size > 0:
-            return float(Decimal(str(quantity)).quantize(Decimal(str(step_size))))
+            lot_filter = cls._get_filter(symbol, 'LOT_SIZE')
+            step_str = lot_filter.get('stepSize', '1') if lot_filter else str(step_size)
+            step_decimal = Decimal(step_str)
+            return float(Decimal(str(quantity)).quantize(step_decimal))
 
         precision = cls._get_quantity_precision(symbol)
         return round(quantity, precision)
