@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from modules.agent.trade_simulator.engine.limit_order_manager import LimitOrderManager
 from modules.agent.trade_simulator.models import Account, Position, PendingOrder
 from modules.backtest.engine.backtest_trade_engine import BacktestTradeEngine
+from modules.agent.engine import set_engine, reset_context_engine
+from modules.agent.tools.create_limit_order_tool import create_limit_order_tool
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('test.reverse_backtest')
@@ -310,118 +312,131 @@ class ReverseBacktestTester:
         
         engine.stop()
     
-    # ==================== 反向模式测试 ====================
+    # ==================== 反向模式测试（通过工具调用）====================
     
     def test_reverse_long_to_short(self):
-        """测试：反向模式-做多信号转做空
+        """测试：反向模式-做多信号转做空（通过工具调用）
         
-        场景：Agent发出做多信号，反向后应该做空
+        场景：Agent发出做多信号，工具自动反向为做空
         """
         engine = self._create_engine(reverse_mode=True)
-        
         engine.set_simulated_price("TESTUSDT", 0.15)
         
-        result = engine.create_limit_order(
-            symbol="TESTUSDT",
-            side="long",
-            limit_price=0.14,
-            tp_price=0.16,
-            sl_price=0.12
-        )
-        
-        order = list(engine.limit_order_manager.orders.values())[0]
-        
-        passed = (
-            order.side == "short" and
-            order.tp_price == 0.12 and
-            order.sl_price == 0.16
-        )
-        
-        self._log_result(TestResult(
-            name="反向模式-做多转做空",
-            passed=passed,
-            expected="方向=short, TP=0.12(原SL), SL=0.16(原TP)",
-            actual=f"方向={order.side}, TP={order.tp_price}, SL={order.sl_price}",
-            details="Agent做多 → 反向做空，TP/SL互换"
-        ))
-        
-        engine.stop()
+        token = set_engine(engine, thread_local=True)
+        try:
+            create_limit_order_tool.invoke({
+                'symbol': 'TESTUSDT',
+                'side': 'BUY',
+                'limit_price': 0.14,
+                'tp_price': 0.16,
+                'sl_price': 0.12
+            })
+            
+            order = list(engine.limit_order_manager.orders.values())[0]
+            
+            passed = (
+                order.side == "short" and
+                order.tp_price == 0.12 and
+                order.sl_price == 0.16
+            )
+            
+            self._log_result(TestResult(
+                name="反向模式-做多转做空",
+                passed=passed,
+                expected="方向=short, TP=0.12(原SL), SL=0.16(原TP)",
+                actual=f"方向={order.side}, TP={order.tp_price}, SL={order.sl_price}",
+                details="Agent做多 → 工具反向做空，TP/SL互换"
+            ))
+        finally:
+            reset_context_engine(token)
+            engine.stop()
     
     def test_reverse_short_to_long(self):
-        """测试：反向模式-做空信号转做多
+        """测试：反向模式-做空信号转做多（通过工具调用）
         
-        场景：Agent发出做空信号，反向后应该做多
+        场景：Agent发出做空信号，工具自动反向为做多
         """
         engine = self._create_engine(reverse_mode=True)
-        
         engine.set_simulated_price("TESTUSDT", 0.15)
         
-        result = engine.create_limit_order(
-            symbol="TESTUSDT",
-            side="short",
-            limit_price=0.16,
-            tp_price=0.14,
-            sl_price=0.18
-        )
-        
-        order = list(engine.limit_order_manager.orders.values())[0]
-        
-        passed = (
-            order.side == "long" and
-            order.tp_price == 0.18 and
-            order.sl_price == 0.14
-        )
-        
-        self._log_result(TestResult(
-            name="反向模式-做空转做多",
-            passed=passed,
-            expected="方向=long, TP=0.18(原SL), SL=0.14(原TP)",
-            actual=f"方向={order.side}, TP={order.tp_price}, SL={order.sl_price}",
-            details="Agent做空 → 反向做多，TP/SL互换"
-        ))
-        
-        engine.stop()
+        token = set_engine(engine, thread_local=True)
+        try:
+            create_limit_order_tool.invoke({
+                'symbol': 'TESTUSDT',
+                'side': 'SELL',
+                'limit_price': 0.16,
+                'tp_price': 0.14,
+                'sl_price': 0.18
+            })
+            
+            order = list(engine.limit_order_manager.orders.values())[0]
+            
+            passed = (
+                order.side == "long" and
+                order.tp_price == 0.18 and
+                order.sl_price == 0.14
+            )
+            
+            self._log_result(TestResult(
+                name="反向模式-做空转做多",
+                passed=passed,
+                expected="方向=long, TP=0.18(原SL), SL=0.14(原TP)",
+                actual=f"方向={order.side}, TP={order.tp_price}, SL={order.sl_price}",
+                details="Agent做空 → 工具反向做多，TP/SL互换"
+            ))
+        finally:
+            reset_context_engine(token)
+            engine.stop()
     
     def test_reverse_open_position(self):
-        """测试：反向模式-市价开仓
+        """测试：反向模式-限价单成交后开仓
         
-        场景：Agent发出做多市价开仓信号，反向后应该做空
+        场景：Agent做多限价单成交后，实际建立做空仓位
         """
         engine = self._create_engine(reverse_mode=True)
-        
         engine.set_simulated_price("TESTUSDT", 0.15)
         
-        result = engine.open_position(
-            symbol="TESTUSDT",
-            side="long",
-            quote_notional_usdt=1000.0,
-            leverage=10,
-            tp_price=0.18,
-            sl_price=0.12,
-            entry_price=0.15
-        )
-        
-        if "TESTUSDT" in engine.positions:
-            pos = engine.positions["TESTUSDT"]
-            passed = (
-                pos.side == "short" and
-                pos.tp_price == 0.12 and
-                pos.sl_price == 0.18
+        token = set_engine(engine, thread_local=True)
+        try:
+            create_limit_order_tool.invoke({
+                'symbol': 'TESTUSDT',
+                'side': 'BUY',
+                'limit_price': 0.16,
+                'tp_price': 0.18,
+                'sl_price': 0.12
+            })
+            
+            kline = TestKline(
+                timestamp=1000,
+                open=0.16,
+                high=0.165,
+                low=0.155,
+                close=0.16
             )
-            actual = f"方向={pos.side}, TP={pos.tp_price}, SL={pos.sl_price}"
-        else:
-            passed = False
-            actual = "未找到仓位"
-        
-        self._log_result(TestResult(
-            name="反向模式-市价开仓",
-            passed=passed,
-            expected="方向=short, TP=0.12(原SL), SL=0.18(原TP)",
-            actual=actual,
-            details="Agent做多市价 → 反向做空市价，TP/SL互换"
-        ))
-        
-        engine.stop()
+            engine.limit_order_manager.on_kline("TESTUSDT", kline.to_dict())
+            
+            if "TESTUSDT" in engine.positions:
+                pos = engine.positions["TESTUSDT"]
+                passed = (
+                    pos.side == "short" and
+                    pos.tp_price == 0.12 and
+                    pos.sl_price == 0.18
+                )
+                actual = f"方向={pos.side}, TP={pos.tp_price}, SL={pos.sl_price}"
+            else:
+                passed = False
+                actual = "未找到仓位"
+            
+            self._log_result(TestResult(
+                name="反向模式-市价开仓",
+                passed=passed,
+                expected="方向=short, TP=0.12(原SL), SL=0.18(原TP)",
+                actual=actual,
+                details="Agent做多 → 工具反向做空，限价单成交后建立空头仓位"
+            ))
+        finally:
+            reset_context_engine(token)
+            engine.stop()
     
     # ==================== 止盈止损测试 ====================
     
@@ -761,111 +776,113 @@ class ReverseBacktestTester:
         
         engine.stop()
     
-    # ==================== 完整反向交易流程测试 ====================
+    # ==================== 完整反向交易流程测试（通过工具调用）====================
     
     def test_reverse_complete_flow_profit(self):
-        """测试：反向模式完整流程 - 盈利场景
+        """测试：反向模式完整流程 - 盈利场景（通过工具调用）
         
         场景：
-        - Agent信号：做多 @ 0.15，TP=0.18，SL=0.12
-        - 反向后：做空 @ 0.15，TP=0.12(原SL)，SL=0.18(原TP)
-        - 价格下跌到 0.12 触发止盈
-        - 预期盈利：(0.15 - 0.12) / 0.15 * 杠杆 * 保证金
+        - Agent信号：做多限价 @ 0.15，TP=0.18，SL=0.12
+        - 工具反向后：做空限价 @ 0.15，TP=0.12(原SL)，SL=0.18(原TP)
+        - 限价单成交后，价格下跌到 0.12 触发止盈
         """
         engine = self._create_engine(reverse_mode=True)
-        
         engine.set_simulated_price("TESTUSDT", 0.15)
         
-        initial_balance = engine.account.balance
-        
-        result = engine.open_position(
-            symbol="TESTUSDT",
-            side="long",
-            quote_notional_usdt=1000.0,
-            leverage=10,
-            tp_price=0.18,
-            sl_price=0.12,
-            entry_price=0.15
-        )
-        
-        pos = engine.positions.get("TESTUSDT")
-        is_short = pos and pos.side == "short"
-        tp_is_012 = pos and pos.tp_price == 0.12
-        sl_is_018 = pos and pos.sl_price == 0.18
-        
-        close_result = engine.check_tp_sl_simple(
-            symbol="TESTUSDT",
-            high_price=0.14,
-            low_price=0.115
-        )
-        
-        is_tp = close_result and "止盈" in close_result.get("close_reason", "")
-        realized_pnl = close_result.get("realized_pnl", 0) if close_result else 0
-        
-        expected_pnl = 1000.0 * (0.15 - 0.12) / 0.15
-        pnl_correct = abs(realized_pnl - expected_pnl) < 1.0
-        
-        passed = is_short and tp_is_012 and sl_is_018 and is_tp and pnl_correct
-        
-        self._log_result(TestResult(
-            name="反向完整流程-盈利",
-            passed=passed,
-            expected=f"做空仓位，TP=0.12触发止盈，盈利≈{expected_pnl:.2f}",
-            actual=f"方向={'short' if is_short else 'long'}, TP={pos.tp_price if pos else None}, "
-                   f"{'止盈' if is_tp else '未触发'}, PnL={realized_pnl:.2f}",
-            details="Agent做多被反向为做空，价格下跌后触发止盈"
-        ))
-        
-        engine.stop()
+        token = set_engine(engine, thread_local=True)
+        try:
+            create_limit_order_tool.invoke({
+                'symbol': 'TESTUSDT',
+                'side': 'BUY',
+                'limit_price': 0.15,
+                'tp_price': 0.18,
+                'sl_price': 0.12
+            })
+            
+            kline_fill = TestKline(timestamp=1000, open=0.15, high=0.155, low=0.145, close=0.15)
+            engine.limit_order_manager.on_kline("TESTUSDT", kline_fill.to_dict())
+            
+            pos = engine.positions.get("TESTUSDT")
+            is_short = pos and pos.side == "short"
+            tp_is_012 = pos and pos.tp_price == 0.12
+            sl_is_018 = pos and pos.sl_price == 0.18
+            
+            close_result = engine.check_tp_sl_simple(
+                symbol="TESTUSDT",
+                high_price=0.14,
+                low_price=0.115
+            )
+            
+            is_tp = close_result and "止盈" in close_result.get("close_reason", "")
+            realized_pnl = close_result.get("realized_pnl", 0) if close_result else 0
+            
+            expected_pnl = 1000.0 * (0.15 - 0.12) / 0.15
+            pnl_correct = abs(realized_pnl - expected_pnl) < 1.0
+            
+            passed = is_short and tp_is_012 and sl_is_018 and is_tp and pnl_correct
+            
+            self._log_result(TestResult(
+                name="反向完整流程-盈利",
+                passed=passed,
+                expected=f"做空仓位，TP=0.12触发止盈，盈利≈{expected_pnl:.2f}",
+                actual=f"方向={'short' if is_short else 'long'}, TP={pos.tp_price if pos else None}, "
+                       f"{'止盈' if is_tp else '未触发'}, PnL={realized_pnl:.2f}",
+                details="Agent做多 → 工具反向做空，价格下跌后触发止盈"
+            ))
+        finally:
+            reset_context_engine(token)
+            engine.stop()
     
     def test_reverse_complete_flow_loss(self):
-        """测试：反向模式完整流程 - 亏损场景
+        """测试：反向模式完整流程 - 亏损场景（通过工具调用）
         
         场景：
-        - Agent信号：做多 @ 0.15，TP=0.18，SL=0.12
-        - 反向后：做空 @ 0.15，TP=0.12(原SL)，SL=0.18(原TP)
-        - 价格上涨到 0.18 触发止损
-        - 预期亏损：(0.18 - 0.15) / 0.15 * 杠杆 * 保证金
+        - Agent信号：做多限价 @ 0.15，TP=0.18，SL=0.12
+        - 工具反向后：做空限价 @ 0.15，TP=0.12(原SL)，SL=0.18(原TP)
+        - 限价单成交后，价格上涨到 0.18 触发止损
         """
         engine = self._create_engine(reverse_mode=True)
-        
         engine.set_simulated_price("TESTUSDT", 0.15)
         
-        result = engine.open_position(
-            symbol="TESTUSDT",
-            side="long",
-            quote_notional_usdt=1000.0,
-            leverage=10,
-            tp_price=0.18,
-            sl_price=0.12,
-            entry_price=0.15
-        )
-        
-        pos = engine.positions.get("TESTUSDT")
-        
-        close_result = engine.check_tp_sl_simple(
-            symbol="TESTUSDT",
-            high_price=0.185,
-            low_price=0.16
-        )
-        
-        is_sl = close_result and "止损" in close_result.get("close_reason", "")
-        realized_pnl = close_result.get("realized_pnl", 0) if close_result else 0
-        
-        expected_pnl = -1000.0 * (0.18 - 0.15) / 0.15
-        pnl_correct = abs(realized_pnl - expected_pnl) < 1.0
-        
-        passed = is_sl and pnl_correct
-        
-        self._log_result(TestResult(
-            name="反向完整流程-亏损",
-            passed=passed,
-            expected=f"触发止损，亏损≈{expected_pnl:.2f}",
-            actual=f"{'止损' if is_sl else '未触发'}, PnL={realized_pnl:.2f}",
-            details="Agent做多被反向为做空，价格上涨后触发止损"
-        ))
-        
-        engine.stop()
+        token = set_engine(engine, thread_local=True)
+        try:
+            create_limit_order_tool.invoke({
+                'symbol': 'TESTUSDT',
+                'side': 'BUY',
+                'limit_price': 0.15,
+                'tp_price': 0.18,
+                'sl_price': 0.12
+            })
+            
+            kline_fill = TestKline(timestamp=1000, open=0.15, high=0.155, low=0.145, close=0.15)
+            engine.limit_order_manager.on_kline("TESTUSDT", kline_fill.to_dict())
+            
+            pos = engine.positions.get("TESTUSDT")
+            
+            close_result = engine.check_tp_sl_simple(
+                symbol="TESTUSDT",
+                high_price=0.185,
+                low_price=0.16
+            )
+            
+            is_sl = close_result and "止损" in close_result.get("close_reason", "")
+            realized_pnl = close_result.get("realized_pnl", 0) if close_result else 0
+            
+            expected_pnl = -1000.0 * (0.18 - 0.15) / 0.15
+            pnl_correct = abs(realized_pnl - expected_pnl) < 1.0
+            
+            passed = is_sl and pnl_correct
+            
+            self._log_result(TestResult(
+                name="反向完整流程-亏损",
+                passed=passed,
+                expected=f"触发止损，亏损≈{expected_pnl:.2f}",
+                actual=f"{'止损' if is_sl else '未触发'}, PnL={realized_pnl:.2f}",
+                details="Agent做多 → 工具反向做空，价格上涨后触发止损"
+            ))
+        finally:
+            reset_context_engine(token)
+            engine.stop()
     
     # ==================== 非反向模式对照测试 ====================
     

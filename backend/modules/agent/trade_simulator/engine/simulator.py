@@ -218,26 +218,29 @@ class TradeSimulatorEngine:
     
     def create_limit_order(self, symbol: str, side: str, limit_price: float,
                           tp_price: Optional[float] = None, sl_price: Optional[float] = None,
-                          source: str = 'backtest', agent_side: Optional[str] = None) -> Dict[str, Any]:
-        """创建限价单（信号模式）
+                          source: str = 'backtest', agent_side: Optional[str] = None,
+                          order_kind: str = 'LIMIT') -> Dict[str, Any]:
+        """创建限价单/条件单（信号模式）
         
         Agent 只提供开仓信号，实际金额和杠杆由配置决定。
         
         Args:
             symbol: 交易对
             side: 方向（long/short）
-            limit_price: 挂单价格
+            limit_price: 挂单/触发价格
             tp_price: 止盈价
             sl_price: 止损价
-            source: 来源（backtest/live/reverse），回测模式下忽略
-            agent_side: Agent 原始方向（用于反向模式记录），回测模式下忽略
+            source: 来源（backtest/live/reverse）
+            agent_side: Agent 原始方向（用于反向模式记录）
+            order_kind: 订单类型 "LIMIT"(Maker) 或 "CONDITIONAL"(Taker)
         """
         trading_cfg = self._get_trading_config()
         margin_usdt = trading_cfg['fixed_margin_usdt']
         leverage = trading_cfg['max_leverage']
         
         result = self.limit_order_manager.create_limit_order(
-            symbol, side, limit_price, margin_usdt, leverage, tp_price, sl_price
+            symbol, side, limit_price, margin_usdt, leverage, tp_price, sl_price,
+            order_kind=order_kind
         )
 
         if 'error' not in result:

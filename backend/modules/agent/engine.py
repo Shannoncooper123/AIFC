@@ -124,8 +124,15 @@ def ensure_engine(config: Dict[str, Any]) -> EngineProtocol:
 def is_reverse_enabled() -> bool:
     """检查是否启用了反向交易模式
     
+    优先从当前上下文引擎获取（支持回测模式），
+    否则从实盘配置获取。
+    
     Returns:
         是否启用反向交易
     """
+    engine = get_engine()
+    if engine is not None and hasattr(engine, 'reverse_mode'):
+        return engine.reverse_mode
+    
     from modules.agent.live_engine.config import get_trading_config_manager
     return get_trading_config_manager().reverse_enabled

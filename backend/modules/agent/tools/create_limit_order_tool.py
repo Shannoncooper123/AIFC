@@ -124,6 +124,29 @@ def create_limit_order_tool(
         else:
             logger.info(f"create_limit_order: {symbol} {side_lower} @ {limit_price}")
         
+        current_price = None
+        if hasattr(eng, 'get_simulated_price'):
+            current_price = eng.get_simulated_price(symbol)
+        elif hasattr(eng, 'price_service'):
+            current_price = eng.price_service.get_last_price(symbol)
+        
+        order_kind = 'LIMIT'
+        if current_price and current_price > 0:
+            if final_side == 'long':
+                if current_price > limit_price:
+                    order_kind = 'LIMIT'
+                    logger.info(f"[智能下单] 当前价 {current_price:.6f} > 触发价 {limit_price:.6f} → 限价单 (Maker)")
+                else:
+                    order_kind = 'CONDITIONAL'
+                    logger.info(f"[智能下单] 当前价 {current_price:.6f} <= 触发价 {limit_price:.6f} → 条件单 (Taker)")
+            else:
+                if current_price < limit_price:
+                    order_kind = 'LIMIT'
+                    logger.info(f"[智能下单] 当前价 {current_price:.6f} < 触发价 {limit_price:.6f} → 限价单 (Maker)")
+                else:
+                    order_kind = 'CONDITIONAL'
+                    logger.info(f"[智能下单] 当前价 {current_price:.6f} >= 触发价 {limit_price:.6f} → 条件单 (Taker)")
+        
         res = eng.create_limit_order(
             symbol=symbol,
             side=final_side,
@@ -131,7 +154,8 @@ def create_limit_order_tool(
             tp_price=final_tp,
             sl_price=final_sl,
             source=source,
-            agent_side=agent_side
+            agent_side=agent_side,
+            order_kind=order_kind
         )
         
         if isinstance(res, dict) and 'error' in res:

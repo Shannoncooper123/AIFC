@@ -8,13 +8,23 @@ from typing import Dict, Optional
 
 @dataclass
 class PendingOrder:
-    """限价单模型"""
+    """限价单/条件单模型
+    
+    order_kind 说明：
+    - LIMIT: 限价单 (Maker)，价格需要回撤到触发价才成交
+        - 做多: 当前价 > 触发价，等价格下跌到触发价
+        - 做空: 当前价 < 触发价，等价格上涨到触发价
+    - CONDITIONAL: 条件单 (Taker)，价格突破触发价时成交
+        - 做多: 当前价 <= 触发价，等价格上涨到触发价
+        - 做空: 当前价 >= 触发价，等价格下跌到触发价
+    """
     id: str
     symbol: str
     side: str  # "long" or "short"
-    order_type: str = "limit"  # 固定为 "limit"
-    limit_price: float = 0.0  # 挂单价格
-    margin_usdt: float = 0.0  # 保证金金额（用户输入）
+    order_type: str = "limit"  # 保留兼容性
+    order_kind: str = "LIMIT"  # "LIMIT" (Maker) 或 "CONDITIONAL" (Taker)
+    limit_price: float = 0.0  # 挂单/触发价格
+    margin_usdt: float = 0.0  # 保证金金额
     leverage: int = 10  # 杠杆倍数
     tp_price: Optional[float] = None
     sl_price: Optional[float] = None

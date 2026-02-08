@@ -56,18 +56,20 @@ class LimitOrderManager:
         margin_usdt: float,
         leverage: int,
         tp_price: Optional[float] = None,
-        sl_price: Optional[float] = None
+        sl_price: Optional[float] = None,
+        order_kind: str = "LIMIT"
     ) -> Dict[str, Any]:
-        """创建限价单
+        """创建限价单/条件单
         
         Args:
             symbol: 交易对
             side: 方向（long/short）
-            limit_price: 挂单价格
+            limit_price: 挂单/触发价格
             margin_usdt: 保证金金额
             leverage: 杠杆倍数
             tp_price: 止盈价
             sl_price: 止损价
+            order_kind: 订单类型 "LIMIT"(Maker) 或 "CONDITIONAL"(Taker)
             
         Returns:
             订单信息字典或错误字典
@@ -77,9 +79,11 @@ class LimitOrderManager:
         """
         run_id = get_current_workflow_run_id()
         with self.lock:
+            order_type_cn = "条件单" if order_kind == "CONDITIONAL" else "限价单"
             logger.info(
                 f"create_limit_order: symbol={symbol}, side={side}, "
-                f"limit_price={limit_price}, margin={margin_usdt}, leverage={leverage}"
+                f"limit_price={limit_price}, margin={margin_usdt}, leverage={leverage}, "
+                f"order_kind={order_kind} ({order_type_cn})"
             )
 
             # 参数校验
@@ -118,6 +122,7 @@ class LimitOrderManager:
                 symbol=symbol,
                 side=side,
                 order_type="limit",
+                order_kind=order_kind,
                 limit_price=limit_price,
                 margin_usdt=margin_usdt,
                 leverage=leverage,
@@ -131,8 +136,8 @@ class LimitOrderManager:
             self.orders[order_id] = order
 
             logger.info(
-                f"create_limit_order: 限价单已创建 id={order_id}, "
-                f"symbol={symbol}, side={side}, limit_price={limit_price}"
+                f"create_limit_order: {order_type_cn}已创建 id={order_id}, "
+                f"symbol={symbol}, side={side}, limit_price={limit_price}, kind={order_kind}"
             )
 
             return self._order_to_dict(order)
@@ -212,15 +217,23 @@ class LimitOrderManager:
             }
 
     def on_kline(self, symbol: str, kline_data: Dict[str, Any]) -> None:
-        """K线回调：检查限价单是否触发成交
+        """K线回调：检查限价单/条件单是否触发成交
         
-        限价单成交逻辑：
-        - 做多限价单：当 low <= limit_price 时触发
-          - 如果 open <= limit_price（限价高于市价），以 open 成交（立即吃单）
-          - 否则以 limit_price 成交（等到价格回落）
-        - 做空限价单：当 high >= limit_price 时触发
-          - 如果 open >= limit_price（限价低于市价），以 open 成交（立即吃单）
-          - 否则以 limit_price 成交（等到价格上涨）
+        限价单 (LIMIT/Maker) 成交逻辑 - 等待价格回撤：
+        - 做多: 当 low <= limit_price 时触发
+          - 如果 open <= limit_price，以 open 成交
+          - 否则以 limit_price 成交
+        - 做空: 当 high >= limit_price 时触发
+          - 如果 open >= limit_price，以 open 成交
+          - 否则以 limit_price 成交
+        
+        条件单 (CONDITIONAL/Taker) 成交逻辑 - 等待价格突破：
+        - 做多: 当 high >= trigger_price 时触发
+          - 如果 open >= trigger_price，以 open 成交
+          - 否则以 trigger_price 成交
+        - 做空: 当 low <= trigger_price 时触发
+          - 如果 open <= trigger_price，以 open 成交
+          - 否则以 trigger_price 成交
         
         Args:
             symbol: 交易对
@@ -244,47 +257,86 @@ class LimitOrderManager:
                 for order in pending_orders:
                     filled = False
                     filled_price = None
+                    order_kind = getattr(order, 'order_kind', 'LIMIT')
+                    is_conditional = order_kind == 'CONDITIONAL'
+                    kind_label = "条件单" if is_conditional else "限价单"
 
                     if order.side == "long":
-                        if low <= order.limit_price:
-                            filled = True
-                            if open_price > 0 and open_price <= order.limit_price:
-                                filled_price = open_price
-                                logger.info(
-                                    f"on_kline: LONG限价单立即成交 symbol={symbol}, "
-                                    f"open={open_price:.6f} <= limit={order.limit_price:.6f}, "
-                                    f"成交价={filled_price:.6f}"
-                                )
-                            else:
-                                filled_price = order.limit_price
-                                logger.info(
-                                    f"on_kline: LONG限价单触发成交 symbol={symbol}, "
-                                    f"low={low:.6f} <= limit={order.limit_price:.6f}, "
-                                    f"成交价={filled_price:.6f}"
-                                )
+                        if is_conditional:
+                            if high >= order.limit_price:
+                                filled = True
+                                if open_price > 0 and open_price >= order.limit_price:
+                                    filled_price = open_price
+                                    logger.info(
+                                        f"on_kline: LONG{kind_label}立即突破 symbol={symbol}, "
+                                        f"open={open_price:.6f} >= trigger={order.limit_price:.6f}, "
+                                        f"成交价={filled_price:.6f}"
+                                    )
+                                else:
+                                    filled_price = order.limit_price
+                                    logger.info(
+                                        f"on_kline: LONG{kind_label}突破触发 symbol={symbol}, "
+                                        f"high={high:.6f} >= trigger={order.limit_price:.6f}, "
+                                        f"成交价={filled_price:.6f}"
+                                    )
+                        else:
+                            if low <= order.limit_price:
+                                filled = True
+                                if open_price > 0 and open_price <= order.limit_price:
+                                    filled_price = open_price
+                                    logger.info(
+                                        f"on_kline: LONG{kind_label}立即成交 symbol={symbol}, "
+                                        f"open={open_price:.6f} <= limit={order.limit_price:.6f}, "
+                                        f"成交价={filled_price:.6f}"
+                                    )
+                                else:
+                                    filled_price = order.limit_price
+                                    logger.info(
+                                        f"on_kline: LONG{kind_label}触发成交 symbol={symbol}, "
+                                        f"low={low:.6f} <= limit={order.limit_price:.6f}, "
+                                        f"成交价={filled_price:.6f}"
+                                    )
                     else:  # short
-                        if high >= order.limit_price:
-                            filled = True
-                            if open_price > 0 and open_price >= order.limit_price:
-                                filled_price = open_price
-                                logger.info(
-                                    f"on_kline: SHORT限价单立即成交 symbol={symbol}, "
-                                    f"open={open_price:.6f} >= limit={order.limit_price:.6f}, "
-                                    f"成交价={filled_price:.6f}"
-                                )
-                            else:
-                                filled_price = order.limit_price
-                                logger.info(
-                                    f"on_kline: SHORT限价单触发成交 symbol={symbol}, "
-                                    f"high={high:.6f} >= limit={order.limit_price:.6f}, "
-                                    f"成交价={filled_price:.6f}"
-                                )
+                        if is_conditional:
+                            if low <= order.limit_price:
+                                filled = True
+                                if open_price > 0 and open_price <= order.limit_price:
+                                    filled_price = open_price
+                                    logger.info(
+                                        f"on_kline: SHORT{kind_label}立即突破 symbol={symbol}, "
+                                        f"open={open_price:.6f} <= trigger={order.limit_price:.6f}, "
+                                        f"成交价={filled_price:.6f}"
+                                    )
+                                else:
+                                    filled_price = order.limit_price
+                                    logger.info(
+                                        f"on_kline: SHORT{kind_label}突破触发 symbol={symbol}, "
+                                        f"low={low:.6f} <= trigger={order.limit_price:.6f}, "
+                                        f"成交价={filled_price:.6f}"
+                                    )
+                        else:
+                            if high >= order.limit_price:
+                                filled = True
+                                if open_price > 0 and open_price >= order.limit_price:
+                                    filled_price = open_price
+                                    logger.info(
+                                        f"on_kline: SHORT{kind_label}立即成交 symbol={symbol}, "
+                                        f"open={open_price:.6f} >= limit={order.limit_price:.6f}, "
+                                        f"成交价={filled_price:.6f}"
+                                    )
+                                else:
+                                    filled_price = order.limit_price
+                                    logger.info(
+                                        f"on_kline: SHORT{kind_label}触发成交 symbol={symbol}, "
+                                        f"high={high:.6f} >= limit={order.limit_price:.6f}, "
+                                        f"成交价={filled_price:.6f}"
+                                    )
 
                     if filled:
                         self._fill_order(order, filled_price)
 
         except Exception as e:
-            logger.error(f"on_kline 限价单检查错误: {e}", exc_info=True)
+            logger.error(f"on_kline 订单检查错误: {e}", exc_info=True)
 
     def _fill_order(self, order: PendingOrder, filled_price: float) -> None:
         """执行限价单成交
@@ -362,6 +414,7 @@ class LimitOrderManager:
             'symbol': order.symbol,
             'side': order.side,
             'order_type': order.order_type,
+            'order_kind': getattr(order, 'order_kind', 'LIMIT'),
             'limit_price': round(order.limit_price, 8),
             'margin_usdt': round(order.margin_usdt, 2),
             'leverage': order.leverage,
