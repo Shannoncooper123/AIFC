@@ -217,12 +217,22 @@ async def get_statistics(source: Optional[str] = Query(None, description="数据
 @router.get("/summary")
 async def get_summary() -> Dict[str, Any]:
     """获取实盘交易汇总信息"""
-    try:
-        engine = _get_live_engine()
-        from modules.agent.live_engine.config import get_trading_config_manager
-        config_mgr = get_trading_config_manager()
+    from modules.agent.live_engine.config import get_trading_config_manager
+    config_mgr = get_trading_config_manager()
 
-        open_records = engine.record_service.get_open_records()
+    try:
+        engine = _get_live_engine(raise_if_none=False)
+        if engine is None:
+            return {
+                "engine_running": False,
+                "reverse_enabled": config_mgr.reverse_enabled,
+                "config": config_mgr.get_dict(),
+                "pending_orders_count": 0,
+                "positions_count": 0,
+                "statistics": {}
+            }
+
+        open_records = engine.position_manager.get_open_records()
         pending_summary = engine.get_pending_orders_summary()
 
         return {
@@ -233,8 +243,6 @@ async def get_summary() -> Dict[str, Any]:
             "positions_count": len(open_records),
             "statistics": engine.get_statistics()
         }
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"获取汇总失败: {e}")
         from modules.agent.live_engine.config import get_trading_config_manager
