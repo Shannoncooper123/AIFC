@@ -43,6 +43,7 @@ export function BacktestPage() {
           concurrency: config.concurrency,
           fixed_margin_usdt: config.fixedMarginUsdt,
           fixed_leverage: config.fixedLeverage,
+          reverse_mode: config.reverseMode,
         });
         setSelectedBacktestId(result.backtest_id);
       } catch (error) {

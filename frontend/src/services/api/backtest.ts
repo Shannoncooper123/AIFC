@@ -9,6 +9,7 @@ export interface BacktestStartRequest {
   concurrency: number;
   fixed_margin_usdt: number;
   fixed_leverage: number;
+  reverse_mode: boolean;
 }
 
 export interface BacktestStartResponse {
@@ -85,6 +86,7 @@ export interface BacktestResult {
     interval: string;
     initial_balance: number;
     concurrency: number;
+    reverse_mode?: boolean;
   };
   status: string;
   start_timestamp: string;
@@ -118,6 +120,7 @@ export interface BacktestListItem {
     end_time: string;
     interval: string;
     initial_balance: number;
+    reverse_mode?: boolean;
   };
   start_timestamp: string;
   end_timestamp?: string;

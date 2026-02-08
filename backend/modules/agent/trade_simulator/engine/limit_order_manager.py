@@ -214,13 +214,20 @@ class LimitOrderManager:
     def on_kline(self, symbol: str, kline_data: Dict[str, Any]) -> None:
         """K线回调：检查限价单是否触发成交
         
+        限价单成交逻辑：
+        - 做多限价单：当 low <= limit_price 时触发
+          - 如果 open <= limit_price（限价高于市价），以 open 成交（立即吃单）
+          - 否则以 limit_price 成交（等到价格回落）
+        - 做空限价单：当 high >= limit_price 时触发
+          - 如果 open >= limit_price（限价低于市价），以 open 成交（立即吃单）
+          - 否则以 limit_price 成交（等到价格上涨）
+        
         Args:
             symbol: 交易对
             kline_data: K线数据字典
         """
         try:
             with self.lock:
-                # 查找该symbol的所有pending订单
                 pending_orders = [
                     order for order in self.orders.values()
                     if order.symbol == symbol and order.status == "pending"
@@ -229,37 +236,51 @@ class LimitOrderManager:
                 if not pending_orders:
                     return
 
-                # 提取K线价格
+                open_price = float(kline_data.get('o', 0))
                 high = float(kline_data.get('h', 0))
                 low = float(kline_data.get('l', 0))
                 close = float(kline_data.get('c', 0))
 
-                # 检查每个订单是否成交
                 for order in pending_orders:
                     filled = False
                     filled_price = None
 
                     if order.side == "long":
-                        # 多头限价单：价格下探到挂单价或以下时成交
                         if low <= order.limit_price:
                             filled = True
-                            filled_price = order.limit_price
-                            logger.info(
-                                f"on_kline: LONG限价单触发成交 symbol={symbol}, "
-                                f"low={low:.6f} <= limit={order.limit_price:.6f}"
-                            )
+                            if open_price > 0 and open_price <= order.limit_price:
+                                filled_price = open_price
+                                logger.info(
+                                    f"on_kline: LONG限价单立即成交 symbol={symbol}, "
+                                    f"open={open_price:.6f} <= limit={order.limit_price:.6f}, "
+                                    f"成交价={filled_price:.6f}"
+                                )
+                            else:
+                                filled_price = order.limit_price
+                                logger.info(
+                                    f"on_kline: LONG限价单触发成交 symbol={symbol}, "
+                                    f"low={low:.6f} <= limit={order.limit_price:.6f}, "
+                                    f"成交价={filled_price:.6f}"
+                                )
                     else:  # short
-                        # 空头限价单：价格上涨到挂单价或以上时成交
                         if high >= order.limit_price:
                             filled = True
-                            filled_price = order.limit_price
-                            logger.info(
-                                f"on_kline: SHORT限价单触发成交 symbol={symbol}, "
-                                f"high={high:.6f} >= limit={order.limit_price:.6f}"
-                            )
+                            if open_price > 0 and open_price >= order.limit_price:
+                                filled_price = open_price
+                                logger.info(
+                                    f"on_kline: SHORT限价单立即成交 symbol={symbol}, "
+                                    f"open={open_price:.6f} >= limit={order.limit_price:.6f}, "
+                                    f"成交价={filled_price:.6f}"
+                                )
+                            else:
+                                filled_price = order.limit_price
+                                logger.info(
+                                    f"on_kline: SHORT限价单触发成交 symbol={symbol}, "
+                                    f"high={high:.6f} >= limit={order.limit_price:.6f}, "
+                                    f"成交价={filled_price:.6f}"
+                                )
 
                     if filled:
-                        # 执行成交：调用position_manager开仓
                         self._fill_order(order, filled_price)
 
         except Exception as e:

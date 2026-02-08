@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, Calendar, DollarSign, Clock, Cpu, TrendingUp } from 'lucide-react';
+import { Play, Calendar, DollarSign, Clock, Cpu, TrendingUp, RefreshCw } from 'lucide-react';
 import { Button, Card } from '../../../components/ui';
 
 interface BacktestConfigProps {
@@ -17,6 +17,7 @@ export interface BacktestConfigData {
   concurrency: number;
   fixedMarginUsdt: number;
   fixedLeverage: number;
+  reverseMode: boolean;
 }
 
 const AVAILABLE_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'DOGEUSDT', 'LTCUSDT', 'SOLUSDT', 'XRPUSDT','1000PEPEUSDT'];
@@ -31,6 +32,7 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
     concurrency: 5,
     fixedMarginUsdt: 50,
     fixedLeverage: 10,
+    reverseMode: false,
   });
 
   function toUTCDatetimeLocal(date: Date): string {
@@ -195,26 +197,52 @@ export function BacktestConfig({ onStart, isLoading, disabled }: BacktestConfigP
           </div>
         </div>
 
-        <div>
-          <label className="block text-sm text-neutral-400 mb-2">
-            <Cpu className="inline h-4 w-4 mr-1" />
-            Concurrency
-          </label>
-          <div className="flex items-center gap-4">
-            <input
-              type="range"
-              value={config.concurrency}
-              onChange={(e) =>
-                setConfig((prev) => ({ ...prev, concurrency: parseInt(e.target.value, 10) }))
-              }
-              min={1}
-              max={50}
-              step={1}
-              className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-neutral-800 border border-neutral-700 accent-blue-500"
-            />
-            <span className="min-w-[2rem] text-center text-white font-medium bg-neutral-800 border border-neutral-700 px-2 py-1 rounded-lg">
-              {config.concurrency}
-            </span>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm text-neutral-400 mb-2">
+              <Cpu className="inline h-4 w-4 mr-1" />
+              Concurrency
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="range"
+                value={config.concurrency}
+                onChange={(e) =>
+                  setConfig((prev) => ({ ...prev, concurrency: parseInt(e.target.value, 10) }))
+                }
+                min={1}
+                max={50}
+                step={1}
+                className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-neutral-800 border border-neutral-700 accent-blue-500"
+              />
+              <span className="min-w-[2rem] text-center text-white font-medium bg-neutral-800 border border-neutral-700 px-2 py-1 rounded-lg">
+                {config.concurrency}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-neutral-400 mb-2">
+              <RefreshCw className="inline h-4 w-4 mr-1" />
+              Reverse Mode
+            </label>
+            <button
+              type="button"
+              onClick={() => setConfig((prev) => ({ ...prev, reverseMode: !prev.reverseMode }))}
+              className={`w-full px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                config.reverseMode
+                  ? 'bg-orange-500/20 text-orange-400 border border-orange-500/50'
+                  : 'bg-neutral-800 text-neutral-400 border border-neutral-700 hover:border-neutral-600'
+              }`}
+            >
+              <RefreshCw className={`h-4 w-4 ${config.reverseMode ? 'animate-spin-slow' : ''}`} />
+              {config.reverseMode ? 'Reverse Trading ON' : 'Reverse Trading OFF'}
+            </button>
+            {config.reverseMode && (
+              <p className="mt-2 text-xs text-orange-400/80">
+                Agent Long → We Short, Agent Short → We Long
+              </p>
+            )}
           </div>
         </div>
 

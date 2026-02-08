@@ -182,7 +182,8 @@ class PositionSimulator:
                     symbol,
                     high_price=kline.high,
                     low_price=kline.low,
-                    close_price=kline.close
+                    close_price=kline.close,
+                    open_price=kline.open
                 )
                 
                 if filled_orders:

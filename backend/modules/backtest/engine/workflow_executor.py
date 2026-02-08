@@ -133,6 +133,7 @@ class WorkflowExecutor:
             initial_balance=self.config.initial_balance,
             fixed_margin_usdt=self.config.fixed_margin_usdt,
             fixed_leverage=self.config.fixed_leverage,
+            reverse_mode=self.config.reverse_mode,
         )
         engine.start()
         return engine

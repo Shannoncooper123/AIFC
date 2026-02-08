@@ -35,6 +35,7 @@ class BacktestStartRequest(BaseModel):
     concurrency: int = Field(default=5, ge=1, le=50, description="并发数量")
     fixed_margin_usdt: float = Field(default=50.0, ge=1.0, le=10000.0, description="固定开仓保证金")
     fixed_leverage: int = Field(default=10, ge=1, le=125, description="固定杠杆倍数")
+    reverse_mode: bool = Field(default=False, description="反向交易模式")
 
 
 class BacktestStartResponse(BaseModel):
@@ -138,6 +139,7 @@ async def start_backtest(request: BacktestStartRequest):
             concurrency=request.concurrency,
             fixed_margin_usdt=request.fixed_margin_usdt,
             fixed_leverage=request.fixed_leverage,
+            reverse_mode=request.reverse_mode,
         )
         
         engine = BacktestEngine(

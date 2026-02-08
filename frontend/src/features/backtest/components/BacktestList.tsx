@@ -1,4 +1,4 @@
-import { CheckCircle, XCircle, Clock, Loader2, Trash2, Eye } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Loader2, Trash2, Eye, RefreshCw } from 'lucide-react';
 import { Card } from '../../../components/ui';
 
 interface BacktestListItem {
@@ -10,6 +10,7 @@ interface BacktestListItem {
     end_time: string;
     interval: string;
     initial_balance: number;
+    reverse_mode?: boolean;
   };
   start_timestamp: string;
   end_timestamp?: string;
@@ -87,8 +88,14 @@ export function BacktestList({ backtests, onSelect, onDelete, selectedId }: Back
               <div className="flex items-center gap-3">
                 {getStatusIcon(bt.status)}
                 <div>
-                  <div className="text-sm text-white">
+                  <div className="text-sm text-white flex items-center gap-2">
                     {bt.config.symbols.join(', ')}
+                    {bt.config.reverse_mode && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                        <RefreshCw className="h-3 w-3" />
+                        Reverse
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-neutral-500">
                     {formatDate(bt.config.start_time)} - {formatDate(bt.config.end_time)}

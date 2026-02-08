@@ -26,6 +26,7 @@ class BacktestConfig:
     workflow_timeout: int = 600
     fixed_margin_usdt: float = 50.0
     fixed_leverage: int = 10
+    reverse_mode: bool = False
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -38,6 +39,7 @@ class BacktestConfig:
             "workflow_timeout": self.workflow_timeout,
             "fixed_margin_usdt": self.fixed_margin_usdt,
             "fixed_leverage": self.fixed_leverage,
+            "reverse_mode": self.reverse_mode,
         }
     
     @classmethod
@@ -52,6 +54,7 @@ class BacktestConfig:
             workflow_timeout=data.get("workflow_timeout", 600),
             fixed_margin_usdt=data.get("fixed_margin_usdt", 50.0),
             fixed_leverage=data.get("fixed_leverage", 10),
+            reverse_mode=data.get("reverse_mode", False),
         )
 
 
