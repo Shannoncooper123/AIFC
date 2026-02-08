@@ -57,19 +57,25 @@ class LimitOrderManager:
         leverage: int,
         tp_price: Optional[float] = None,
         sl_price: Optional[float] = None,
-        order_kind: str = "LIMIT"
+        order_kind: str = "LIMIT",
+        agent_side: Optional[str] = None,
+        agent_tp_price: Optional[float] = None,
+        agent_sl_price: Optional[float] = None
     ) -> Dict[str, Any]:
         """创建限价单/条件单
         
         Args:
             symbol: 交易对
-            side: 方向（long/short）
+            side: 方向（long/short，反向后的实际执行方向）
             limit_price: 挂单/触发价格
             margin_usdt: 保证金金额
             leverage: 杠杆倍数
-            tp_price: 止盈价
-            sl_price: 止损价
+            tp_price: 止盈价（反向后）
+            sl_price: 止损价（反向后）
             order_kind: 订单类型 "LIMIT"(Maker) 或 "CONDITIONAL"(Taker)
+            agent_side: Agent 原始方向（反向前）
+            agent_tp_price: Agent 原始止盈价（反向前）
+            agent_sl_price: Agent 原始止损价（反向前）
             
         Returns:
             订单信息字典或错误字典
@@ -128,6 +134,9 @@ class LimitOrderManager:
                 leverage=leverage,
                 tp_price=tp_price,
                 sl_price=sl_price,
+                agent_side=agent_side,
+                agent_tp_price=agent_tp_price,
+                agent_sl_price=agent_sl_price,
                 create_time=datetime.now(timezone.utc).isoformat(),
                 status="pending",
                 create_run_id=run_id,
@@ -365,6 +374,9 @@ class LimitOrderManager:
                 sl_price=order.sl_price,
                 entry_price=filled_price,
                 pre_reserved_margin=True,
+                agent_side=getattr(order, 'agent_side', None),
+                agent_tp_price=getattr(order, 'agent_tp_price', None),
+                agent_sl_price=getattr(order, 'agent_sl_price', None),
             )
 
             if 'error' in result:
@@ -420,6 +432,9 @@ class LimitOrderManager:
             'leverage': order.leverage,
             'tp_price': round(order.tp_price, 8) if order.tp_price else None,
             'sl_price': round(order.sl_price, 8) if order.sl_price else None,
+            'agent_side': getattr(order, 'agent_side', None),
+            'agent_tp_price': round(getattr(order, 'agent_tp_price', None), 8) if getattr(order, 'agent_tp_price', None) else None,
+            'agent_sl_price': round(getattr(order, 'agent_sl_price', None), 8) if getattr(order, 'agent_sl_price', None) else None,
             'create_time': order.create_time,
             'status': order.status,
             'filled_time': order.filled_time,

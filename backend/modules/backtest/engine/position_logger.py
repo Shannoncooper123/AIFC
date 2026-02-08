@@ -86,6 +86,9 @@ class PositionLogger:
         tp_distance_percent: float = 0.0,
         sl_distance_percent: float = 0.0,
         order_created_time: Optional[datetime] = None,
+        agent_side: Optional[str] = None,
+        agent_tp_price: Optional[float] = None,
+        agent_sl_price: Optional[float] = None,
         extra_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """记录一笔完整的交易
@@ -105,8 +108,8 @@ class PositionLogger:
             leverage: 杠杆
             tp_price: 止盈价
             sl_price: 止损价
-            original_tp_price: 原始止盈价
-            original_sl_price: 原始止损价
+            original_tp_price: 原始止盈价（反向后）
+            original_sl_price: 原始止损价（反向后）
             holding_bars: 持仓K线数
             order_type: 订单类型 (market/limit)
             limit_price: 限价单价格
@@ -118,6 +121,9 @@ class PositionLogger:
             tp_distance_percent: 止盈距离百分比
             sl_distance_percent: 止损距离百分比
             order_created_time: 限价单创建时间
+            agent_side: Agent 原始方向（反向前）
+            agent_tp_price: Agent 原始止盈价（反向前）
+            agent_sl_price: Agent 原始止损价（反向前）
             extra_data: 额外数据
         """
         record = {
@@ -139,6 +145,9 @@ class PositionLogger:
             "sl_price": sl_price,
             "original_tp_price": original_tp_price,
             "original_sl_price": original_sl_price,
+            "agent_side": agent_side,
+            "agent_tp_price": agent_tp_price,
+            "agent_sl_price": agent_sl_price,
             "holding_bars": holding_bars,
             "order_type": order_type,
             "limit_price": limit_price,
@@ -214,6 +223,9 @@ class PositionLogger:
             step_index=step_index,
             tp_distance_percent=trade_result.tp_distance_percent,
             sl_distance_percent=trade_result.sl_distance_percent,
+            agent_side=getattr(trade_result, 'agent_side', None),
+            agent_tp_price=getattr(trade_result, 'agent_tp_price', None),
+            agent_sl_price=getattr(trade_result, 'agent_sl_price', None),
             order_created_time=trade_result.order_created_time,
         )
     

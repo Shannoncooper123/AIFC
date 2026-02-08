@@ -69,16 +69,23 @@ class PositionManager:
 
     def open_position(self, symbol: str, side: str, quote_notional_usdt: float, leverage: int,
                       tp_price: Optional[float] = None, sl_price: Optional[float] = None,
-                      entry_price: Optional[float] = None, pre_reserved_margin: bool = False) -> Dict[str, Any]:
+                      entry_price: Optional[float] = None, pre_reserved_margin: bool = False,
+                      agent_side: Optional[str] = None, agent_tp_price: Optional[float] = None,
+                      agent_sl_price: Optional[float] = None) -> Dict[str, Any]:
         """开仓或加仓
         
         Args:
             symbol: 交易对
-            side: 方向（long/short）
+            side: 方向（long/short，反向后的实际执行方向）
             quote_notional_usdt: 名义价值（由工具层计算：保证金 × 杠杆）
             leverage: 杠杆倍数
-            tp_price: 止盈价（可选）
-            sl_price: 止损价（可选）
+            tp_price: 止盈价（反向后）
+            sl_price: 止损价（反向后）
+            entry_price: 入场价格
+            pre_reserved_margin: 是否预占保证金
+            agent_side: Agent 原始方向（反向前）
+            agent_tp_price: Agent 原始止盈价（反向前）
+            agent_sl_price: Agent 原始止损价（反向前）
         
         Note:
             调用链路：
@@ -153,8 +160,11 @@ class PositionManager:
                     entry_price=entry,
                     tp_price=tp_price,
                     sl_price=sl_price,
-                    original_sl_price=sl_price,  # 记录开仓时的原始止损价
-                    original_tp_price=tp_price,  # 记录开仓时的原始止盈价
+                    original_sl_price=sl_price,  # 记录开仓时的原始止损价（反向后）
+                    original_tp_price=tp_price,  # 记录开仓时的原始止盈价（反向后）
+                    agent_side=agent_side,  # Agent 原始方向
+                    agent_tp_price=agent_tp_price,  # Agent 原始止盈价
+                    agent_sl_price=agent_sl_price,  # Agent 原始止损价
                     leverage=int(leverage),
                     notional_usdt=quote_notional_usdt,
                     margin_used=margin_add,

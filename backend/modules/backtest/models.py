@@ -181,8 +181,11 @@ class BacktestTradeResult:
     margin_usdt: float = 0.0
     leverage: int = 10
     notional_usdt: float = 0.0
-    original_tp_price: Optional[float] = None
-    original_sl_price: Optional[float] = None
+    original_tp_price: Optional[float] = None  # 实际执行的止盈价（反向后）
+    original_sl_price: Optional[float] = None  # 实际执行的止损价（反向后）
+    agent_side: Optional[str] = None  # Agent 原始方向（反向前）
+    agent_tp_price: Optional[float] = None  # Agent 原始止盈价（反向前）
+    agent_sl_price: Optional[float] = None  # Agent 原始止损价（反向前）
     limit_price: Optional[float] = None
     fees_total: float = 0.0
     r_multiple: Optional[float] = None
@@ -214,6 +217,9 @@ class BacktestTradeResult:
             "notional_usdt": round(self.notional_usdt, 4),
             "original_tp_price": self.original_tp_price,
             "original_sl_price": self.original_sl_price,
+            "agent_side": self.agent_side,
+            "agent_tp_price": self.agent_tp_price,
+            "agent_sl_price": self.agent_sl_price,
             "limit_price": self.limit_price,
             "fees_total": round(self.fees_total, 6),
             "r_multiple": round(self.r_multiple, 2) if self.r_multiple is not None else None,

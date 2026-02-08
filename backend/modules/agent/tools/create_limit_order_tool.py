@@ -111,6 +111,8 @@ def create_limit_order_tool(
         final_sl = sl_price
         source = 'live'
         agent_side = None
+        agent_tp = None
+        agent_sl = None
         
         if is_reverse_mode:
             final_side = 'short' if side_lower == 'long' else 'long'
@@ -118,8 +120,10 @@ def create_limit_order_tool(
             final_sl = tp_price
             source = 'reverse'
             agent_side = side_lower
+            agent_tp = tp_price  # 保存 Agent 原始 TP
+            agent_sl = sl_price  # 保存 Agent 原始 SL
             
-            logger.info(f"[反向模式] Agent 信号: {symbol} {side_lower} @ {limit_price}")
+            logger.info(f"[反向模式] Agent 信号: {symbol} {side_lower} @ {limit_price} TP={tp_price} SL={sl_price}")
             logger.info(f"[反向模式] 反向订单: {final_side} TP={final_tp} SL={final_sl}")
         else:
             logger.info(f"create_limit_order: {symbol} {side_lower} @ {limit_price}")
@@ -155,7 +159,9 @@ def create_limit_order_tool(
             sl_price=final_sl,
             source=source,
             agent_side=agent_side,
-            order_kind=order_kind
+            order_kind=order_kind,
+            agent_tp_price=agent_tp,
+            agent_sl_price=agent_sl
         )
         
         if isinstance(res, dict) and 'error' in res:

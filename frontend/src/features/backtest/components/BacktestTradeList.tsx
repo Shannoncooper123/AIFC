@@ -25,6 +25,9 @@ interface BacktestTrade {
   notional_usdt?: number;
   original_tp_price?: number | null;
   original_sl_price?: number | null;
+  agent_side?: string | null;
+  agent_tp_price?: number | null;
+  agent_sl_price?: number | null;
   limit_price?: number | null;
   fees_total?: number;
   r_multiple?: number | null;
@@ -231,6 +234,14 @@ export function BacktestTradeList({ trades, cancelledOrders = [], isLoading }: B
                             >
                               {trade.side.toUpperCase()}
                             </span>
+                            {trade.agent_side && (
+                              <span 
+                                className="px-2 py-0.5 rounded text-xs font-medium bg-purple-400/10 text-purple-400"
+                                title={`Agent: ${trade.agent_side.toUpperCase()} → Reversed to: ${trade.side.toUpperCase()}`}
+                              >
+                                ↻ REV
+                              </span>
+                            )}
                             <span className={`px-2 py-0.5 rounded text-xs font-medium ${exitTypeInfo.color}`}>
                               {exitTypeInfo.label}
                             </span>
@@ -372,7 +383,7 @@ export function BacktestTradeList({ trades, cancelledOrders = [], isLoading }: B
                             )}
                             
                             <div className="p-2 rounded bg-neutral-900/50">
-                              <div className="text-neutral-500 text-xs mb-1">Original TP</div>
+                              <div className="text-neutral-500 text-xs mb-1">Exec TP</div>
                               <div className="text-emerald-400/70 font-medium">
                                 {trade.original_tp_price ? formatPrice(trade.original_tp_price) : 'N/A'}
                                 {trade.tp_distance_percent ? (
@@ -382,7 +393,7 @@ export function BacktestTradeList({ trades, cancelledOrders = [], isLoading }: B
                             </div>
                             
                             <div className="p-2 rounded bg-neutral-900/50">
-                              <div className="text-neutral-500 text-xs mb-1">Original SL</div>
+                              <div className="text-neutral-500 text-xs mb-1">Exec SL</div>
                               <div className="text-rose-400/70 font-medium">
                                 {trade.original_sl_price ? formatPrice(trade.original_sl_price) : 'N/A'}
                                 {trade.sl_distance_percent ? (
@@ -390,6 +401,33 @@ export function BacktestTradeList({ trades, cancelledOrders = [], isLoading }: B
                                 ) : null}
                               </div>
                             </div>
+                            
+                            {trade.agent_side && (
+                              <>
+                                <div className="p-2 rounded bg-purple-900/30 border border-purple-500/20">
+                                  <div className="text-purple-400 text-xs mb-1">Agent Side</div>
+                                  <div className={`font-medium ${
+                                    trade.agent_side === 'long' ? 'text-emerald-400' : 'text-rose-400'
+                                  }`}>
+                                    {trade.agent_side.toUpperCase()}
+                                  </div>
+                                </div>
+                                
+                                <div className="p-2 rounded bg-purple-900/30 border border-purple-500/20">
+                                  <div className="text-purple-400 text-xs mb-1">Agent TP</div>
+                                  <div className="text-emerald-400/70 font-medium">
+                                    {trade.agent_tp_price ? formatPrice(trade.agent_tp_price) : 'N/A'}
+                                  </div>
+                                </div>
+                                
+                                <div className="p-2 rounded bg-purple-900/30 border border-purple-500/20">
+                                  <div className="text-purple-400 text-xs mb-1">Agent SL</div>
+                                  <div className="text-rose-400/70 font-medium">
+                                    {trade.agent_sl_price ? formatPrice(trade.agent_sl_price) : 'N/A'}
+                                  </div>
+                                </div>
+                              </>
+                            )}
                             
                             <div className="p-2 rounded bg-neutral-900/50">
                               <div className="text-neutral-500 text-xs mb-1">Fees</div>

@@ -17,17 +17,25 @@ class PendingOrder:
     - CONDITIONAL: 条件单 (Taker)，价格突破触发价时成交
         - 做多: 当前价 <= 触发价，等价格上涨到触发价
         - 做空: 当前价 >= 触发价，等价格下跌到触发价
+    
+    反向模式说明：
+    - agent_side: Agent 原始方向（反向前）
+    - agent_tp_price: Agent 原始止盈价（反向前）
+    - agent_sl_price: Agent 原始止损价（反向前）
     """
     id: str
     symbol: str
-    side: str  # "long" or "short"
+    side: str  # "long" or "short"（实际执行方向，反向后）
     order_type: str = "limit"  # 保留兼容性
     order_kind: str = "LIMIT"  # "LIMIT" (Maker) 或 "CONDITIONAL" (Taker)
     limit_price: float = 0.0  # 挂单/触发价格
     margin_usdt: float = 0.0  # 保证金金额
     leverage: int = 10  # 杠杆倍数
-    tp_price: Optional[float] = None
-    sl_price: Optional[float] = None
+    tp_price: Optional[float] = None  # 实际止盈价（反向后）
+    sl_price: Optional[float] = None  # 实际止损价（反向后）
+    agent_side: Optional[str] = None  # Agent 原始方向
+    agent_tp_price: Optional[float] = None  # Agent 原始止盈价
+    agent_sl_price: Optional[float] = None  # Agent 原始止损价
     create_time: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     status: str = "pending"  # "pending", "filled", "cancelled"
     filled_time: Optional[str] = None
@@ -41,13 +49,16 @@ class PendingOrder:
 class Position:
     id: str
     symbol: str
-    side: str  # "long" or "short"
+    side: str  # "long" or "short"（实际执行方向）
     qty: float  # base quantity
     entry_price: float
-    tp_price: Optional[float] = None
-    sl_price: Optional[float] = None
-    original_sl_price: Optional[float] = None  # 开仓时的原始止损价，用于计算R值
-    original_tp_price: Optional[float] = None  # 开仓时的原始止盈价
+    tp_price: Optional[float] = None  # 实际止盈价
+    sl_price: Optional[float] = None  # 实际止损价
+    original_sl_price: Optional[float] = None  # 开仓时的原始止损价（反向后），用于计算R值
+    original_tp_price: Optional[float] = None  # 开仓时的原始止盈价（反向后）
+    agent_side: Optional[str] = None  # Agent 原始方向（反向前）
+    agent_tp_price: Optional[float] = None  # Agent 原始止盈价（反向前）
+    agent_sl_price: Optional[float] = None  # Agent 原始止损价（反向前）
     operation_history: list = field(default_factory=list)  # 操作历史记录
     open_time: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     status: str = "open"  # "open" or "closed"
