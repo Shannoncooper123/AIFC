@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from modules.agent.live_engine.services.trade_info_service import TradeInfoService
     from modules.monitor.clients.binance_rest import BinanceRestClient
     from modules.agent.live_engine.core.models import TradeRecord
+    from modules.agent.live_engine.core.repositories import OrderRepository
 
 logger = get_logger('live_engine.sync_service')
 
@@ -42,7 +43,8 @@ class SyncService:
         rest_client: 'BinanceRestClient',
         price_service: 'PriceService',
         trade_info_service: 'TradeInfoService',
-        position_manager: 'PositionManager'
+        position_manager: 'PositionManager',
+        order_repository: 'OrderRepository' = None
     ):
         """初始化
 
@@ -51,11 +53,13 @@ class SyncService:
             price_service: 价格服务
             trade_info_service: 成交信息服务
             position_manager: 仓位管理器
+            order_repository: 挂单仓库（可选）
         """
         self.rest_client = rest_client
         self.price_service = price_service
         self.trade_info_service = trade_info_service
         self.position_manager = position_manager
+        self.order_repository = order_repository
 
         self._running = False
         self._thread = None
@@ -104,6 +108,7 @@ class SyncService:
                     break
 
                 self.sync_tpsl_orders(source=self._source_filter)
+                self.sync_pending_orders(source=self._source_filter)
 
                 position_sync_counter += 1
                 if position_sync_counter >= self.POSITION_SYNC_MULTIPLIER:
@@ -122,10 +127,67 @@ class SyncService:
 
         try:
             self.sync_tpsl_orders(source=src)
+            self.sync_pending_orders(source=src)
             self.sync_positions(source=src)
             logger.info("[SyncService] 强制同步完成")
         except Exception as e:
             logger.error(f"[SyncService] 强制同步失败: {e}")
+
+    def sync_pending_orders(self, source: Optional[str] = None) -> int:
+        """同步挂单状态
+
+        检查本地的挂单记录在 Binance 是否仍然存在，
+        清理已在交易所被取消的订单。
+
+        Args:
+            source: 过滤来源 ('live', 'reverse' 或 None 表示全部)
+
+        Returns:
+            清理的订单数量
+        """
+        if not self.order_repository:
+            return 0
+
+        try:
+            local_orders = self.order_repository.get_all(source=source)
+            if not local_orders:
+                return 0
+
+            api_open_orders = self.rest_client.get_open_orders()
+            if api_open_orders is None:
+                logger.warning("[SyncService] ⚠️ 查询限价单失败，跳过本次同步")
+                return 0
+
+            api_algo_orders = self.rest_client.get_algo_open_orders()
+            if api_algo_orders is None:
+                api_algo_orders = []
+
+            active_order_ids = {o.get('orderId') for o in api_open_orders}
+            active_algo_ids = {str(o.get('algoId')) for o in api_algo_orders}
+
+            cleaned_count = 0
+            for order in local_orders:
+                is_active = False
+
+                if order.order_id and order.order_id in active_order_ids:
+                    is_active = True
+                if order.algo_id and order.algo_id in active_algo_ids:
+                    is_active = True
+
+                if not is_active:
+                    logger.info(f"[SyncService] 🧹 清理已取消的挂单: {order.symbol} "
+                               f"order_id={order.order_id} algo_id={order.algo_id}")
+                    self.order_repository.delete(order.id)
+                    cleaned_count += 1
+
+            if cleaned_count > 0:
+                logger.info(f"[SyncService] ✅ 已清理 {cleaned_count} 个已取消的挂单")
+
+            return cleaned_count
+
+        except Exception as e:
+            logger.error(f"[SyncService] 同步挂单失败: {e}")
+            return 0
 
     def sync_tpsl_orders(self, source: Optional[str] = None) -> Set[str]:
         """同步 TP/SL 订单状态

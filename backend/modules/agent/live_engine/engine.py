@@ -92,7 +92,8 @@ class BinanceLiveEngine:
             rest_client=self.rest_client,
             price_service=self.price_service,
             trade_info_service=self.trade_info_service,
-            position_manager=self.position_manager
+            position_manager=self.position_manager,
+            order_repository=self.order_repository
         )
 
         self.history_writer = HistoryWriter(config)
