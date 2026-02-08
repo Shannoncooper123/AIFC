@@ -7,13 +7,13 @@
 """
 
 from .account_handler import AccountUpdateHandler
-from .order_handler import OrderUpdateHandler
 from .algo_order_handler import AlgoOrderHandler
 from .dispatcher import EventDispatcher
+from .order_handler import OrderUpdateHandler
 
 __all__ = [
     'AccountUpdateHandler',
-    'OrderUpdateHandler', 
+    'OrderUpdateHandler',
     'AlgoOrderHandler',
     'EventDispatcher',
 ]

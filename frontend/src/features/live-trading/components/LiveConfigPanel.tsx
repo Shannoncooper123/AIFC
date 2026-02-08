@@ -23,6 +23,7 @@ export function LiveConfigPanel({ onConfigChange }: LiveConfigPanelProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [togglingReverse, setTogglingReverse] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
@@ -98,14 +99,18 @@ export function LiveConfigPanel({ onConfigChange }: LiveConfigPanelProps) {
   };
 
   const handleToggleReverse = async () => {
-    if (!config) return;
+    if (!config || togglingReverse) return;
     try {
+      setTogglingReverse(true);
       await updateLiveConfig({ reverse_enabled: !config.reverse_enabled });
       await fetchConfig();
       onConfigChange?.();
+      setError(null);
     } catch (err) {
       setError('Failed to toggle reverse mode');
       console.error(err);
+    } finally {
+      setTogglingReverse(false);
     }
   };
 
@@ -155,13 +160,18 @@ export function LiveConfigPanel({ onConfigChange }: LiveConfigPanelProps) {
           <label className="block text-sm text-neutral-400 mb-2">Reverse Mode</label>
           <button
             onClick={handleToggleReverse}
+            disabled={togglingReverse}
             className={`w-full rounded-lg px-3 py-2 text-sm font-medium transition-all ${
               config?.reverse_enabled
                 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                 : 'bg-neutral-800 text-neutral-400 border border-neutral-700'
-            }`}
+            } ${togglingReverse ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            {config?.reverse_enabled ? 'ON' : 'OFF'}
+            {togglingReverse ? (
+              <RefreshCw className="h-4 w-4 animate-spin mx-auto" />
+            ) : (
+              config?.reverse_enabled ? 'ON' : 'OFF'
+            )}
           </button>
         </div>
 

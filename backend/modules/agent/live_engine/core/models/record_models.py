@@ -3,10 +3,10 @@
 统一的开仓记录模型，供 live_engine 和 reverse_engine 共用。
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Optional, Dict, Any
 from enum import Enum
+from typing import Any, Dict, Optional
 
 
 class RecordStatus(str, Enum):
@@ -22,10 +22,10 @@ class RecordStatus(str, Enum):
 @dataclass
 class TradeRecord:
     """独立开仓记录
-    
+
     每条记录代表一次独立的开仓操作，有独立的 TP/SL 订单。
     支持 live_engine 和 reverse_engine 两种来源。
-    
+
     Attributes:
         id: 唯一标识
         symbol: 交易对
@@ -44,38 +44,38 @@ class TradeRecord:
     side: str
     qty: float
     entry_price: float
-    
+
     tp_price: Optional[float] = None
     sl_price: Optional[float] = None
     leverage: int = 10
     margin_usdt: float = 0.0
     notional_usdt: float = 0.0
     status: RecordStatus = RecordStatus.OPEN
-    
+
     source: str = 'live'
-    
+
     entry_order_id: Optional[int] = None
     entry_algo_id: Optional[str] = None
     tp_order_id: Optional[int] = None
     tp_algo_id: Optional[str] = None
     sl_order_id: Optional[int] = None
     sl_algo_id: Optional[str] = None
-    
+
     open_time: str = field(default_factory=lambda: datetime.now().isoformat())
     close_time: Optional[str] = None
     close_price: Optional[float] = None
     close_reason: Optional[str] = None
-    
+
     entry_commission: float = 0.0
     exit_commission: float = 0.0
     total_commission: float = 0.0
     realized_pnl: Optional[float] = None
-    
+
     latest_mark_price: Optional[float] = None
-    
+
     agent_order_id: Optional[str] = None
     extra_data: Dict[str, Any] = field(default_factory=dict)
-    
+
     def unrealized_pnl(self, mark_price: Optional[float] = None) -> float:
         """计算未实现盈亏"""
         price = mark_price or self.latest_mark_price or self.entry_price
@@ -83,47 +83,47 @@ class TradeRecord:
             return (price - self.entry_price) * self.qty
         else:
             return (self.entry_price - price) * self.qty
-    
+
     def roe(self, mark_price: Optional[float] = None) -> float:
         """计算 ROE (Return on Equity)"""
         pnl = self.unrealized_pnl(mark_price)
         if self.margin_usdt > 0:
             return pnl / self.margin_usdt
         return 0.0
-    
+
     def is_tp_triggered(self, mark_price: float) -> bool:
         """检查是否触发止盈"""
         if self.status != RecordStatus.OPEN or not self.tp_price:
             return False
-        
+
         if self.side.upper() in ('LONG', 'BUY'):
             return mark_price >= self.tp_price
         else:
             return mark_price <= self.tp_price
-    
+
     def is_sl_triggered(self, mark_price: float) -> bool:
         """检查是否触发止损"""
         if self.status != RecordStatus.OPEN or not self.sl_price:
             return False
-        
+
         if self.side.upper() in ('LONG', 'BUY'):
             return mark_price <= self.sl_price
         else:
             return mark_price >= self.sl_price
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         data = asdict(self)
         data['status'] = self.status.value if isinstance(self.status, RecordStatus) else self.status
         return data
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'TradeRecord':
         """从字典创建"""
         status = data.get('status', 'OPEN')
         if isinstance(status, str):
             status = RecordStatus(status)
-        
+
         return cls(
             id=data['id'],
             symbol=data['symbol'],
@@ -155,12 +155,12 @@ class TradeRecord:
             agent_order_id=data.get('agent_order_id'),
             extra_data=data.get('extra_data', {}),
         )
-    
+
     @property
     def is_open(self) -> bool:
         """记录是否处于开仓状态"""
         return self.status == RecordStatus.OPEN
-    
+
     @property
     def is_closed(self) -> bool:
         """记录是否已关闭"""

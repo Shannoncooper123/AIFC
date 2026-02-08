@@ -296,6 +296,51 @@ class BinanceRestClient:
             'X-MBX-APIKEY': self.api_key
         }
     
+    def _signed_request(self, method: str, endpoint: str, 
+                        params: Optional[Dict[str, Any]] = None,
+                        timeout: Optional[float] = None) -> Any:
+        """执行签名请求
+        
+        统一处理签名、发送和响应的通用方法，减少重复代码。
+        
+        Args:
+            method: HTTP 方法 (GET/POST/DELETE/PUT)
+            endpoint: API 端点（如 /fapi/v1/order）
+            params: 请求参数（不含 timestamp 和 signature，会自动添加）
+            timeout: 超时时间（秒），None 则使用默认值
+            
+        Returns:
+            响应 JSON 数据
+            
+        Raises:
+            requests.HTTPError: 请求失败时抛出
+        """
+        url = f"{self.base_url}{endpoint}"
+        
+        if params is None:
+            params = {}
+        
+        params['timestamp'] = int(time.time() * 1000)
+        params['signature'] = self._sign_request(params)
+        
+        request_timeout = timeout or self.timeout
+        headers = self._get_headers()
+        
+        method = method.upper()
+        if method == 'GET':
+            response = self.session.get(url, params=params, headers=headers, timeout=request_timeout)
+        elif method == 'POST':
+            response = self.session.post(url, params=params, headers=headers, timeout=request_timeout)
+        elif method == 'DELETE':
+            response = self.session.delete(url, params=params, headers=headers, timeout=request_timeout)
+        elif method == 'PUT':
+            response = self.session.put(url, params=params, headers=headers, timeout=request_timeout)
+        else:
+            raise ValueError(f"不支持的 HTTP 方法: {method}")
+        
+        response.raise_for_status()
+        return response.json()
+    
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
     def place_order(self, symbol: str, side: str, order_type: str, 
                     quantity: Optional[float] = None, price: Optional[float] = None,
@@ -463,19 +508,7 @@ class BinanceRestClient:
             使用 V3 API 获取账户信息，包含余额、持仓、保证金等完整数据
             参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/account/rest-api/Account-Information-V3
         """
-        url = f"{self.base_url}/fapi/v3/account"
-        
-        params = {
-            'timestamp': int(time.time() * 1000)
-        }
-        
-        # 签名
-        params['signature'] = self._sign_request(params)
-        
-        # 使用 self.session 复用连接池
-        response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        return self._signed_request('GET', '/fapi/v3/account')
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
     def get_position_risk(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -487,22 +520,10 @@ class BinanceRestClient:
         Returns:
             持仓列表
         """
-        url = f"{self.base_url}/fapi/v2/positionRisk"
-        
-        params = {
-            'timestamp': int(time.time() * 1000)
-        }
-        
+        params = {}
         if symbol:
             params['symbol'] = symbol
-        
-        # 签名
-        params['signature'] = self._sign_request(params)
-        
-        # 使用 self.session 复用连接池
-        response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        return self._signed_request('GET', '/fapi/v2/positionRisk', params if params else None)
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
     def set_leverage(self, symbol: str, leverage: int) -> Dict[str, Any]:
@@ -515,22 +536,10 @@ class BinanceRestClient:
         Returns:
             响应
         """
-        url = f"{self.base_url}/fapi/v1/leverage"
-        
-        params = {
+        return self._signed_request('POST', '/fapi/v1/leverage', {
             'symbol': symbol,
-            'leverage': leverage,
-            'timestamp': int(time.time() * 1000)
-        }
-        
-        # 签名
-        params['signature'] = self._sign_request(params)
-        
-        response = self.session.post(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-        if not response.ok:
-            logger.error(f"Algo Order API 错误: {response.status_code} - {response.text}")
-        response.raise_for_status()
-        return response.json()
+            'leverage': leverage
+        })
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
     def set_position_mode(self, dual_side: bool = False) -> Dict[str, Any]:
@@ -542,19 +551,9 @@ class BinanceRestClient:
         Returns:
             设置结果
         """
-        url = f"{self.base_url}/fapi/v1/positionSide/dual"
-        
-        params = {
-            'dualSidePosition': 'true' if dual_side else 'false',
-            'timestamp': int(time.time() * 1000)
-        }
-        
-        # 签名
-        params['signature'] = self._sign_request(params)
-        
-        response = self.session.post(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        return self._signed_request('POST', '/fapi/v1/positionSide/dual', {
+            'dualSidePosition': 'true' if dual_side else 'false'
+        })
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
     def get_position_mode(self) -> Dict[str, Any]:
@@ -563,19 +562,7 @@ class BinanceRestClient:
         Returns:
             {'dualSidePosition': True/False}
         """
-        url = f"{self.base_url}/fapi/v1/positionSide/dual"
-        
-        params = {
-            'timestamp': int(time.time() * 1000)
-        }
-        
-        # 签名
-        params['signature'] = self._sign_request(params)
-        
-        # 使用 self.session 复用连接池
-        response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        return self._signed_request('GET', '/fapi/v1/positionSide/dual')
     
     @retry_on_exception(max_retries=3, delay=1.0, exceptions=(requests.RequestException,))
     def change_position_mode(self, dual_side_position: bool) -> Dict[str, Any]:
@@ -593,18 +580,9 @@ class BinanceRestClient:
             - 只有在没有持仓和挂单的情况下才能更改持仓模式
             - 参考：https://developers.binance.com/docs/zh-CN/derivatives/usds-margined-futures/trade/rest-api/Change-Position-Mode
         """
-        url = f"{self.base_url}/fapi/v1/positionSide/dual"
-        
-        params = {
-            'dualSidePosition': 'true' if dual_side_position else 'false',
-            'timestamp': int(time.time() * 1000)
-        }
-        
-        params['signature'] = self._sign_request(params)
-        
-        response = self.session.post(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        return self._signed_request('POST', '/fapi/v1/positionSide/dual', {
+            'dualSidePosition': 'true' if dual_side_position else 'false'
+        })
     
     @retry_on_exception(max_retries=5, delay=1.0, exceptions=(requests.RequestException,))
     def create_listen_key(self) -> Dict[str, Any]:
@@ -614,7 +592,6 @@ class BinanceRestClient:
             包含 listenKey 的响应
         """
         url = f"{self.base_url}/fapi/v1/listenKey"
-        
         response = self.session.post(url, headers=self._get_headers(), timeout=self.timeout)
         response.raise_for_status()
         return response.json()
@@ -627,8 +604,6 @@ class BinanceRestClient:
             响应
         """
         url = f"{self.base_url}/fapi/v1/listenKey"
-        
-        # 使用 self.session 复用连接池
         response = self.session.put(url, headers=self._get_headers(), timeout=self.timeout)
         response.raise_for_status()
         return response.json()
@@ -653,14 +628,10 @@ class BinanceRestClient:
             - 查询时间范围不能超过7天
             - 如果设置了 orderId，则返回订单ID大于等于该值的订单
         """
-        url = f"{self.base_url}/fapi/v1/allOrders"
-        
         params = {
             'symbol': symbol,
-            'limit': min(limit, 1000),
-            'timestamp': int(time.time() * 1000)
+            'limit': min(limit, 1000)
         }
-        
         if order_id is not None:
             params['orderId'] = order_id
         if start_time is not None:
@@ -668,12 +639,7 @@ class BinanceRestClient:
         if end_time is not None:
             params['endTime'] = end_time
         
-        # 签名
-        params['signature'] = self._sign_request(params)
-        
-        response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        return self._signed_request('GET', '/fapi/v1/allOrders', params)
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
     def get_user_trades(self, symbol: str, order_id: Optional[int] = None,
@@ -696,14 +662,10 @@ class BinanceRestClient:
             - 查询时间范围不能超过7天
             - 使用 orderId 可以精确查询特定订单的所有成交记录
         """
-        url = f"{self.base_url}/fapi/v1/userTrades"
-        
         params = {
             'symbol': symbol,
-            'limit': min(limit, 1000),
-            'timestamp': int(time.time() * 1000)
+            'limit': min(limit, 1000)
         }
-        
         if order_id is not None:
             params['orderId'] = order_id
         if start_time is not None:
@@ -713,11 +675,7 @@ class BinanceRestClient:
         if from_id is not None:
             params['fromId'] = from_id
         
-        params['signature'] = self._sign_request(params)
-        
-        response = self.session.get(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        return self._signed_request('GET', '/fapi/v1/userTrades', params)
 
     def test_connection(self) -> bool:
         """测试连接
@@ -793,11 +751,12 @@ class BinanceRestClient:
         return response.json()
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
-    def cancel_algo_order(self, algo_id: int) -> Dict[str, Any]:
+    def cancel_algo_order(self, algo_id: Any, symbol: Optional[str] = None) -> Dict[str, Any]:
         """撤销条件单
         
         Args:
-            algo_id: 条件单ID
+            algo_id: 条件单ID (int 或 str)
+            symbol: 交易对（可选，仅用于日志记录）
             
         Returns:
             撤销响应
@@ -816,8 +775,15 @@ class BinanceRestClient:
         
         order_timeout = max(self.timeout, 15)
         response = self.session.delete(url, params=params, headers=self._get_headers(), timeout=order_timeout)
+        if not response.ok:
+            symbol_info = f" {symbol}" if symbol else ""
+            logger.error(f"[Algo Order] ❌ 取消条件单失败:{symbol_info} algoId={algo_id} "
+                        f"status={response.status_code} error={response.text}")
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        symbol_info = f" {symbol}" if symbol else ""
+        logger.info(f"[Algo Order] ✅ 取消条件单成功:{symbol_info} algoId={algo_id}")
+        return result
     
     @retry_on_exception(max_retries=5, delay=0.5, exceptions=(requests.RequestException,))
     def get_algo_open_orders(self, symbol: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
@@ -1070,33 +1036,5 @@ class BinanceRestClient:
             pass
         return 3
     
-    def cancel_algo_order(self, symbol: str, algo_id: str) -> bool:
-        """取消条件单
-        
-        Args:
-            symbol: 交易对
-            algo_id: 条件单ID
-            
-        Returns:
-            是否成功
-        """
-        url = f"{self.base_url}/fapi/v1/algoOrder"
-        
-        params = {
-            'symbol': symbol,
-            'algoId': algo_id,
-            'timestamp': int(time.time() * 1000)
-        }
-        
-        params['signature'] = self._sign_request(params)
-        
-        try:
-            response = self.session.delete(url, params=params, headers=self._get_headers(), timeout=self.timeout)
-            response.raise_for_status()
-            result = response.json()
-            logger.info(f"[Algo Order] ✅ 取消条件单成功: {symbol} algoId={algo_id}")
-            return True
-        except Exception as e:
-            logger.error(f"[Algo Order] ❌ 取消条件单失败: {symbol} algoId={algo_id} error={e}")
-            return False
+
 

@@ -196,6 +196,9 @@ export function LiveTradingPage() {
             orders={pendingOrders}
             loading={loading}
             onOrderCancelled={fetchData}
+            currentPrices={Object.fromEntries(
+              positions.map(p => [p.symbol, p.mark_price || p.entry_price])
+            )}
           />
         )}
         {activeTab === 'history' && (

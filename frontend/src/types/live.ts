@@ -19,6 +19,7 @@ export interface LivePosition {
   mark_price?: number;
   take_profit?: number;
   stop_loss?: number;
+  tp_order_id?: number;
   tp_algo_id?: string;
   sl_algo_id?: string;
   unrealized_pnl?: number;

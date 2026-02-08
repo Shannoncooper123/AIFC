@@ -82,7 +82,9 @@ export function LiveWorkflowPanel({ onWorkflowChange }: LiveWorkflowPanelProps) 
       await stopSymbolWorkflow(sym);
       await fetchStatus();
       onWorkflowChange?.();
-    } catch (err) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : `停止 ${sym} workflow 失败`;
+      setError(msg);
       console.error('Failed to stop workflow:', err);
     }
   };

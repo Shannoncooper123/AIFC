@@ -8,7 +8,6 @@
 - ExchangeInfoCache: 交易所信息缓存
 - get_latest_price: 获取最新价格
 """
-from modules.agent.live_engine.engine import BinanceLiveEngine
 from modules.agent.live_engine.config import (
     TradingConfig,
     TradingConfigManager,
@@ -16,8 +15,8 @@ from modules.agent.live_engine.config import (
 )
 from modules.agent.live_engine.core.exchange_utils import (
     ExchangeInfoCache,
-    get_latest_price,
     get_all_prices,
+    get_latest_price,
 )
 from modules.agent.live_engine.core.models import (
     PendingOrder,
@@ -27,6 +26,7 @@ from modules.agent.live_engine.core.repositories import (
     OrderRepository,
     RecordRepository,
 )
+from modules.agent.live_engine.engine import BinanceLiveEngine
 
 __all__ = [
     'BinanceLiveEngine',

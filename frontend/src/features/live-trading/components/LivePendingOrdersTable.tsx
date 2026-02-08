@@ -125,6 +125,13 @@ export function LivePendingOrdersTable({
                       <Clock className="h-3 w-3" />
                       {order.status}
                     </span>
+                    <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${
+                      order.order_kind === 'CONDITIONAL'
+                        ? 'bg-purple-500/20 text-purple-400'
+                        : 'bg-cyan-500/20 text-cyan-400'
+                    }`}>
+                      {order.order_kind === 'CONDITIONAL' ? '条件单' : '限价单'}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2 mt-1 text-xs text-neutral-500">
                     <span>Qty: {formatNumber(order.quantity, 4)}</span>

@@ -1,17 +1,172 @@
 """币安WebSocket客户端"""
 import json
-import time
 import threading
-from typing import List, Callable, Optional, Dict, Set
+import time
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, List, Optional, Set
+
 import websocket
+
 from ..utils.logger import get_logger
 
 logger = get_logger('binance_ws')
 
 
+class BaseWSClient(ABC):
+    """WebSocket 客户端基类
+    
+    提供通用的连接管理、重连逻辑和线程管理功能。
+    子类只需实现 _build_url() 和 _on_message() 方法。
+    """
+    
+    def __init__(self, log_prefix: str = "WS",
+                 max_reconnect_attempts: int = 10,
+                 reconnect_delay: float = 5.0,
+                 ping_interval: int = 180,
+                 ping_timeout: int = 10):
+        """初始化
+        
+        Args:
+            log_prefix: 日志前缀，用于区分不同的 WebSocket 客户端
+            max_reconnect_attempts: 最大重连次数
+            reconnect_delay: 重连基础延迟（秒），实际使用指数退避
+            ping_interval: ping 间隔（秒）
+            ping_timeout: ping 超时（秒）
+        """
+        self._log_prefix = log_prefix
+        self._max_reconnect_attempts = max_reconnect_attempts
+        self._reconnect_delay = reconnect_delay
+        self._ping_interval = ping_interval
+        self._ping_timeout = ping_timeout
+        
+        self._ws: Optional[websocket.WebSocketApp] = None
+        self._is_running = False
+        self._reconnect_count = 0
+        self._ws_thread: Optional[threading.Thread] = None
+    
+    @abstractmethod
+    def _build_url(self) -> str:
+        """构建 WebSocket URL，子类必须实现"""
+        pass
+    
+    @abstractmethod
+    def _handle_message(self, data: Any):
+        """处理解析后的消息数据，子类必须实现
+        
+        Args:
+            data: JSON 解析后的数据
+        """
+        pass
+    
+    def _on_open(self, ws):
+        """连接建立回调"""
+        logger.info(f"[{self._log_prefix}] ✅ WebSocket 连接建立成功")
+        self._reconnect_count = 0
+    
+    def _on_message(self, ws, message: str):
+        """消息接收回调"""
+        try:
+            data = json.loads(message)
+            self._handle_message(data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"[{self._log_prefix}] JSON 解析错误: {e}")
+        except Exception as e:
+            logger.error(f"[{self._log_prefix}] 消息处理错误: {e}")
+    
+    def _on_error(self, ws, error):
+        """错误回调"""
+        logger.error(f"[{self._log_prefix}] WebSocket 错误: {error}")
+    
+    def _on_close(self, ws, close_status_code, close_msg):
+        """连接关闭回调"""
+        logger.warning(f"[{self._log_prefix}] WebSocket 关闭: code={close_status_code}, msg={close_msg}")
+    
+    def _run_forever(self):
+        """持续运行 WebSocket 连接"""
+        while self._is_running:
+            try:
+                if self._ws:
+                    self._ws.run_forever(
+                        ping_interval=self._ping_interval,
+                        ping_timeout=self._ping_timeout
+                    )
+            except Exception as e:
+                logger.error(f"[{self._log_prefix}] 运行错误: {e}")
+            
+            if self._is_running:
+                self._try_reconnect()
+    
+    def _try_reconnect(self):
+        """尝试重连（指数退避）"""
+        self._reconnect_count += 1
+        
+        if self._reconnect_count > self._max_reconnect_attempts:
+            logger.error(f"[{self._log_prefix}] 超过最大重连次数({self._max_reconnect_attempts})，停止重连")
+            self._is_running = False
+            return
+        
+        delay = min(self._reconnect_delay * (2 ** (self._reconnect_count - 1)), 60)
+        logger.warning(f"[{self._log_prefix}] 断开连接，{delay}秒后尝试第{self._reconnect_count}次重连...")
+        time.sleep(delay)
+        
+        self._create_ws_connection()
+    
+    def _create_ws_connection(self):
+        """创建 WebSocket 连接"""
+        url = self._build_url()
+        self._ws = websocket.WebSocketApp(
+            url,
+            on_open=self._on_open,
+            on_message=self._on_message,
+            on_error=self._on_error,
+            on_close=self._on_close
+        )
+    
+    def start(self):
+        """启动 WebSocket 连接"""
+        if self._is_running:
+            logger.warning(f"[{self._log_prefix}] 已在运行")
+            return
+        
+        self._is_running = True
+        self._reconnect_count = 0
+        
+        self._create_ws_connection()
+        
+        self._ws_thread = threading.Thread(target=self._run_forever, daemon=True)
+        self._ws_thread.start()
+        
+        logger.info(f"[{self._log_prefix}] WebSocket 已启动")
+    
+    def stop(self):
+        """停止 WebSocket 连接"""
+        logger.info(f"[{self._log_prefix}] 正在停止...")
+        self._is_running = False
+        
+        if self._ws:
+            try:
+                self._ws.close()
+            except Exception as e:
+                logger.warning(f"[{self._log_prefix}] 关闭连接时出错: {e}")
+        
+        if self._ws_thread and self._ws_thread.is_alive():
+            try:
+                if threading.current_thread() != self._ws_thread:
+                    self._ws_thread.join(timeout=2)
+            except Exception as e:
+                logger.warning(f"[{self._log_prefix}] 等待线程结束时出错: {e}")
+        
+        self._ws_thread = None
+        logger.info(f"[{self._log_prefix}] 已停止")
+    
+    def is_connected(self) -> bool:
+        """检查是否已连接"""
+        return self._is_running and self._ws is not None
+
+
 class BinanceWSClient:
     """币安WebSocket客户端"""
-    
+
     def __init__(self, config: Dict, on_kline_callback: Callable):
         """初始化
         
@@ -24,12 +179,12 @@ class BinanceWSClient:
         self.reconnect_delay = config['websocket']['reconnect_delay']
         self.max_reconnect_attempts = config['websocket']['max_reconnect_attempts']
         self.on_kline_callback = on_kline_callback
-        
+
         self.ws: Optional[websocket.WebSocketApp] = None
         self.is_running = False
         self.reconnect_count = 0
         self.ws_thread: Optional[threading.Thread] = None
-    
+
     def connect(self, symbols: List[str], interval: str):
         """连接WebSocket
         
@@ -40,11 +195,11 @@ class BinanceWSClient:
         # 构建streams
         streams = [f"{symbol.lower()}@kline_{interval}" for symbol in symbols]
         streams_str = "/".join(streams)
-        
+
         url = f"{self.base_url}/stream?streams={streams_str}"
-        
+
         logger.info(f"连接WebSocket: {len(symbols)}个交易对, 间隔={interval}")
-        
+
         # 创建WebSocket连接
         self.ws = websocket.WebSocketApp(
             url,
@@ -55,14 +210,14 @@ class BinanceWSClient:
             on_ping=self._on_ping,
             on_pong=self._on_pong
         )
-        
+
         self.is_running = True
         self.reconnect_count = 0
-        
+
         # 在单独的线程中运行
         self.ws_thread = threading.Thread(target=self._run_forever, daemon=True)
         self.ws_thread.start()
-    
+
     def _run_forever(self):
         """持续运行WebSocket连接"""
         while self.is_running:
@@ -73,77 +228,77 @@ class BinanceWSClient:
                 )
             except Exception as e:
                 logger.error(f"WebSocket运行错误: {e}")
-            
+
             # 如果还在运行状态，尝试重连
             if self.is_running:
                 self._try_reconnect()
-    
+
     def _try_reconnect(self):
         """尝试重连"""
         self.reconnect_count += 1
-        
+
         if self.reconnect_count > self.max_reconnect_attempts:
             logger.error(f"超过最大重连次数({self.max_reconnect_attempts})，停止重连")
             self.is_running = False
             return
-        
+
         # 指数退避
         delay = min(self.reconnect_delay * (2 ** (self.reconnect_count - 1)), 60)
         logger.warning(f"WebSocket断开，{delay}秒后尝试第{self.reconnect_count}次重连...")
         time.sleep(delay)
-    
+
     def _on_open(self, ws):
         """连接建立回调"""
         logger.info("WebSocket连接建立成功")
         self.reconnect_count = 0
-    
+
     def _on_message(self, ws, message):
         """消息接收回调"""
         try:
             data = json.loads(message)
-            
+
             # WebSocket返回的数据格式: {"stream": "...", "data": {...}}
             if 'stream' in data and 'data' in data:
                 stream = data['stream']
                 event_data = data['data']
-                
+
                 # 处理K线数据
                 if '@kline_' in stream and event_data.get('e') == 'kline':
                     symbol = event_data['s']
                     kline_data = event_data['k']
-                    
+
                     # 调用回调函数
                     self.on_kline_callback(symbol, kline_data)
-        
+
         except json.JSONDecodeError:
             logger.error(f"JSON解析失败: {message[:100]}")
         except Exception as e:
             logger.error(f"处理消息失败: {e}")
-    
+
     def _on_error(self, ws, error):
         """错误回调"""
         logger.error(f"WebSocket错误: {error}")
-    
+
     def _on_close(self, ws, close_status_code, close_msg):
         """连接关闭回调"""
         logger.warning(f"WebSocket连接关闭: {close_status_code} - {close_msg}")
-    
+
     def _on_ping(self, ws, message):
         """接收到ping"""
         logger.debug("收到ping")
-    
+
     def _on_pong(self, ws, message):
         """接收到pong"""
         logger.debug("收到pong")
-    
+
     def close(self):
         """关闭连接"""
         logger.info("关闭WebSocket连接...")
         self.is_running = False
-        
+
         if self.ws:
             self.ws.close()
-        
+
         # 避免在 WebSocket 回调线程中 join 自己导致错误
         try:
             if self.ws_thread and self.ws_thread.is_alive():
@@ -160,9 +315,9 @@ class BinanceWSClient:
         finally:
             # 释放引用，便于后续重建
             self.ws_thread = None
-        
+
         logger.info("WebSocket已关闭")
-    
+
     def is_connected(self) -> bool:
         """检查是否已连接"""
         return self.is_running and self.ws is not None
@@ -170,7 +325,7 @@ class BinanceWSClient:
 
 class MultiConnectionManager:
     """多连接管理器"""
-    
+
     def __init__(self, config: Dict, on_kline_callback: Callable):
         """初始化
         
@@ -185,7 +340,7 @@ class MultiConnectionManager:
         self.current_symbols: Set[str] = set()
         self.interval: str = ""
         self._lock = threading.Lock()
-    
+
     def connect_all(self, symbols: List[str], interval: str):
         """连接所有交易对
         
@@ -202,34 +357,34 @@ class MultiConnectionManager:
                 self.clients.clear()
                 # 等待旧连接完全关闭
                 time.sleep(0.5)
-            
+
             self.interval = interval
             self.current_symbols = set(symbols)
-            
+
             # 如果没有需要订阅的币种，直接返回
             if not symbols:
                 logger.info("无需订阅任何币种，跳过WebSocket连接创建")
                 return
-            
+
             # 按最大streams分组
             symbol_groups = [
                 symbols[i:i + self.max_streams]
                 for i in range(0, len(symbols), self.max_streams)
             ]
-            
+
             logger.info(f"创建{len(symbol_groups)}个WebSocket连接")
-            
+
             # 为每组创建一个连接
             for i, group in enumerate(symbol_groups):
                 client = BinanceWSClient(self.config, self.on_kline_callback)
                 client.connect(group, interval)
                 self.clients.append(client)
                 logger.info(f"连接 {i+1}/{len(symbol_groups)}: {len(group)}个交易对")
-                
+
                 # 避免同时建立太多连接
                 if i < len(symbol_groups) - 1:
                     time.sleep(0.5)
-    
+
     def update_symbols(self, added: List[str], removed: List[str]):
         """动态更新交易对订阅
         
@@ -240,29 +395,29 @@ class MultiConnectionManager:
         with self._lock:
             if not added and not removed:
                 return
-            
+
             logger.info(f"更新WebSocket订阅: +{len(added)}, -{len(removed)}")
-            
+
             # 更新当前交易对集合
             for symbol in added:
                 self.current_symbols.add(symbol)
             for symbol in removed:
                 self.current_symbols.discard(symbol)
-            
+
             # 简单策略：完全重建连接
             # 注：这会有短暂中断，但保证数据一致性
             self._rebuild_connections()
-    
+
     def _rebuild_connections(self):
         """重建所有WebSocket连接（使用 connect_all 统一逻辑）"""
         logger.info("重建WebSocket连接...")
-        
+
         # 直接调用 connect_all，它会自动清理旧连接
         symbols = sorted(list(self.current_symbols))
         self.connect_all(symbols, self.interval)
-        
+
         logger.info(f"WebSocket重建完成: {len(symbols)}个交易对")
-    
+
     def close_all(self):
         """关闭所有连接"""
         with self._lock:
@@ -271,11 +426,11 @@ class MultiConnectionManager:
                 client.close()
             self.clients.clear()
             self.current_symbols.clear()
-    
+
     def is_all_connected(self) -> bool:
         """检查是否所有连接都正常"""
         return all(client.is_connected() for client in self.clients)
-    
+
     def get_subscribed_count(self) -> int:
         """获取当前订阅的交易对数量"""
         return len(self.current_symbols)
@@ -283,7 +438,7 @@ class MultiConnectionManager:
 
 class BinanceUserDataWSClient:
     """币安用户数据流WebSocket客户端"""
-    
+
     def __init__(self, config: Dict, rest_client, on_event_callback: Callable):
         """初始化
         
@@ -296,29 +451,33 @@ class BinanceUserDataWSClient:
         self.rest_client = rest_client
         self.base_url = config['websocket']['base_url']
         self.on_event_callback = on_event_callback
-        
+
         self.listen_key: Optional[str] = None
         self.ws: Optional[websocket.WebSocketApp] = None
         self.is_running = False
         self.ws_thread: Optional[threading.Thread] = None
         self.keepalive_thread: Optional[threading.Thread] = None
-    
+        self.reconnect_count = 0
+        self.max_reconnect_attempts = 10
+        self.keepalive_failures = 0
+        self.max_keepalive_failures = 3
+
     def start(self):
         """启动用户数据流"""
         try:
             # 创建 listenKey
             response = self.rest_client.create_listen_key()
             self.listen_key = response.get('listenKey')
-            
+
             if not self.listen_key:
                 logger.error("无法创建 listenKey")
                 return
-            
-            logger.info(f"用户数据流 listenKey 已创建")
-            
+
+            logger.info("用户数据流 listenKey 已创建")
+
             # 构建 WebSocket URL
             url = f"{self.base_url}/ws/{self.listen_key}"
-            
+
             # 创建 WebSocket 连接
             self.ws = websocket.WebSocketApp(
                 url,
@@ -327,22 +486,22 @@ class BinanceUserDataWSClient:
                 on_error=self._on_error,
                 on_close=self._on_close
             )
-            
+
             self.is_running = True
-            
+
             # 启动 WebSocket 线程
             self.ws_thread = threading.Thread(target=self._run_forever, daemon=True)
             self.ws_thread.start()
-            
+
             # 启动保活线程
             self.keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True)
             self.keepalive_thread.start()
-            
+
             logger.info("用户数据流 WebSocket 已启动")
-        
+
         except Exception as e:
             logger.error(f"启动用户数据流失败: {e}")
-    
+
     def _run_forever(self):
         """持续运行 WebSocket"""
         while self.is_running:
@@ -350,12 +509,19 @@ class BinanceUserDataWSClient:
                 self.ws.run_forever(ping_interval=20, ping_timeout=10)
             except Exception as e:
                 logger.error(f"用户数据流 WebSocket 运行错误: {e}")
-            
-            # 如果还在运行，尝试重连
+
             if self.is_running:
-                logger.warning("用户数据流断开，5秒后重连...")
-                time.sleep(5)
-                # 重新创建 listenKey
+                self.reconnect_count += 1
+
+                if self.reconnect_count > self.max_reconnect_attempts:
+                    logger.error(f"用户数据流超过最大重连次数({self.max_reconnect_attempts})，停止重连")
+                    self.is_running = False
+                    break
+
+                delay = min(5 * (2 ** self.reconnect_count), 60)
+                logger.warning(f"用户数据流断开，{delay}秒后尝试第{self.reconnect_count}次重连...")
+                time.sleep(delay)
+
                 try:
                     response = self.rest_client.create_listen_key()
                     new_listen_key = response.get('listenKey')
@@ -372,37 +538,45 @@ class BinanceUserDataWSClient:
                         logger.info("用户数据流 listenKey 已重新创建")
                 except Exception as e:
                     logger.error(f"重新创建 listenKey 失败: {e}")
-    
+
     def _keepalive_loop(self):
         """保活循环（每30分钟）"""
         while self.is_running:
-            time.sleep(30 * 60)  # 30分钟
+            time.sleep(30 * 60)
             if not self.is_running:
                 break
-            
+
             try:
                 self.rest_client.keepalive_listen_key()
                 logger.info("用户数据流 listenKey 已保活")
+                self.keepalive_failures = 0
             except Exception as e:
                 logger.error(f"保活 listenKey 失败: {e}")
-    
+                self.keepalive_failures += 1
+                if self.keepalive_failures >= self.max_keepalive_failures:
+                    logger.warning(f"保活连续失败 {self.keepalive_failures} 次，关闭 WebSocket 触发重连")
+                    self.keepalive_failures = 0
+                    if self.ws:
+                        self.ws.close()
+
     def _on_open(self, ws):
         """连接建立回调"""
         logger.info(f"[UserDataWS] ✅ WebSocket 连接建立成功 (listenKey={self.listen_key[:20]}...)")
-    
+        self.reconnect_count = 0
+
     def _on_message(self, ws, message):
         """消息接收回调"""
         try:
             data = json.loads(message)
             event_type = data.get('e')
-            
+
             if event_type:
                 logger.info(f"[UserDataWS] 📥 收到事件: {event_type}")
-            
+
             if event_type == 'ACCOUNT_UPDATE':
-                logger.info(f"[UserDataWS] ACCOUNT_UPDATE 事件")
+                logger.info("[UserDataWS] ACCOUNT_UPDATE 事件")
                 self.on_event_callback('ACCOUNT_UPDATE', data)
-            
+
             elif event_type == 'ORDER_TRADE_UPDATE':
                 order_info = data.get('o', {})
                 symbol = order_info.get('s', '')
@@ -410,7 +584,7 @@ class BinanceUserDataWSClient:
                 order_type = order_info.get('ot', '')
                 logger.info(f"[UserDataWS] ORDER_TRADE_UPDATE: {symbol} type={order_type} status={status}")
                 self.on_event_callback('ORDER_TRADE_UPDATE', data)
-            
+
             elif event_type == 'ALGO_UPDATE':
                 order_info = data.get('o', {})
                 symbol = order_info.get('s', '')
@@ -420,53 +594,55 @@ class BinanceUserDataWSClient:
                 logger.info(f"[UserDataWS] 📊 ALGO_UPDATE: {symbol} algoId={algo_id} "
                            f"type={algo_type} status={status}")
                 self.on_event_callback('ALGO_UPDATE', data)
-            
+
             elif event_type == 'listenKeyExpired':
-                logger.warning(f"[UserDataWS] ⚠️ listenKey 已过期！需要重新连接")
-            
+                logger.warning("[UserDataWS] ⚠️ listenKey 已过期！需要重新连接")
+                if self.ws:
+                    self.ws.close()
+
             else:
                 logger.debug(f"[UserDataWS] 收到其他事件类型: {event_type}")
-        
+
         except json.JSONDecodeError:
             logger.error(f"用户数据流 JSON 解析失败: {message[:100]}")
         except Exception as e:
             logger.error(f"用户数据流消息处理失败: {e}")
-    
+
     def _on_error(self, ws, error):
         """错误回调"""
         logger.error(f"[UserDataWS] ❌ WebSocket 错误: {error}")
-    
+
     def _on_close(self, ws, close_status_code, close_msg):
         """连接关闭回调"""
         logger.warning(f"[UserDataWS] ⚠️ WebSocket 关闭: code={close_status_code} msg={close_msg}")
-    
+
     def stop(self):
         """停止用户数据流"""
         logger.info("停止用户数据流...")
         self.is_running = False
-        
+
         if self.ws:
             self.ws.close()
-        
+
         # 等待线程结束
         if self.ws_thread and self.ws_thread.is_alive():
             self.ws_thread.join(timeout=2)
         if self.keepalive_thread and self.keepalive_thread.is_alive():
             self.keepalive_thread.join(timeout=2)
-        
+
         logger.info("用户数据流已停止")
 
 
-class BinanceMarkPriceWSClient:
+class BinanceMarkPriceWSClient(BaseWSClient):
     """币安标记价格 WebSocket 客户端
     
     订阅币安合约的标记价格流，用于实时监控持仓盈亏。
     WebSocket 地址: wss://fstream.binance.com/ws/!markPrice@arr@1s
     推送频率: 每秒推送所有交易对的标记价格
     """
-    
+
     BASE_URL = "wss://fstream.binance.com/ws"
-    
+
     def __init__(self, on_price_update: Callable[[Dict[str, float]], None],
                  symbols_filter: Optional[Set[str]] = None):
         """初始化
@@ -475,136 +651,48 @@ class BinanceMarkPriceWSClient:
             on_price_update: 价格更新回调函数，参数为 {symbol: mark_price} 字典
             symbols_filter: 需要关注的交易对集合，None 表示关注所有
         """
+        super().__init__(log_prefix="MarkPriceWS")
         self.on_price_update = on_price_update
         self.symbols_filter = symbols_filter
-        
-        self.ws: Optional[websocket.WebSocketApp] = None
-        self.is_running = False
-        self.reconnect_count = 0
-        self.max_reconnect_attempts = 10
-        self.reconnect_delay = 5
-        self.ws_thread: Optional[threading.Thread] = None
-        
         self._lock = threading.RLock()
         self._latest_prices: Dict[str, float] = {}
-    
-    def start(self):
-        """启动 WebSocket 连接"""
-        if self.is_running:
-            logger.warning("[MarkPriceWS] 已在运行")
+
+    def _build_url(self) -> str:
+        """构建 WebSocket URL"""
+        return f"{self.BASE_URL}/!markPrice@arr@1s"
+
+    def _handle_message(self, data: Any):
+        """处理标记价格消息"""
+        if not isinstance(data, list):
             return
-        
-        self.is_running = True
-        self.reconnect_count = 0
-        
-        url = f"{self.BASE_URL}/!markPrice@arr@1s"
-        
-        logger.info(f"[MarkPriceWS] 正在连接: {url}")
-        
-        self.ws = websocket.WebSocketApp(
-            url,
-            on_open=self._on_open,
-            on_message=self._on_message,
-            on_error=self._on_error,
-            on_close=self._on_close
-        )
-        
-        self.ws_thread = threading.Thread(target=self._run_forever, daemon=True)
-        self.ws_thread.start()
-    
-    def stop(self):
-        """停止 WebSocket 连接"""
-        logger.info("[MarkPriceWS] 正在停止...")
-        self.is_running = False
-        
-        if self.ws:
+
+        prices: Dict[str, float] = {}
+
+        for item in data:
+            symbol = item.get('s')
+            mark_price_str = item.get('p')
+
+            if not symbol or not mark_price_str:
+                continue
+
+            if self.symbols_filter and symbol not in self.symbols_filter:
+                continue
+
             try:
-                self.ws.close()
-            except Exception as e:
-                logger.warning(f"[MarkPriceWS] 关闭连接时出错: {e}")
-        
-        logger.info("[MarkPriceWS] 已停止")
-    
-    def _run_forever(self):
-        """持续运行 WebSocket 连接"""
-        while self.is_running:
+                mark_price = float(mark_price_str)
+                prices[symbol] = mark_price
+            except (ValueError, TypeError):
+                continue
+
+        if prices:
+            with self._lock:
+                self._latest_prices.update(prices)
+
             try:
-                self.ws.run_forever(
-                    ping_interval=180,
-                    ping_timeout=10
-                )
+                self.on_price_update(prices)
             except Exception as e:
-                logger.error(f"[MarkPriceWS] 运行错误: {e}")
-            
-            if self.is_running:
-                self._try_reconnect()
-    
-    def _try_reconnect(self):
-        """尝试重连"""
-        self.reconnect_count += 1
-        
-        if self.reconnect_count > self.max_reconnect_attempts:
-            logger.error(f"[MarkPriceWS] 超过最大重连次数({self.max_reconnect_attempts})，停止重连")
-            self.is_running = False
-            return
-        
-        delay = min(self.reconnect_delay * (2 ** (self.reconnect_count - 1)), 60)
-        logger.warning(f"[MarkPriceWS] 断开连接，{delay}秒后尝试第{self.reconnect_count}次重连...")
-        time.sleep(delay)
-    
-    def _on_open(self, ws):
-        """连接建立回调"""
-        logger.info("[MarkPriceWS] ✅ 连接建立成功")
-        self.reconnect_count = 0
-    
-    def _on_message(self, ws, message):
-        """消息处理回调"""
-        try:
-            data = json.loads(message)
-            
-            if not isinstance(data, list):
-                return
-            
-            prices: Dict[str, float] = {}
-            
-            for item in data:
-                symbol = item.get('s')
-                mark_price_str = item.get('p')
-                
-                if not symbol or not mark_price_str:
-                    continue
-                
-                if self.symbols_filter and symbol not in self.symbols_filter:
-                    continue
-                
-                try:
-                    mark_price = float(mark_price_str)
-                    prices[symbol] = mark_price
-                except (ValueError, TypeError):
-                    continue
-            
-            if prices:
-                with self._lock:
-                    self._latest_prices.update(prices)
-                
-                try:
-                    self.on_price_update(prices)
-                except Exception as e:
-                    logger.error(f"[MarkPriceWS] 价格更新回调出错: {e}")
-                    
-        except json.JSONDecodeError as e:
-            logger.warning(f"[MarkPriceWS] JSON 解析错误: {e}")
-        except Exception as e:
-            logger.error(f"[MarkPriceWS] 消息处理错误: {e}")
-    
-    def _on_error(self, ws, error):
-        """错误回调"""
-        logger.error(f"[MarkPriceWS] WebSocket 错误: {error}")
-    
-    def _on_close(self, ws, close_status_code, close_msg):
-        """连接关闭回调"""
-        logger.warning(f"[MarkPriceWS] 连接关闭: code={close_status_code}, msg={close_msg}")
-    
+                logger.error(f"[{self._log_prefix}] 价格更新回调出错: {e}")
+
     def get_latest_price(self, symbol: str) -> Optional[float]:
         """获取指定交易对的最新标记价格
         
@@ -616,25 +704,25 @@ class BinanceMarkPriceWSClient:
         """
         with self._lock:
             return self._latest_prices.get(symbol)
-    
+
     def get_all_prices(self) -> Dict[str, float]:
         """获取所有交易对的最新标记价格"""
         with self._lock:
             return self._latest_prices.copy()
-    
+
     def add_symbol(self, symbol: str):
         """添加关注的交易对"""
         if self.symbols_filter is None:
             self.symbols_filter = set()
         self.symbols_filter.add(symbol)
         logger.info(f"[MarkPriceWS] 添加关注交易对: {symbol}")
-    
+
     def remove_symbol(self, symbol: str):
         """移除关注的交易对"""
         if self.symbols_filter:
             self.symbols_filter.discard(symbol)
             logger.info(f"[MarkPriceWS] 移除关注交易对: {symbol}")
-    
+
     def set_symbols_filter(self, symbols: Set[str]):
         """设置关注的交易对集合"""
         self.symbols_filter = symbols
@@ -671,31 +759,31 @@ class BinancePriceWSClient:
     
     权重: 单交易对 1，无交易对 2
     """
-    
+
     BASE_URL = "wss://ws-fapi.binance.com/ws-fapi/v1"
-    
+
     def __init__(self):
         self._ws: Optional[websocket.WebSocket] = None
         self._lock = threading.RLock()
         self._connected = False
-        
+
         self._pending_requests: Dict[str, Any] = {}
         self._requests_lock = threading.Lock()
-        
+
         self._recv_thread: Optional[threading.Thread] = None
         self._running = False
-        
+
         self._prices: Dict[str, float] = {}
         self._update_times: Dict[str, float] = {}
         self._cache_lock = threading.RLock()
         self._cache_ttl = 2.0
-    
+
     def connect(self) -> bool:
         """建立 WebSocket 连接"""
         with self._lock:
             if self._connected:
                 return True
-            
+
             try:
                 logger.info(f"[PriceWSClient] 正在连接: {self.BASE_URL}")
                 self._ws = websocket.create_connection(
@@ -704,57 +792,56 @@ class BinancePriceWSClient:
                 )
                 self._connected = True
                 self._running = True
-                
+
                 self._recv_thread = threading.Thread(target=self._receive_loop, daemon=True)
                 self._recv_thread.start()
-                
+
                 logger.info("[PriceWSClient] ✅ 连接成功")
                 return True
             except Exception as e:
                 logger.error(f"[PriceWSClient] 连接失败: {e}")
                 return False
-    
+
     def disconnect(self):
         """断开连接"""
         with self._lock:
             self._running = False
             self._connected = False
-            
+
             if self._ws:
                 try:
                     self._ws.close()
                 except:
                     pass
                 self._ws = None
-            
+
             logger.info("[PriceWSClient] 已断开连接")
-    
+
     def _receive_loop(self):
         """接收响应的线程"""
-        from queue import Queue
-        
+
         while self._running and self._connected:
             try:
                 if self._ws is None:
                     break
-                
+
                 self._ws.settimeout(1.0)
                 try:
                     message = self._ws.recv()
                 except websocket.WebSocketTimeoutException:
                     continue
-                
+
                 if not message:
                     continue
-                
+
                 data = json.loads(message)
                 request_id = data.get('id')
-                
+
                 if request_id:
                     with self._requests_lock:
                         if request_id in self._pending_requests:
                             self._pending_requests[request_id].put(data)
-                
+
             except websocket.WebSocketConnectionClosedException:
                 logger.warning("[PriceWSClient] 连接已关闭")
                 self._connected = False
@@ -762,44 +849,44 @@ class BinancePriceWSClient:
             except Exception as e:
                 if self._running:
                     logger.error(f"[PriceWSClient] 接收错误: {e}")
-    
+
     def _send_request(self, method: str, params: Dict[str, Any], timeout: float = 5.0) -> Optional[Dict]:
         """发送请求并等待响应"""
-        from queue import Queue, Empty
         import uuid
-        
+        from queue import Empty, Queue
+
         if not self._connected:
             if not self.connect():
                 return None
-        
+
         request_id = str(uuid.uuid4())
         request = {
             "id": request_id,
             "method": method,
             "params": params
         }
-        
+
         response_queue: Queue = Queue()
-        
+
         with self._requests_lock:
             self._pending_requests[request_id] = response_queue
-        
+
         try:
             with self._lock:
                 if self._ws:
                     self._ws.send(json.dumps(request))
-            
+
             try:
                 response = response_queue.get(timeout=timeout)
                 return response
             except Empty:
                 logger.warning(f"[PriceWSClient] 请求超时: {method}")
                 return None
-        
+
         finally:
             with self._requests_lock:
                 self._pending_requests.pop(request_id, None)
-    
+
     def get_price(self, symbol: str) -> Optional[float]:
         """获取指定交易对的最新价格
         
@@ -814,33 +901,33 @@ class BinancePriceWSClient:
         with self._cache_lock:
             cached_price = self._prices.get(symbol)
             cached_time = self._update_times.get(symbol, 0)
-            
+
             if cached_price and (time.time() - cached_time) < self._cache_ttl:
                 return cached_price
-        
+
         response = self._send_request("ticker.price", {"symbol": symbol})
-        
+
         if response and response.get('status') == 200:
             result = response.get('result', {})
             price_str = result.get('price')
             if price_str:
                 try:
                     price = float(price_str)
-                    
+
                     with self._cache_lock:
                         self._prices[symbol] = price
                         self._update_times[symbol] = time.time()
-                    
+
                     return price
                 except (ValueError, TypeError):
                     pass
-        
+
         return None
-    
+
     def get_all_prices(self) -> Dict[str, float]:
         """获取所有交易对的最新价格"""
         response = self._send_request("ticker.price", {})
-        
+
         prices = {}
         if response and response.get('status') == 200:
             result = response.get('result', [])
@@ -853,19 +940,19 @@ class BinancePriceWSClient:
                         try:
                             price = float(price_str)
                             prices[symbol] = price
-                            
+
                             with self._cache_lock:
                                 self._prices[symbol] = price
                                 self._update_times[symbol] = now
                         except (ValueError, TypeError):
                             pass
-        
+
         return prices
-    
+
     def is_connected(self) -> bool:
         """是否已连接"""
         return self._connected
-    
+
     def get_cached_price(self, symbol: str) -> Optional[float]:
         """仅从缓存获取价格（不发起请求）"""
         with self._cache_lock:

@@ -66,8 +66,8 @@ function useRealtimePrices(positions: LivePosition[]) {
   return positionsWithRealtimePrices;
 }
 
-function TPSLStatus({ tpAlgoId, slAlgoId }: { tpAlgoId?: string; slAlgoId?: string }) {
-  const hasTP = !!tpAlgoId;
+function TPSLStatus({ tpOrderId, tpAlgoId, slAlgoId }: { tpOrderId?: number; tpAlgoId?: string; slAlgoId?: string }) {
+  const hasTP = !!(tpOrderId || tpAlgoId);
   const hasSL = !!slAlgoId;
   
   if (hasTP && hasSL) {
@@ -259,9 +259,9 @@ export function LivePositionsTable({ positions, loading, onClosePosition }: Live
                     {tpDistance >= 0 ? '+' : ''}{tpDistance.toFixed(2)}% away
                   </div>
                 )}
-                {pos.tp_algo_id && (
+                {(pos.tp_order_id || pos.tp_algo_id) && (
                   <div className="text-[10px] text-neutral-600 font-mono mt-1">
-                    #{(pos.tp_algo_id || '').slice(-8)}
+                    #{pos.tp_order_id ? String(pos.tp_order_id).slice(-8) : (pos.tp_algo_id || '').slice(-8)}
                   </div>
                 )}
               </div>
@@ -288,7 +288,7 @@ export function LivePositionsTable({ positions, loading, onClosePosition }: Live
             </div>
             
             <div className="flex items-center justify-between pt-3 border-t border-neutral-800">
-              <TPSLStatus tpAlgoId={pos.tp_algo_id} slAlgoId={pos.sl_algo_id} />
+              <TPSLStatus tpOrderId={pos.tp_order_id} tpAlgoId={pos.tp_algo_id} slAlgoId={pos.sl_algo_id} />
               
               <PriceDistanceBar
                 entryPrice={pos.entry_price}

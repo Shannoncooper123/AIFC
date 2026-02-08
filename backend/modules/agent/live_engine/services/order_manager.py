@@ -9,10 +9,12 @@
 - 策略单 (Binance Algo Orders)
 """
 
-from typing import Dict, Any, Optional, List, TYPE_CHECKING
 from datetime import datetime, timedelta
-from modules.monitor.utils.logger import get_logger
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
 from modules.agent.live_engine.core import ExchangeInfoCache
+from modules.agent.live_engine.core.models import OrderType
+from modules.monitor.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from modules.monitor.clients.binance_rest import BinanceRestClient
@@ -22,10 +24,10 @@ logger = get_logger('live_engine.order_manager')
 
 def get_position_side(side: str) -> str:
     """根据交易方向获取 positionSide 参数
-    
+
     Args:
         side: 交易方向（long/short 或 BUY/SELL）
-        
+
     Returns:
         positionSide 参数（LONG/SHORT）
     """
@@ -37,10 +39,10 @@ def get_position_side(side: str) -> str:
 
 def get_close_side(position_side: str) -> str:
     """获取平仓方向
-    
+
     Args:
         position_side: 持仓方向（LONG/SHORT）
-        
+
     Returns:
         平仓方向（BUY/SELL）
     """
@@ -49,37 +51,37 @@ def get_close_side(position_side: str) -> str:
 
 class OrderManager:
     """统一订单管理器
-    
+
     集中管理所有订单操作，包括：
     - 开仓/平仓市价单
     - 限价单（Maker 低手续费）
     - 条件单（止盈止损）
     - 策略条件单（Algo Orders）
     """
-    
+
     def __init__(self, rest_client: 'BinanceRestClient'):
         """初始化
-        
+
         Args:
             rest_client: Binance REST 客户端
         """
         self.rest_client = rest_client
         self._dual_mode_checked = False
         self._symbol_leverage_set: set = set()
-    
+
     def ensure_dual_position_mode(self) -> bool:
         """确保账户为双向持仓模式
-        
+
         Returns:
             是否成功设置/确认双向持仓模式
         """
         if self._dual_mode_checked:
             return True
-        
+
         try:
             mode_info = self.rest_client.get_position_mode()
             is_dual = mode_info.get('dualSidePosition', False)
-            
+
             if not is_dual:
                 logger.info("[OrderManager] 当前为单向持仓模式，尝试切换为双向持仓模式...")
                 try:
@@ -97,28 +99,28 @@ class OrderManager:
                         return False
             else:
                 logger.debug("[OrderManager] 已确认为双向持仓模式")
-            
+
             self._dual_mode_checked = True
             return True
-            
+
         except Exception as e:
             logger.error(f"[OrderManager] 检查持仓模式失败: {e}")
             return False
-    
+
     def ensure_leverage(self, symbol: str, leverage: int) -> bool:
         """确保指定币种的杠杆已设置
-        
+
         Args:
             symbol: 交易对
             leverage: 目标杠杆
-            
+
         Returns:
             是否成功
         """
         cache_key = f"{symbol}_{leverage}"
         if cache_key in self._symbol_leverage_set:
             return True
-        
+
         try:
             self.rest_client.set_leverage(symbol, leverage)
             logger.info(f"[OrderManager] {symbol} 杠杆已设置为 {leverage}x")
@@ -133,7 +135,7 @@ class OrderManager:
             else:
                 logger.warning(f"[OrderManager] 设置 {symbol} 杠杆失败: {e}")
                 return False
-    
+
     def place_market_order(
         self,
         symbol: str,
@@ -143,41 +145,41 @@ class OrderManager:
         reduce_only: bool = False
     ) -> Dict[str, Any]:
         """下市价单
-        
+
         Args:
             symbol: 交易对
             side: 方向（BUY/SELL）
             quantity: 数量
             position_side: 持仓方向（LONG/SHORT），不传则自动推断
             reduce_only: 是否只减仓
-            
+
         Returns:
             订单结果
         """
         try:
             qty = ExchangeInfoCache.format_quantity(symbol, quantity)
             pos_side = position_side or get_position_side(side)
-            
+
             params = {
                 'symbol': symbol,
                 'side': side.upper(),
-                'order_type': 'MARKET',
+                'order_type': OrderType.MARKET.value,
                 'quantity': qty,
                 'position_side': pos_side
             }
-            
+
             if reduce_only:
                 params['reduce_only'] = True
-            
+
             result = self.rest_client.place_order(**params)
-            
+
             logger.info(f"[OrderManager] 市价单成功: {symbol} {side} qty={qty} positionSide={pos_side}")
             return {'success': True, 'order': result, 'order_id': result.get('orderId')}
-            
+
         except Exception as e:
             logger.error(f"[OrderManager] 市价单失败: {symbol} {side} error={e}")
             return {'success': False, 'error': str(e)}
-    
+
     def place_limit_order(
         self,
         symbol: str,
@@ -189,7 +191,7 @@ class OrderManager:
         reduce_only: bool = False
     ) -> Dict[str, Any]:
         """下限价单（Maker 低手续费）
-        
+
         Args:
             symbol: 交易对
             side: 方向（BUY/SELL）
@@ -198,7 +200,7 @@ class OrderManager:
             position_side: 持仓方向
             time_in_force: 有效期（GTC/IOC/FOK）
             reduce_only: 是否只减仓
-            
+
         Returns:
             订单结果
         """
@@ -206,151 +208,47 @@ class OrderManager:
             formatted_price = ExchangeInfoCache.format_price(symbol, price)
             qty = ExchangeInfoCache.format_quantity(symbol, quantity)
             pos_side = position_side or get_position_side(side)
-            
+
             params = {
                 'symbol': symbol,
                 'side': side.upper(),
-                'order_type': 'LIMIT',
+                'order_type': OrderType.LIMIT.value,
                 'quantity': qty,
                 'price': formatted_price,
                 'time_in_force': time_in_force,
                 'position_side': pos_side
             }
-            
+
             if reduce_only:
                 params['reduce_only'] = True
-            
+
             result = self.rest_client.place_order(**params)
             order_id = result.get('orderId')
-            
+
             logger.info(f"[OrderManager] 限价单成功: {symbol} {side} price={formatted_price} "
                        f"qty={qty} orderId={order_id} (Maker)")
             return {'success': True, 'order': result, 'order_id': order_id}
-            
+
         except Exception as e:
             logger.error(f"[OrderManager] 限价单失败: {symbol} {side} price={price} error={e}")
             return {'success': False, 'error': str(e)}
-    
-    def place_stop_order(
-        self,
-        symbol: str,
-        side: str,
-        stop_price: float,
-        quantity: Optional[float] = None,
-        position_side: Optional[str] = None,
-        close_position: bool = False,
-        working_type: str = 'MARK_PRICE'
-    ) -> Dict[str, Any]:
-        """下止损条件单 (STOP_MARKET)
-        
-        Args:
-            symbol: 交易对
-            side: 方向
-            stop_price: 触发价格
-            quantity: 数量（close_position=True 时可不传）
-            position_side: 持仓方向
-            close_position: 是否全平
-            working_type: 触发价类型（MARK_PRICE/CONTRACT_PRICE）
-            
-        Returns:
-            订单结果
-        """
-        try:
-            formatted_price = ExchangeInfoCache.format_price(symbol, stop_price)
-            pos_side = position_side or get_position_side(side)
-            
-            params = {
-                'symbol': symbol,
-                'side': side.upper(),
-                'order_type': 'STOP_MARKET',
-                'stop_price': formatted_price,
-                'working_type': working_type,
-                'position_side': pos_side
-            }
-            
-            if close_position:
-                params['close_position'] = True
-            elif quantity:
-                params['quantity'] = ExchangeInfoCache.format_quantity(symbol, quantity)
-            
-            result = self.rest_client.place_order(**params)
-            order_id = result.get('orderId')
-            
-            logger.info(f"[OrderManager] 止损单成功: {symbol} stopPrice={formatted_price} orderId={order_id}")
-            return {'success': True, 'order': result, 'order_id': order_id}
-            
-        except Exception as e:
-            logger.error(f"[OrderManager] 止损单失败: {symbol} stopPrice={stop_price} error={e}")
-            return {'success': False, 'error': str(e)}
-    
-    def place_take_profit_order(
-        self,
-        symbol: str,
-        side: str,
-        stop_price: float,
-        quantity: Optional[float] = None,
-        position_side: Optional[str] = None,
-        close_position: bool = False,
-        working_type: str = 'MARK_PRICE'
-    ) -> Dict[str, Any]:
-        """下止盈条件单 (TAKE_PROFIT_MARKET)
-        
-        Args:
-            symbol: 交易对
-            side: 方向
-            stop_price: 触发价格
-            quantity: 数量
-            position_side: 持仓方向
-            close_position: 是否全平
-            working_type: 触发价类型
-            
-        Returns:
-            订单结果
-        """
-        try:
-            formatted_price = ExchangeInfoCache.format_price(symbol, stop_price)
-            pos_side = position_side or get_position_side(side)
-            
-            params = {
-                'symbol': symbol,
-                'side': side.upper(),
-                'order_type': 'TAKE_PROFIT_MARKET',
-                'stop_price': formatted_price,
-                'working_type': working_type,
-                'position_side': pos_side
-            }
-            
-            if close_position:
-                params['close_position'] = True
-            elif quantity:
-                params['quantity'] = ExchangeInfoCache.format_quantity(symbol, quantity)
-            
-            result = self.rest_client.place_order(**params)
-            order_id = result.get('orderId')
-            
-            logger.info(f"[OrderManager] 止盈单成功: {symbol} stopPrice={formatted_price} orderId={order_id}")
-            return {'success': True, 'order': result, 'order_id': order_id}
-            
-        except Exception as e:
-            logger.error(f"[OrderManager] 止盈单失败: {symbol} stopPrice={stop_price} error={e}")
-            return {'success': False, 'error': str(e)}
-    
+
     def place_algo_order(
         self,
         symbol: str,
         side: str,
         trigger_price: float,
         quantity: float,
-        order_type: str = 'STOP_MARKET',
+        order_type: str = 'STOP_MARKET',  # 使用字符串，因为需要传给 Binance API
         position_side: Optional[str] = None,
         working_type: str = 'CONTRACT_PRICE',
         expiration_days: int = 7,
         reduce_only: bool = False
     ) -> Dict[str, Any]:
         """下策略条件单 (Algo Order)
-        
+
         使用 Binance 策略订单 API，支持更长的有效期。
-        
+
         Args:
             symbol: 交易对
             side: 方向
@@ -361,7 +259,7 @@ class OrderManager:
             working_type: 触发价类型
             expiration_days: 过期天数
             reduce_only: 是否只减仓
-            
+
         Returns:
             订单结果，包含 algo_id
         """
@@ -369,9 +267,9 @@ class OrderManager:
             formatted_price = ExchangeInfoCache.format_price(symbol, trigger_price)
             qty = ExchangeInfoCache.format_quantity(symbol, quantity)
             pos_side = position_side or get_position_side(side)
-            
+
             expiration_ms = int((datetime.now() + timedelta(days=expiration_days)).timestamp() * 1000)
-            
+
             result = self.rest_client.place_algo_order(
                 symbol=symbol,
                 side=side.upper(),
@@ -384,24 +282,24 @@ class OrderManager:
                 position_side=pos_side,
                 reduce_only=reduce_only
             )
-            
+
             algo_id = str(result.get('algoId', ''))
-            
+
             logger.info(f"[OrderManager] 策略单成功: {symbol} {side} trigger={formatted_price} "
                        f"algoId={algo_id} type={order_type}")
             return {'success': True, 'result': result, 'algo_id': algo_id}
-            
+
         except Exception as e:
             logger.error(f"[OrderManager] 策略单失败: {symbol} trigger={trigger_price} error={e}")
             return {'success': False, 'error': str(e)}
-    
+
     def cancel_order(self, symbol: str, order_id: int) -> bool:
         """撤销普通订单
-        
+
         Args:
             symbol: 交易对
             order_id: 订单ID
-            
+
         Returns:
             是否成功
         """
@@ -412,14 +310,14 @@ class OrderManager:
         except Exception as e:
             logger.warning(f"[OrderManager] 撤销订单失败: {symbol} orderId={order_id} error={e}")
             return False
-    
+
     def cancel_algo_order(self, symbol: str, algo_id: str) -> bool:
         """撤销策略条件单
-        
+
         Args:
             symbol: 交易对
             algo_id: 策略单ID
-            
+
         Returns:
             是否成功
         """
@@ -430,31 +328,13 @@ class OrderManager:
         except Exception as e:
             logger.warning(f"[OrderManager] 撤销策略单失败: {symbol} algoId={algo_id} error={e}")
             return False
-    
-    def cancel_all_orders(self, symbol: str) -> int:
-        """撤销指定交易对的所有订单
-        
-        Args:
-            symbol: 交易对
-            
-        Returns:
-            撤销的订单数量
-        """
-        count = 0
-        try:
-            self.rest_client.cancel_all_orders(symbol)
-            logger.info(f"[OrderManager] 已撤销 {symbol} 所有订单")
-            count += 1
-        except Exception as e:
-            logger.warning(f"[OrderManager] 撤销所有订单失败: {symbol} error={e}")
-        return count
-    
+
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict]:
         """获取未成交订单
-        
+
         Args:
             symbol: 交易对（可选）
-            
+
         Returns:
             订单列表
         """
@@ -465,10 +345,10 @@ class OrderManager:
         except Exception as e:
             logger.error(f"[OrderManager] 获取订单失败: {e}")
             return []
-    
+
     def get_algo_open_orders(self) -> List[Dict]:
         """获取未触发的策略条件单
-        
+
         Returns:
             策略单列表
         """
@@ -478,13 +358,13 @@ class OrderManager:
         except Exception as e:
             logger.error(f"[OrderManager] 获取策略单失败: {e}")
             return []
-    
+
     def get_mark_price(self, symbol: str) -> Optional[float]:
         """获取标记价格
-        
+
         Args:
             symbol: 交易对
-            
+
         Returns:
             标记价格，失败返回 None
         """
@@ -494,7 +374,7 @@ class OrderManager:
         except Exception as e:
             logger.warning(f"[OrderManager] 获取 {symbol} 标记价格失败: {e}")
             return None
-    
+
     def place_tp_sl_for_position(
         self,
         symbol: str,
@@ -505,7 +385,7 @@ class OrderManager:
         use_limit_for_tp: bool = True
     ) -> Dict[str, Any]:
         """为持仓下止盈止损单
-        
+
         Args:
             symbol: 交易对
             side: 持仓方向（long/short）
@@ -513,23 +393,27 @@ class OrderManager:
             tp_price: 止盈价
             sl_price: 止损价
             use_limit_for_tp: 止盈是否使用限价单（Maker 低手续费）
-            
+
         Returns:
             结果，包含 tp_order_id/tp_algo_id 和 sl_order_id
         """
         position_side = get_position_side(side)
         close_side = get_close_side(position_side)
-        
+
         logger.info(f"[OrderManager] 📦 下 TP/SL 单: {symbol} side={side} qty={quantity} "
                    f"tp={tp_price} sl={sl_price} position_side={position_side} close_side={close_side}")
-        
+
         result = {
             'tp_order_id': None,
             'tp_algo_id': None,
             'sl_order_id': None,
-            'sl_algo_id': None
+            'sl_algo_id': None,
+            'success': True
         }
-        
+
+        tp_failed = False
+        sl_failed = False
+
         if tp_price:
             if use_limit_for_tp:
                 tp_result = self.place_limit_order(
@@ -548,35 +432,46 @@ class OrderManager:
                         side=close_side,
                         trigger_price=tp_price,
                         quantity=quantity,
-                        order_type='TAKE_PROFIT_MARKET',
+                        order_type=OrderType.TAKE_PROFIT_MARKET.value,
                         position_side=position_side,
                         reduce_only=True
                     )
                     if tp_algo.get('success'):
                         result['tp_algo_id'] = tp_algo.get('algo_id')
+                    else:
+                        tp_failed = True
             else:
-                tp_result = self.place_take_profit_order(
+                tp_algo = self.place_algo_order(
                     symbol=symbol,
                     side=close_side,
-                    stop_price=tp_price,
+                    trigger_price=tp_price,
                     quantity=quantity,
-                    position_side=position_side
+                    order_type=OrderType.TAKE_PROFIT_MARKET.value,
+                    position_side=position_side,
+                    reduce_only=True
                 )
-                if tp_result.get('success'):
-                    result['tp_order_id'] = tp_result.get('order_id')
-        
+                if tp_algo.get('success'):
+                    result['tp_algo_id'] = tp_algo.get('algo_id')
+                else:
+                    tp_failed = True
+
         if sl_price:
             sl_algo = self.place_algo_order(
                 symbol=symbol,
                 side=close_side,
                 trigger_price=sl_price,
                 quantity=quantity,
-                order_type='STOP_MARKET',
+                order_type=OrderType.STOP_MARKET.value,
                 position_side=position_side,
                 reduce_only=True
             )
             if sl_algo.get('success'):
                 result['sl_algo_id'] = sl_algo.get('algo_id')
-        
+            else:
+                sl_failed = True
+
+        if tp_failed or sl_failed:
+            result['success'] = False
+
         logger.info(f"[OrderManager] TP/SL 结果: {result}")
         return result

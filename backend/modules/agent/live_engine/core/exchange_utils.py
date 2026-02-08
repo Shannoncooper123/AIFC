@@ -5,10 +5,11 @@
 2. 实时价格获取 - 通过 WebSocket API 获取最新价格
 """
 
-import time
 import threading
+import time
 from decimal import Decimal
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
 from modules.monitor.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -25,45 +26,45 @@ def _count_decimal_places(value_str: str) -> int:
             return 0
         decimal_part = value_str.split('.')[1].rstrip('0')
         return len(decimal_part) if decimal_part else 0
-    except:
+    except Exception:
         return 0
 
 
 class ExchangeInfoCache:
     """交易所信息缓存
-    
+
     单例模式，缓存 exchange_info 数据，避免频繁 API 调用。
     使用 filters 中的 tickSize/stepSize 来计算精度。
     """
-    
+
     _instance: Optional['ExchangeInfoCache'] = None
     _lock = threading.Lock()
-    
+
     _cache: Dict[str, Any] = {}
     _cache_time: float = 0
     _cache_ttl: float = 300
     _rest_client: Optional['BinanceRestClient'] = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     @classmethod
     def set_rest_client(cls, rest_client: 'BinanceRestClient'):
         """设置 REST 客户端（应在引擎启动时调用）"""
         cls._rest_client = rest_client
         logger.debug("ExchangeInfoCache: REST 客户端已设置")
-    
+
     @classmethod
     def _refresh_cache(cls) -> bool:
         """刷新缓存"""
         if cls._rest_client is None:
             logger.warning("ExchangeInfoCache: REST 客户端未设置")
             return False
-        
+
         try:
             cls._cache = cls._rest_client.get_exchange_info()
             cls._cache_time = time.time()
@@ -72,37 +73,37 @@ class ExchangeInfoCache:
         except Exception as e:
             logger.error(f"ExchangeInfoCache: 刷新缓存失败: {e}")
             return False
-    
+
     @classmethod
     def _ensure_cache(cls) -> bool:
         """确保缓存有效"""
         if not cls._cache or (time.time() - cls._cache_time > cls._cache_ttl):
             return cls._refresh_cache()
         return True
-    
+
     @classmethod
     def _get_symbol_info(cls, symbol: str) -> Optional[Dict[str, Any]]:
         """获取交易对信息"""
         if not cls._ensure_cache():
             return None
-        
+
         for s in cls._cache.get('symbols', []):
             if s.get('symbol') == symbol:
                 return s
         return None
-    
+
     @classmethod
     def _get_filter(cls, symbol: str, filter_type: str) -> Optional[Dict[str, Any]]:
         """获取指定类型的 filter"""
         info = cls._get_symbol_info(symbol)
         if not info:
             return None
-        
+
         for f in info.get('filters', []):
             if f.get('filterType') == filter_type:
                 return f
         return None
-    
+
     @classmethod
     def _get_tick_size(cls, symbol: str) -> Optional[float]:
         """获取价格最小变动单位"""
@@ -112,7 +113,7 @@ class ExchangeInfoCache:
             if tick_size:
                 return float(tick_size)
         return None
-    
+
     @classmethod
     def _get_step_size(cls, symbol: str) -> Optional[float]:
         """获取数量最小变动单位"""
@@ -122,7 +123,7 @@ class ExchangeInfoCache:
             if step_size:
                 return float(step_size)
         return None
-    
+
     @classmethod
     def _get_price_precision(cls, symbol: str, default: int = 2) -> int:
         """获取价格精度"""
@@ -133,12 +134,12 @@ class ExchangeInfoCache:
                 precision = _count_decimal_places(tick_size)
                 if precision > 0:
                     return precision
-        
+
         info = cls._get_symbol_info(symbol)
         if info:
             return info.get('pricePrecision', default)
         return default
-    
+
     @classmethod
     def _get_quantity_precision(cls, symbol: str, default: int = 3) -> int:
         """获取数量精度"""
@@ -147,29 +148,29 @@ class ExchangeInfoCache:
             step_size = lot_filter.get('stepSize')
             if step_size:
                 return _count_decimal_places(step_size)
-        
+
         info = cls._get_symbol_info(symbol)
         if info:
             return info.get('quantityPrecision', default)
         return default
-    
+
     @classmethod
     def format_price(cls, symbol: str, price: float) -> float:
         """格式化价格到正确精度"""
         tick_size = cls._get_tick_size(symbol)
         if tick_size and tick_size > 0:
             return float(Decimal(str(price)).quantize(Decimal(str(tick_size))))
-        
+
         precision = cls._get_price_precision(symbol)
         return round(price, precision)
-    
+
     @classmethod
     def format_quantity(cls, symbol: str, quantity: float) -> float:
         """格式化数量到正确精度"""
         step_size = cls._get_step_size(symbol)
         if step_size and step_size > 0:
             return float(Decimal(str(quantity)).quantize(Decimal(str(step_size))))
-        
+
         precision = cls._get_quantity_precision(symbol)
         return round(quantity, precision)
 
@@ -190,12 +191,12 @@ def _get_price_client():
 
 def get_latest_price(symbol: str) -> Optional[float]:
     """获取最新价格
-    
+
     通过 WebSocket API 获取，连接复用。
-    
+
     Args:
         symbol: 交易对（如 BTCUSDT）
-        
+
     Returns:
         最新价格，失败返回 None
     """
