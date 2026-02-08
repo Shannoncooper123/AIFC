@@ -136,3 +136,7 @@ class OrderRepository:
                 logger.info(f"[OrderRepository] 删除订单: {order_id}")
                 return True
             return False
+
+    def remove(self, order_id: str) -> bool:
+        """删除订单（delete 的别名）"""
+        return self.delete(order_id)

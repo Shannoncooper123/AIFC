@@ -89,7 +89,8 @@ class CommissionService:
                     trades.append(existing_trade)
                 continue
 
-            trade = Trade.from_binance(raw_trade, order.id)
+            local_id = f"T_{order.id}_{binance_trade_id}"
+            trade = Trade.from_binance(raw_trade, order.id, local_id)
             self.linked_order_repo.add_trade(trade)
             trades.append(trade)
 

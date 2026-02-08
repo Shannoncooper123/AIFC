@@ -9,7 +9,7 @@ from modules.agent.live_engine.core.persistence import JsonStateManager
 from modules.monitor.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from modules.agent.live_engine.services.record_service import RecordService
+    from modules.agent.live_engine.manager import PositionManager
 
 logger = get_logger('live_engine.state_writer')
 
@@ -22,19 +22,17 @@ class StateWriter:
     - 提供同步和异步两种写入方式
     """
 
-    def __init__(self, config: Dict, account_service, record_service: 'RecordService', order_service):
+    def __init__(self, config: Dict, account_service, position_manager: 'PositionManager'):
         """初始化
 
         Args:
             config: 配置字典
             account_service: 账户服务
-            record_service: 记录服务（单一数据源）
-            order_service: 订单服务
+            position_manager: 仓位管理器
         """
         self.config = config
         self.account_service = account_service
-        self.record_service = record_service
-        self.order_service = order_service
+        self.position_manager = position_manager
 
         agent_cfg = config.get('agent', {})
         state_path = agent_cfg.get('trade_state_path', 'agent/trade_state.json')
@@ -45,8 +43,8 @@ class StateWriter:
         account_summary = self.account_service.get_summary()
 
         positions_dict = {}
-        for record in self.record_service.get_open_records():
-            tpsl_orders = self.order_service.tpsl_orders.get(record.symbol, {})
+        for record in self.position_manager.get_open_records():
+            tpsl_orders = self.position_manager.tpsl_orders.get(record.symbol, {})
 
             positions_dict[record.id] = {
                 'id': record.id,

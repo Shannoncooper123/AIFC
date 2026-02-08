@@ -4,10 +4,9 @@ from typing import Any, Dict, TYPE_CHECKING
 from modules.monitor.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from modules.agent.live_engine.services.record_service import RecordService
+    from modules.agent.live_engine.manager import PositionManager
 
 logger = get_logger('live_engine.account_handler')
-
 
 class AccountUpdateHandler:
     """ACCOUNT_UPDATE 事件处理器
@@ -21,19 +20,19 @@ class AccountUpdateHandler:
     - Binance 的持仓合并不影响本地独立记录
     """
 
-    def __init__(self, account_service, record_service: 'RecordService', order_service, close_detector):
+    def __init__(
+        self,
+        account_service,
+        position_manager: 'PositionManager'
+    ):
         """初始化
 
         Args:
             account_service: 账户服务
-            record_service: 记录服务（单一数据源）
-            order_service: 订单服务
-            close_detector: 平仓检测服务
+            position_manager: 仓位管理器
         """
         self.account_service = account_service
-        self.record_service = record_service
-        self.order_service = order_service
-        self.close_detector = close_detector
+        self.position_manager = position_manager
 
     def handle(self, data: Dict[str, Any]):
         """处理 ACCOUNT_UPDATE 事件
@@ -63,14 +62,14 @@ class AccountUpdateHandler:
                 position_amt = float(pos_data.get('pa', 0))
 
                 if position_amt == 0:
-                    records = self.record_service.get_open_records_by_symbol(symbol)
+                    records = self.position_manager.get_open_records_by_symbol(symbol)
                     if records:
                         logger.info(f"{symbol} Binance 持仓归零，检测到 {len(records)} 个本地记录待处理")
 
-                    if symbol in self.order_service.tpsl_orders:
-                        del self.order_service.tpsl_orders[symbol]
+                    if symbol in self.position_manager.tpsl_orders:
+                        del self.position_manager.tpsl_orders[symbol]
 
-            open_count = len(self.record_service.get_open_records())
+            open_count = len(self.position_manager.get_open_records())
             logger.debug(f"持仓更新完成: {open_count} 个活跃记录")
 
         except Exception as e:
