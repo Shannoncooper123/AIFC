@@ -100,6 +100,22 @@ class PositionManager:
         """更新标记价格"""
         self._repository.update_mark_price(symbol, mark_price)
 
+    def fetch_entry_info(self, symbol: str, order_id: int) -> Dict[str, Any]:
+        """获取入场成交信息
+
+        Args:
+            symbol: 交易对
+            order_id: 订单 ID
+
+        Returns:
+            包含 avg_price 和 commission 的字典
+        """
+        entry_info = self.trade_info_service.get_entry_info(symbol, order_id)
+        return {
+            'avg_price': entry_info.avg_price,
+            'commission': entry_info.commission
+        }
+
     def open_position(
         self,
         symbol: str,
