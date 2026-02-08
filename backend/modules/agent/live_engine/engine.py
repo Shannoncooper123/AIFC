@@ -452,6 +452,34 @@ class BinanceLiveEngine:
             result['leverage'] = leverage
             result['agent_side'] = agent_side
 
+            from modules.agent.live_engine.core.models import AlgoOrderStatus, OrderKind, PendingOrder
+
+            is_conditional = result.get('order_kind') == 'CONDITIONAL'
+            order_id_key = 'algo_id' if is_conditional else 'order_id'
+            order_id_val = result.get(order_id_key)
+
+            if order_id_val:
+                pending_order = PendingOrder(
+                    id=str(order_id_val),
+                    symbol=symbol,
+                    side=result.get('side', side),
+                    trigger_price=result.get('trigger_price') or result.get('price', limit_price),
+                    quantity=result.get('quantity', quantity),
+                    status=AlgoOrderStatus.NEW,
+                    order_kind=OrderKind.CONDITIONAL_ORDER if is_conditional else OrderKind.LIMIT_ORDER,
+                    tp_price=tp_price,
+                    sl_price=sl_price,
+                    leverage=leverage,
+                    margin_usdt=margin_usdt,
+                    order_id=None if is_conditional else int(order_id_val),
+                    algo_id=str(order_id_val) if is_conditional else None,
+                    source=source,
+                    agent_side=agent_side,
+                    agent_limit_price=limit_price
+                )
+                self.order_repository.save(pending_order)
+                logger.info(f"[Engine] 订单已保存到 pending_orders: {pending_order.id}")
+
             return result
 
         except Exception as e:

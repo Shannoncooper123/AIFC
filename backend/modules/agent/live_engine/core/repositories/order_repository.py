@@ -115,6 +115,18 @@ class OrderRepository:
                     return order
             return None
 
+    def save(self, order: PendingOrder) -> None:
+        """保存或更新订单"""
+        with self._lock:
+            self._orders[order.id] = order
+            self._save_state()
+            logger.info(f"[OrderRepository] 保存订单: {order.id} ({order.order_kind.value})")
+
+    def get_by_source(self, source: str) -> List[PendingOrder]:
+        """按来源获取订单"""
+        with self._lock:
+            return [o for o in self._orders.values() if o.source == source]
+
     def delete(self, order_id: str) -> bool:
         """删除订单"""
         with self._lock:
