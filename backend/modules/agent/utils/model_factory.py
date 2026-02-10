@@ -191,7 +191,7 @@ class ModelFactory:
             temperature=0.0,
             timeout=600,
             max_tokens=16000,
-            thinking_enabled=False,
+            thinking_enabled=True,
         )
     
     def get_decision_model(self) -> ChatOpenAI:
