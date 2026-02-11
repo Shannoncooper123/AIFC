@@ -21,6 +21,125 @@ from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.tool.chart_renderer_pillow')
 
+
+def compute_indicators(closes: List[float]) -> Dict[str, List[Optional[float]]]:
+    """计算技术指标（保留用于回测数据预计算，但不再用于图表渲染）
+    
+    Args:
+        closes: 收盘价序列
+        
+    Returns:
+        包含各指标值的字典
+    """
+    n = len(closes)
+    if n == 0:
+        return {}
+    
+    def ema(values: List[float], period: int) -> List[Optional[float]]:
+        result: List[Optional[float]] = [None] * len(values)
+        if len(values) < period:
+            return result
+        k = 2 / (period + 1)
+        result[period - 1] = sum(values[:period]) / period
+        for i in range(period, len(values)):
+            result[i] = values[i] * k + result[i - 1] * (1 - k)
+        return result
+    
+    def sma(values: List[float], period: int) -> List[Optional[float]]:
+        result: List[Optional[float]] = [None] * len(values)
+        if len(values) < period:
+            return result
+        for i in range(period - 1, len(values)):
+            result[i] = sum(values[i - period + 1:i + 1]) / period
+        return result
+    
+    def stdev(values: List[float], period: int) -> List[Optional[float]]:
+        result: List[Optional[float]] = [None] * len(values)
+        if len(values) < period:
+            return result
+        for i in range(period - 1, len(values)):
+            window = values[i - period + 1:i + 1]
+            mean = sum(window) / period
+            variance = sum((x - mean) ** 2 for x in window) / period
+            result[i] = variance ** 0.5
+        return result
+    
+    ema7 = ema(closes, 7)
+    ema25 = ema(closes, 25)
+    
+    bb_period = 20
+    bb_mid = sma(closes, bb_period)
+    bb_std = stdev(closes, bb_period)
+    bb_upper: List[Optional[float]] = [None] * n
+    bb_lower: List[Optional[float]] = [None] * n
+    for i in range(n):
+        if bb_mid[i] is not None and bb_std[i] is not None:
+            bb_upper[i] = bb_mid[i] + 2 * bb_std[i]
+            bb_lower[i] = bb_mid[i] - 2 * bb_std[i]
+    
+    ema12 = ema(closes, 12)
+    ema26 = ema(closes, 26)
+    macd_line: List[Optional[float]] = [None] * n
+    for i in range(n):
+        if ema12[i] is not None and ema26[i] is not None:
+            macd_line[i] = ema12[i] - ema26[i]
+    
+    macd_valid = [v for v in macd_line if v is not None]
+    signal_line: List[Optional[float]] = [None] * n
+    if len(macd_valid) >= 9:
+        first_valid_idx = next(i for i, v in enumerate(macd_line) if v is not None)
+        signal_values = ema(macd_valid, 9)
+        for i, sv in enumerate(signal_values):
+            if sv is not None:
+                signal_line[first_valid_idx + i] = sv
+    
+    macd_hist: List[Optional[float]] = [None] * n
+    for i in range(n):
+        if macd_line[i] is not None and signal_line[i] is not None:
+            macd_hist[i] = macd_line[i] - signal_line[i]
+    
+    rsi_period = 14
+    rsi: List[Optional[float]] = [None] * n
+    if n > rsi_period:
+        gains: List[float] = []
+        losses: List[float] = []
+        for i in range(1, n):
+            change = closes[i] - closes[i - 1]
+            gains.append(max(0, change))
+            losses.append(max(0, -change))
+        
+        if len(gains) >= rsi_period:
+            avg_gain = sum(gains[:rsi_period]) / rsi_period
+            avg_loss = sum(losses[:rsi_period]) / rsi_period
+            
+            if avg_loss != 0:
+                rs = avg_gain / avg_loss
+                rsi[rsi_period] = 100 - (100 / (1 + rs))
+            else:
+                rsi[rsi_period] = 100
+            
+            for i in range(rsi_period + 1, n):
+                avg_gain = (avg_gain * (rsi_period - 1) + gains[i - 1]) / rsi_period
+                avg_loss = (avg_loss * (rsi_period - 1) + losses[i - 1]) / rsi_period
+                
+                if avg_loss != 0:
+                    rs = avg_gain / avg_loss
+                    rsi[i] = 100 - (100 / (1 + rs))
+                else:
+                    rsi[i] = 100
+    
+    return {
+        'ema7': ema7,
+        'ema25': ema25,
+        'bb_upper': bb_upper,
+        'bb_mid': bb_mid,
+        'bb_lower': bb_lower,
+        'macd_line': macd_line,
+        'macd_signal': signal_line,
+        'macd_hist': macd_hist,
+        'rsi': rsi,
+    }
+
 UP_COLOR = (38, 166, 154)
 DOWN_COLOR = (239, 83, 80)
 GRID_COLOR = (180, 180, 180)
