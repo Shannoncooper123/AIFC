@@ -1,4 +1,4 @@
-"""获取K线图图像的工具（含技术指标）
+"""获取K线图图像的工具（纯K线，无技术指标）
 
 使用 Pillow 渲染器实现高并发图表生成，线程安全，无需子进程隔离。
 """
@@ -7,20 +7,20 @@ from typing import Dict, Any, List
 from langchain.tools import tool
 
 from modules.agent.tools.tool_utils import validate_symbol, validate_interval
-from modules.agent.utils.kline_utils import fetch_klines, get_kline_provider
+from modules.agent.utils.kline_utils import fetch_klines
 from modules.agent.tools.chart_renderer_pillow import render_kline_chart_pillow
 from modules.monitor.utils.logger import get_logger
 
 logger = get_logger('agent.tool.get_kline_image')
 
 
-@tool("get_kline_image", description="获取K线图图像数据（含技术指标）", parse_docstring=True)
+@tool("get_kline_image", description="获取纯K线图图像数据（无技术指标）", parse_docstring=True)
 def get_kline_image_tool(
     symbol: str,
     interval: str = "1h",
     feedback: str = "",
 ) -> List[Dict[str, Any]]:
-    """获取单周期K线图并进行视觉分析（含技术指标：EMA、MACD、RSI、Bollinger Bands）。
+    """获取单周期纯K线图并进行视觉分析（不含技术指标）。
     
     该工具生成指定时间周期的K线图，返回多模态内容（文本描述+图像），供模型进行视觉分析。
     返回格式为 list[dict]，包含文本和图像内容块。错误时返回包含错误信息的文本块。
@@ -58,13 +58,8 @@ def get_kline_image_tool(
         fetch_limit = limit + 100
         
         t_fetch_start = time.perf_counter()
-        indicators = None
-        provider = get_kline_provider()
-        if provider and hasattr(provider, "get_klines_with_indicators"):
-            klines, indicators = provider.get_klines_with_indicators(symbol, interval, fetch_limit)
-            error = None if klines else f"未获取到 {symbol} {interval} 的K线数据"
-        else:
-            klines, error = fetch_klines(symbol, interval, fetch_limit)
+        # 移除了 indicators 获取逻辑，只获取 K 线数据
+        klines, error = fetch_klines(symbol, interval, fetch_limit)
         t_fetch_end = time.perf_counter()
         fetch_ms = (t_fetch_end - t_fetch_start) * 1000
         
@@ -72,7 +67,8 @@ def get_kline_image_tool(
             return _make_runtime_error(error or f"未获取到 {symbol} {interval} 的K线数据")
         
         t_render_start = time.perf_counter()
-        image_base64 = render_kline_chart_pillow(klines, symbol, interval, limit, indicators)
+        # 调用渲染器时不再传递 indicators
+        image_base64 = render_kline_chart_pillow(klines, symbol, interval, limit)
         t_render_end = time.perf_counter()
         render_ms = (t_render_end - t_render_start) * 1000
         

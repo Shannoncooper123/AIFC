@@ -28,16 +28,6 @@ TEXT_COLOR = (40, 40, 40)
 BG_COLOR = (255, 255, 255)
 AXIS_COLOR = (80, 80, 80)
 
-EMA_FAST_COLOR = (255, 140, 0)
-EMA_SLOW_COLOR = (30, 144, 255)
-BB_COLOR = (148, 0, 211)
-BB_FILL_COLOR = (148, 0, 211, 25)
-MACD_COLOR = (30, 144, 255)
-SIGNAL_COLOR = (255, 140, 0)
-RSI_COLOR = (148, 0, 211)
-RSI_OVERBOUGHT_BG = (255, 200, 200, 60)
-RSI_OVERSOLD_BG = (200, 255, 200, 60)
-
 SCALE_FACTOR = 2
 
 
@@ -82,112 +72,6 @@ def _draw_dashed_line(draw: ImageDraw.Draw, xy: List[Tuple[float, float]], fill:
         draw.line([(px1, py1), (px2, py2)], fill=fill, width=width)
 
 
-def _calculate_ema(data: List[float], period: int) -> List[Optional[float]]:
-    result = []
-    multiplier = 2 / (period + 1)
-    ema = None
-    for i, val in enumerate(data):
-        if i < period - 1:
-            result.append(None)
-        elif i == period - 1:
-            ema = sum(data[:period]) / period
-            result.append(ema)
-        else:
-            ema = (val - ema) * multiplier + ema
-            result.append(ema)
-    return result
-
-
-def _calculate_bollinger(closes: List[float], period: int = 20, std_mult: float = 2.0) -> Tuple[List, List, List]:
-    bb_upper, bb_middle, bb_lower = [], [], []
-    for i in range(len(closes)):
-        if i >= period - 1:
-            window = closes[i - period + 1:i + 1]
-            middle = sum(window) / len(window)
-            std = (sum((x - middle) ** 2 for x in window) / len(window)) ** 0.5
-            bb_upper.append(middle + std_mult * std)
-            bb_middle.append(middle)
-            bb_lower.append(middle - std_mult * std)
-        else:
-            bb_upper.append(None)
-            bb_middle.append(None)
-            bb_lower.append(None)
-    return bb_upper, bb_middle, bb_lower
-
-
-def _calculate_macd(data: List[float], fast: int = 12, slow: int = 26, signal: int = 9):
-    ema_fast = _calculate_ema(data, fast)
-    ema_slow = _calculate_ema(data, slow)
-    macd_line = []
-    for f, s in zip(ema_fast, ema_slow):
-        if f is not None and s is not None:
-            macd_line.append(f - s)
-        else:
-            macd_line.append(None)
-    valid_macd = [v for v in macd_line if v is not None]
-    signal_line_raw = _calculate_ema(valid_macd, signal) if valid_macd else []
-    signal_line = [None] * (len(macd_line) - len(signal_line_raw)) + signal_line_raw
-    histogram = []
-    for m, s in zip(macd_line, signal_line):
-        if m is not None and s is not None:
-            histogram.append(m - s)
-        else:
-            histogram.append(None)
-    return macd_line, signal_line, histogram
-
-
-def _calculate_rsi(data: List[float], period: int = 14) -> List[Optional[float]]:
-    if len(data) < period + 1:
-        return [None] * len(data)
-    result = [None] * period
-    gains, losses = [], []
-    for i in range(1, len(data)):
-        change = data[i] - data[i - 1]
-        gains.append(max(change, 0))
-        losses.append(max(-change, 0))
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
-    if avg_loss == 0:
-        result.append(100.0)
-    else:
-        rs = avg_gain / avg_loss
-        result.append(100 - (100 / (1 + rs)))
-    for i in range(period, len(gains)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-        if avg_loss == 0:
-            result.append(100.0)
-        else:
-            rs = avg_gain / avg_loss
-            result.append(100 - (100 / (1 + rs)))
-    return result
-
-
-def compute_indicators(closes: List[float]) -> Dict[str, List[Optional[float]]]:
-    ema_fast = _calculate_ema(closes, 7)
-    ema_slow = _calculate_ema(closes, 25)
-    bb_upper, bb_middle, bb_lower = _calculate_bollinger(closes)
-    macd_line, signal_line, histogram = _calculate_macd(closes)
-    rsi = _calculate_rsi(closes)
-    return {
-        "ema_fast": ema_fast,
-        "ema_slow": ema_slow,
-        "bb_upper": bb_upper,
-        "bb_middle": bb_middle,
-        "bb_lower": bb_lower,
-        "macd_line": macd_line,
-        "signal_line": signal_line,
-        "histogram": histogram,
-        "rsi": rsi,
-    }
-
-
-def _slice_or_none(values: Optional[List[Optional[float]]], total_len: int, visible_count: int) -> Optional[List[Optional[float]]]:
-    if not values or len(values) < total_len:
-        return None
-    return values[-visible_count:]
-
-
 def _try_load_font(size: int) -> ImageFont.FreeTypeFont:
     font_paths = [
         "/System/Library/Fonts/Helvetica.ttc",
@@ -207,7 +91,7 @@ class PillowChartRenderer:
     def __init__(
         self,
         width: int = 1800,
-        height: int = 2000,
+        height: int = 1200,  # Reduced height since we removed indicators
         padding_left: int = 60,
         padding_right: int = 100,
         padding_top: int = 50,
@@ -220,10 +104,9 @@ class PillowChartRenderer:
         self.padding_top = padding_top
         self.padding_bottom = padding_bottom
         
-        self.price_area_ratio = 0.40
-        self.volume_area_ratio = 0.16
-        self.macd_area_ratio = 0.22
-        self.rsi_area_ratio = 0.16
+        # Adjusted ratios for Price + Volume only
+        self.price_area_ratio = 0.70
+        self.volume_area_ratio = 0.20
         self.x_label_height = 50
         self.legend_height = 20
         self.gap = 8
@@ -244,7 +127,6 @@ class PillowChartRenderer:
         symbol: str,
         interval: str,
         visible_count: int = 100,
-        indicators: Optional[Dict[str, List[Optional[float]]]] = None,
     ) -> str:
         if not kline_data:
             raise ValueError("没有K线数据可以绑制")
@@ -252,26 +134,6 @@ class PillowChartRenderer:
         visible_count = min(visible_count, len(kline_data))
         klines = kline_data[-visible_count:]
         
-        closes = [k['close'] for k in kline_data]
-        total_len = len(kline_data)
-        ema_fast = _slice_or_none(indicators.get("ema_fast") if indicators else None, total_len, visible_count)
-        ema_slow = _slice_or_none(indicators.get("ema_slow") if indicators else None, total_len, visible_count)
-        bb_upper = _slice_or_none(indicators.get("bb_upper") if indicators else None, total_len, visible_count)
-        bb_lower = _slice_or_none(indicators.get("bb_lower") if indicators else None, total_len, visible_count)
-        macd_line = _slice_or_none(indicators.get("macd_line") if indicators else None, total_len, visible_count)
-        signal_line = _slice_or_none(indicators.get("signal_line") if indicators else None, total_len, visible_count)
-        histogram = _slice_or_none(indicators.get("histogram") if indicators else None, total_len, visible_count)
-        rsi = _slice_or_none(indicators.get("rsi") if indicators else None, total_len, visible_count)
-        if not all([ema_fast, ema_slow, bb_upper, bb_lower, macd_line, signal_line, histogram, rsi]):
-            computed = compute_indicators(closes)
-            ema_fast = computed["ema_fast"][-visible_count:]
-            ema_slow = computed["ema_slow"][-visible_count:]
-            bb_upper = computed["bb_upper"][-visible_count:]
-            bb_lower = computed["bb_lower"][-visible_count:]
-            macd_line = computed["macd_line"][-visible_count:]
-            signal_line = computed["signal_line"][-visible_count:]
-            histogram = computed["histogram"][-visible_count:]
-            rsi = computed["rsi"][-visible_count:]
         volumes = [k['volume'] for k in klines]
         
         s = self.scale
@@ -291,12 +153,11 @@ class PillowChartRenderer:
         x_label_h = self.x_label_height * s
         gap = self.gap * s
         
-        total_chart_height = chart_bottom - chart_top - 4 * (legend_h + x_label_h + gap)
+        # Calculate available height for charts
+        total_chart_height = chart_bottom - chart_top - 2 * (legend_h + x_label_h + gap)
         
-        price_height = int(total_chart_height * self.price_area_ratio)
-        volume_height = int(total_chart_height * self.volume_area_ratio)
-        macd_height = int(total_chart_height * self.macd_area_ratio)
-        rsi_height = int(total_chart_height * self.rsi_area_ratio)
+        price_height = int(total_chart_height * (self.price_area_ratio / (self.price_area_ratio + self.volume_area_ratio)))
+        volume_height = int(total_chart_height * (self.volume_area_ratio / (self.price_area_ratio + self.volume_area_ratio)))
         
         price_legend_top = chart_top
         price_top = price_legend_top + legend_h
@@ -308,16 +169,6 @@ class PillowChartRenderer:
         volume_bottom = volume_top + volume_height
         volume_xlabel_bottom = volume_bottom + x_label_h
         
-        macd_legend_top = volume_xlabel_bottom + gap
-        macd_top = macd_legend_top + legend_h
-        macd_bottom = macd_top + macd_height
-        macd_xlabel_bottom = macd_bottom + x_label_h
-        
-        rsi_legend_top = macd_xlabel_bottom + gap
-        rsi_top = rsi_legend_top + legend_h
-        rsi_bottom = rsi_top + rsi_height
-        rsi_xlabel_bottom = rsi_bottom + x_label_h
-        
         n = len(klines)
         candle_total_width = chart_width / n
         candle_width = max(4 * s, int(candle_total_width * 0.75))
@@ -325,17 +176,15 @@ class PillowChartRenderer:
         intraday = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h']
         time_fmt = '%m-%d %H:%M' if interval in intraday else '%Y-%m-%d'
         
-        title = f"{symbol} {interval} Technical Analysis"
+        title = f"{symbol} {interval} Price Action (Naked Chart)"
         bbox = draw.textbbox((0, 0), title, font=self.font_title_hd)
         title_width = bbox[2] - bbox[0]
         draw.text(((hd_width - title_width) // 2, 8 * s), title, fill=TEXT_COLOR, font=self.font_title_hd)
         
-        self._draw_legend_row(draw, chart_left, price_legend_top, "Price Action & Overlays", [
-            ("EMA7", EMA_FAST_COLOR), ("EMA25", EMA_SLOW_COLOR), ("BB", BB_COLOR)
-        ], s)
+        self._draw_legend_row(draw, chart_left, price_legend_top, "Price Action", [], s)
         
         self._draw_price_chart(
-            draw, img, klines, ema_fast, ema_slow, bb_upper, bb_lower,
+            draw, img, klines,
             chart_left, price_top, chart_width, price_height,
             candle_width, candle_total_width, s
         )
@@ -348,24 +197,6 @@ class PillowChartRenderer:
             candle_width, candle_total_width, s
         )
         self._draw_x_axis(draw, klines, chart_left, volume_bottom, chart_width, candle_total_width, time_fmt, s)
-        
-        self._draw_legend_row(draw, chart_left, macd_legend_top, "MACD (12, 26, 9)", [
-            ("MACD", MACD_COLOR), ("Signal", SIGNAL_COLOR), ("Histogram", UP_COLOR)
-        ], s)
-        self._draw_macd_chart(
-            draw, macd_line, signal_line, histogram,
-            chart_left, macd_top, chart_width, macd_height,
-            candle_width, candle_total_width, s
-        )
-        self._draw_x_axis(draw, klines, chart_left, macd_bottom, chart_width, candle_total_width, time_fmt, s)
-        
-        self._draw_legend_row(draw, chart_left, rsi_legend_top, "RSI (14)", [("RSI", RSI_COLOR)], s)
-        self._draw_rsi_chart(
-            draw, img, rsi,
-            chart_left, rsi_top, chart_width, rsi_height,
-            candle_width, candle_total_width, s
-        )
-        self._draw_x_axis(draw, klines, chart_left, rsi_bottom, chart_width, candle_total_width, time_fmt, s)
         
         img_rgb = Image.new('RGB', img.size, BG_COLOR)
         img_rgb.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
@@ -444,10 +275,6 @@ class PillowChartRenderer:
         draw: ImageDraw.Draw,
         img: Image.Image,
         klines: List[Dict],
-        ema_fast: List,
-        ema_slow: List,
-        bb_upper: List,
-        bb_lower: List,
         left: int,
         top: int,
         width: int,
@@ -473,9 +300,6 @@ class PillowChartRenderer:
             
         self._draw_grid_and_ticks(draw, left, top, width, height, grid_values, s)
         
-        right = left + width
-        bottom = top + height
-        
         def price_to_y(price: float) -> int:
             if p_max == p_min: return top + height // 2
             return top + height - int((price - p_min) / (p_max - p_min) * height)
@@ -483,49 +307,6 @@ class PillowChartRenderer:
         def get_x(i: int) -> float:
             return left + i * candle_total_width + candle_total_width / 2
         
-        n = len(klines)
-        
-        bb_fill_img = Image.new('RGBA', img.size, (0, 0, 0, 0))
-        bb_fill_draw = ImageDraw.Draw(bb_fill_img, 'RGBA')
-        
-        bb_polygon = []
-        for i in range(n):
-            if bb_upper[i] is not None:
-                x = get_x(i)
-                y = price_to_y(bb_upper[i])
-                y = max(top, min(bottom, y))
-                bb_polygon.append((x, y))
-        for i in range(n - 1, -1, -1):
-            if bb_lower[i] is not None:
-                x = get_x(i)
-                y = price_to_y(bb_lower[i])
-                y = max(top, min(bottom, y))
-                bb_polygon.append((x, y))
-        
-        if len(bb_polygon) > 2:
-            bb_fill_draw.polygon(bb_polygon, fill=BB_FILL_COLOR)
-            mask = Image.new('L', img.size, 0)
-            mask_draw = ImageDraw.Draw(mask)
-            mask_draw.rectangle([left, top, right, bottom], fill=255)
-            bb_fill_img.putalpha(Image.composite(bb_fill_img.split()[3], Image.new('L', img.size, 0), mask))
-            img.paste(bb_fill_img, (0, 0), bb_fill_img)
-        
-        def draw_clipped_line(data, color, w):
-            points = []
-            for i in range(n):
-                if data[i] is not None:
-                    x = get_x(i)
-                    y = price_to_y(data[i])
-                    y = max(top, min(bottom, y))
-                    points.append((x, y))
-            if len(points) > 1:
-                draw.line(points, fill=color, width=w, joint='curve')
-        
-        draw_clipped_line(bb_upper, BB_COLOR, s)
-        draw_clipped_line(bb_lower, BB_COLOR, s)
-        draw_clipped_line(ema_fast, EMA_FAST_COLOR, 2*s)
-        draw_clipped_line(ema_slow, EMA_SLOW_COLOR, 2*s)
-
         for i, k in enumerate(klines):
             x_center = get_x(i)
             x_left = x_center - candle_width / 2
@@ -577,68 +358,6 @@ class PillowChartRenderer:
             color = UP_COLOR if k['close'] >= k['open'] else DOWN_COLOR
             draw.rectangle([x_left, bottom - bar_h, x_right, bottom], fill=color)
 
-    def _draw_macd_chart(self, draw, macd_line, signal_line, histogram, left, top, width, height, candle_width, candle_total_width, s):
-        valid = [v for v in macd_line + signal_line + histogram if v is not None]
-        v_max = max(abs(v) for v in valid) if valid else 1
-        
-        num_grid = 6
-        grid_values = []
-        for i in range(num_grid + 1):
-            norm_val = i / num_grid
-            val = -v_max + 2 * v_max * norm_val
-            grid_values.append((norm_val, f"{val:.5f}"))
-        
-        self._draw_grid_and_ticks(draw, left, top, width, height, grid_values, s)
-        
-        mid_y = top + height // 2
-        draw.line([(left, mid_y), (left + width, mid_y)], fill=AXIS_COLOR, width=s)
-        
-        def val_to_y(v): return mid_y - int((v / v_max) * (height // 2 - 5*s))
-        def get_x(i): return left + i * candle_total_width + candle_total_width / 2
-        
-        for i, h in enumerate(histogram):
-            if h is not None:
-                x_c = get_x(i)
-                x_l = x_c - candle_width / 2
-                x_r = x_c + candle_width / 2
-                y = val_to_y(h)
-                color = UP_COLOR if h >= 0 else DOWN_COLOR
-                draw.rectangle([x_l, min(y, mid_y), x_r, max(y, mid_y)], fill=color)
-
-        points_m = []
-        points_s = []
-        for i in range(len(macd_line)):
-            if macd_line[i] is not None: points_m.append((get_x(i), val_to_y(macd_line[i])))
-            if signal_line[i] is not None: points_s.append((get_x(i), val_to_y(signal_line[i])))
-            
-        if len(points_m) > 1: draw.line(points_m, fill=MACD_COLOR, width=2*s, joint='curve')
-        if len(points_s) > 1: draw.line(points_s, fill=SIGNAL_COLOR, width=2*s, joint='curve')
-
-    def _draw_rsi_chart(self, draw, img, rsi, left, top, width, height, candle_width, candle_total_width, s):
-        grid_values = [(0, "0"), (0.2, "20"), (0.3, "30"), (0.5, "50"), (0.7, "70"), (0.8, "80"), (1.0, "100")]
-        self._draw_grid_and_ticks(draw, left, top, width, height, grid_values, s)
-        
-        def val_to_y(v): return top + height - int((v / 100) * height)
-        def get_x(i): return left + i * candle_total_width + candle_total_width / 2
-        
-        y_70 = val_to_y(70)
-        y_30 = val_to_y(30)
-        right = left + width
-        
-        bg_img = Image.new('RGBA', img.size, (0,0,0,0))
-        bg_draw = ImageDraw.Draw(bg_img, 'RGBA')
-        bg_draw.rectangle([left, top, right, y_70], fill=RSI_OVERBOUGHT_BG)
-        bg_draw.rectangle([left, y_30, right, top + height], fill=RSI_OVERSOLD_BG)
-        img.paste(bg_img, (0,0), bg_img)
-        
-        _draw_dashed_line(draw, [(left, y_70), (right, y_70)], fill=DOWN_COLOR, width=s, dash=(8*s, 4*s))
-        _draw_dashed_line(draw, [(left, y_30), (right, y_30)], fill=UP_COLOR, width=s, dash=(8*s, 4*s))
-        
-        points = []
-        for i, r in enumerate(rsi):
-            if r is not None: points.append((get_x(i), val_to_y(r)))
-        if len(points) > 1: draw.line(points, fill=RSI_COLOR, width=2*s, joint='curve')
-
 
 _renderer_instance: Optional[PillowChartRenderer] = None
 
@@ -679,7 +398,6 @@ def render_kline_chart_pillow(
     symbol: str,
     interval: str,
     visible_count: int = 100,
-    indicators: Optional[Dict[str, List[Optional[float]]]] = None,
 ) -> str:
     if klines:
         last_ts = klines[-1].timestamp
@@ -700,7 +418,7 @@ def render_kline_chart_pillow(
     ]
     
     renderer = get_pillow_renderer()
-    image_base64 = renderer.render(kline_data, symbol, interval, visible_count, indicators)
+    image_base64 = renderer.render(kline_data, symbol, interval, visible_count)
     if klines:
         _render_cache.set(key, image_base64)
     return image_base64
