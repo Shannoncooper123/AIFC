@@ -41,6 +41,7 @@ from modules.agent.utils.workflow_trace_storage import (
     get_index_path,
     get_traces_dir,
     get_workflow_trace_path,
+    get_artifact_index_path,
 )
 
 
@@ -310,9 +311,95 @@ class LegacyTraceCache:
             return self._events_by_workflow_run_id.get(workflow_run_id, [])
 
 
+class ArtifactIndexCache:
+    """Artifact 索引缓存 - 用于快速查找 artifact_id 到 file_path 的映射
+    
+    通过索引文件实现 O(1) 查找，避免遍历所有 trace 文件。
+    """
+    
+    def __init__(self, ttl_seconds: float = 5.0):
+        self._artifacts: Dict[str, Dict[str, Any]] = {}
+        self._last_load_time: float = 0
+        self._last_file_mtime: float = 0
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+    
+    def _should_reload(self, index_path: str) -> bool:
+        """检查是否需要重新加载"""
+        if not os.path.exists(index_path):
+            return False
+        
+        current_time = time.time()
+        if current_time - self._last_load_time < self._ttl:
+            return False
+        
+        try:
+            file_mtime = os.path.getmtime(index_path)
+            if file_mtime > self._last_file_mtime:
+                return True
+        except OSError:
+            pass
+        
+        return False
+    
+    def _load_index(self, index_path: str) -> None:
+        """加载 artifact 索引文件"""
+        artifacts: Dict[str, Dict[str, Any]] = {}
+        
+        if not os.path.exists(index_path):
+            self._artifacts = artifacts
+            return
+        
+        with open(index_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    artifact_id = record.get("artifact_id")
+                    if artifact_id:
+                        artifacts[artifact_id] = record
+                except json.JSONDecodeError as e:
+                    logger.warning(f"解析 artifact 索引 JSON 行失败: {e}")
+                    continue
+        
+        self._artifacts = artifacts
+        self._last_load_time = time.time()
+        try:
+            self._last_file_mtime = os.path.getmtime(index_path)
+        except OSError:
+            pass
+    
+    def get_artifact_info(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        """通过 artifact_id 获取 artifact 信息（带缓存）
+        
+        Returns:
+            包含 file_path, workflow_run_id, symbol, interval 等信息的字典，
+            如果未找到则返回 None
+        """
+        index_path = get_artifact_index_path()
+        with self._lock:
+            if self._should_reload(index_path):
+                self._load_index(index_path)
+            return self._artifacts.get(artifact_id)
+    
+    def get_artifacts_by_workflow(self, workflow_run_id: str) -> List[Dict[str, Any]]:
+        """获取指定 workflow 的所有 artifacts（带缓存）"""
+        index_path = get_artifact_index_path()
+        with self._lock:
+            if self._should_reload(index_path):
+                self._load_index(index_path)
+            return [
+                info for info in self._artifacts.values()
+                if info.get("workflow_run_id") == workflow_run_id
+            ]
+
+
 _index_cache = WorkflowIndexCache(ttl_seconds=2.0)
 _trace_cache = WorkflowTraceCache(ttl_seconds=5.0)
 _legacy_cache = LegacyTraceCache(ttl_seconds=2.0)
+_artifact_index_cache = ArtifactIndexCache(ttl_seconds=5.0)
 
 
 def _is_new_storage_available() -> bool:
@@ -570,7 +657,19 @@ async def list_run_artifacts(run_id: str):
 
 @router.get("/artifacts/{artifact_id}")
 async def get_artifact(artifact_id: str):
-    """获取 artifact 文件"""
+    """获取 artifact 文件
+    
+    优先从 artifact 索引缓存中查找（O(1)），
+    如果索引中没有则降级到遍历 trace 文件（兼容旧数据）。
+    """
+    artifact_info = await asyncio.to_thread(_artifact_index_cache.get_artifact_info, artifact_id)
+    if artifact_info:
+        file_path = artifact_info.get("file_path")
+        if file_path and os.path.exists(file_path):
+            return FileResponse(file_path)
+        elif file_path:
+            logger.warning(f"Artifact 文件不存在: {file_path}")
+    
     traces_dir = get_traces_dir()
     if os.path.exists(traces_dir):
         for filename in os.listdir(traces_dir):

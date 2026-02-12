@@ -44,6 +44,7 @@ export function BacktestPage() {
           fixed_margin_usdt: config.fixedMarginUsdt,
           fixed_leverage: config.fixedLeverage,
           reverse_mode: config.reverseMode,
+          enable_reinforcement: config.enableReinforcement,
         });
         setSelectedBacktestId(result.backtest_id);
       } catch (error) {

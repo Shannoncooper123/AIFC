@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { TrendingUp, TrendingDown, Target, BarChart3, DollarSign, Percent, Activity, Scale, Zap, Clock, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Target, BarChart3, DollarSign, Percent, Activity, Scale, Zap, Clock, ArrowUpCircle, ArrowDownCircle, Brain, Sparkles, RefreshCcw } from 'lucide-react';
 import { Card } from '../../../components/ui';
+import type { ReinforcementStats } from '../../../services/api/backtest';
 
 interface Trade {
   trade_id: string;
@@ -38,9 +39,11 @@ interface BacktestResultsProps {
     total_batches?: number;
     long_stats?: SideStats;
     short_stats?: SideStats;
+    reinforcement_stats?: ReinforcementStats;
     config: {
       initial_balance: number;
       concurrency?: number;
+      enable_reinforcement?: boolean;
     };
   };
   trades?: Trade[];
@@ -344,6 +347,89 @@ export function BacktestResults({ result, trades = [] }: BacktestResultsProps) {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* 强化学习统计 */}
+        {result.reinforcement_stats && result.config.enable_reinforcement && (
+          <div className="border-t border-neutral-700/50 pt-6">
+            <div className="flex items-center gap-2 text-white font-medium mb-4">
+              <Brain className="h-5 w-5 text-purple-400" />
+              Reinforcement Learning Results
+            </div>
+            
+            <div className="p-4 rounded-lg bg-gradient-to-br from-purple-500/10 to-blue-500/10 border border-purple-500/20">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <div className="flex items-center gap-1 text-neutral-400 text-xs mb-1">
+                    <RefreshCcw className="h-3 w-3" />
+                    Sessions
+                  </div>
+                  <div className="text-xl font-semibold text-white">
+                    {result.reinforcement_stats.total_sessions}
+                  </div>
+                  <div className="text-xs text-neutral-500">Losing trades analyzed</div>
+                </div>
+                
+                <div>
+                  <div className="flex items-center gap-1 text-neutral-400 text-xs mb-1">
+                    <Sparkles className="h-3 w-3" />
+                    Improved
+                  </div>
+                  <div className="text-xl font-semibold text-emerald-400">
+                    {result.reinforcement_stats.improved_count}
+                  </div>
+                  <div className="text-xs text-neutral-500">
+                    {(result.reinforcement_stats.improvement_rate * 100).toFixed(1)}% success rate
+                  </div>
+                </div>
+                
+                <div>
+                  <div className="flex items-center gap-1 text-neutral-400 text-xs mb-1">
+                    <Activity className="h-3 w-3" />
+                    Avg Rounds
+                  </div>
+                  <div className="text-xl font-semibold text-white">
+                    {result.reinforcement_stats.avg_rounds}
+                  </div>
+                  <div className="text-xs text-neutral-500">per session</div>
+                </div>
+                
+                <div>
+                  <div className="flex items-center gap-1 text-neutral-400 text-xs mb-1">
+                    <Target className="h-3 w-3" />
+                    Outcome Distribution
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {Object.entries(result.reinforcement_stats.outcome_distribution).map(([outcome, count]) => (
+                      <span
+                        key={outcome}
+                        className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          outcome === 'profit' ? 'bg-emerald-500/20 text-emerald-400' :
+                          outcome === 'loss' ? 'bg-rose-500/20 text-rose-400' :
+                          outcome === 'no_trade' ? 'bg-blue-500/20 text-blue-400' :
+                          'bg-neutral-500/20 text-neutral-400'
+                        }`}
+                      >
+                        {outcome}: {count}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              
+              {result.reinforcement_stats.improved_count > 0 && (
+                <div className="mt-4 pt-4 border-t border-purple-500/20">
+                  <div className="flex items-center gap-2 text-sm text-purple-300">
+                    <Sparkles className="h-4 w-4" />
+                    <span>
+                      Successfully converted {result.reinforcement_stats.improved_count} losing trade(s) 
+                      to profitable/neutral outcomes through iterative feedback
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

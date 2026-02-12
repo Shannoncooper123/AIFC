@@ -36,6 +36,7 @@ class BacktestStartRequest(BaseModel):
     fixed_margin_usdt: float = Field(default=50.0, ge=1.0, le=10000.0, description="固定开仓保证金")
     fixed_leverage: int = Field(default=10, ge=1, le=125, description="固定杠杆倍数")
     reverse_mode: bool = Field(default=False, description="反向交易模式")
+    enable_reinforcement: bool = Field(default=False, description="启用强化学习（对亏损交易进行多轮复盘优化）")
 
 
 class BacktestStartResponse(BaseModel):
@@ -140,12 +141,14 @@ async def start_backtest(request: BacktestStartRequest):
             fixed_margin_usdt=request.fixed_margin_usdt,
             fixed_leverage=request.fixed_leverage,
             reverse_mode=request.reverse_mode,
+            enable_reinforcement=request.enable_reinforcement,
         )
         
         engine = BacktestEngine(
             config=config,
             on_progress=lambda p: _on_progress(engine.backtest_id, p),
             on_complete=lambda r: _on_complete(engine.backtest_id, r),
+            enable_reinforcement=request.enable_reinforcement,
         )
         
         register_backtest(engine)

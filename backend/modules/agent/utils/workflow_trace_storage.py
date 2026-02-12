@@ -183,6 +183,22 @@ def _get_artifacts_dir(cfg: Optional[Dict[str, Any]] = None) -> str:
     return artifacts_dir
 
 
+def _get_artifact_index_path(cfg: Optional[Dict[str, Any]] = None) -> str:
+    """获取 artifact 索引文件路径
+    
+    索引文件用于快速查找 artifact_id 到 file_path 的映射，
+    避免遍历所有 trace 文件。
+    """
+    if cfg is None:
+        cfg = get_config()
+    agent_cfg = cfg.get("agent", {})
+    base_dir = _get_base_dir()
+    index_path = agent_cfg.get("artifact_index_path", "modules/data/artifact_index.jsonl")
+    if not os.path.isabs(index_path):
+        index_path = os.path.join(base_dir, index_path)
+    return index_path
+
+
 def get_trace_path(cfg: Optional[Dict[str, Any]] = None) -> str:
     """公开的获取旧版 trace 文件路径接口（兼容）"""
     return _get_trace_path(cfg)
@@ -206,6 +222,11 @@ def get_workflow_trace_path(workflow_run_id: str, cfg: Optional[Dict[str, Any]] 
 def get_artifacts_dir(cfg: Optional[Dict[str, Any]] = None) -> str:
     """公开的获取 artifacts 目录路径接口"""
     return _get_artifacts_dir(cfg)
+
+
+def get_artifact_index_path(cfg: Optional[Dict[str, Any]] = None) -> str:
+    """公开的获取 artifact 索引文件路径接口"""
+    return _get_artifact_index_path(cfg)
 
 
 def _increment_counter(workflow_run_id: str, counter_type: str) -> None:
@@ -275,6 +296,29 @@ def _append_to_index(index_record: Dict[str, Any], cfg: Optional[Dict[str, Any]]
             locked_append_jsonl(index_path, index_record, fsync=_TRACE_FSYNC)
     except Exception as e:
         logger.error(f"workflow index 写入失败: {e}")
+
+
+def _append_to_artifact_index(artifact_record: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> None:
+    """追加记录到 artifact 索引文件
+    
+    索引记录包含: artifact_id, workflow_run_id, file_path, symbol, interval
+    用于快速通过 artifact_id 查找文件路径。
+    """
+    try:
+        artifact_record["timestamp_ms"] = int(time.time() * 1000)
+        index_path = _get_artifact_index_path(cfg)
+        os.makedirs(os.path.dirname(index_path), exist_ok=True)
+        if _TRACE_ASYNC:
+            _ensure_trace_worker()
+            item = {"trace_path": index_path, "event": artifact_record}
+            try:
+                _trace_queue.put(item, timeout=0.2)
+            except queue.Full:
+                locked_append_jsonl(index_path, artifact_record, fsync=_TRACE_FSYNC)
+        else:
+            locked_append_jsonl(index_path, artifact_record, fsync=_TRACE_FSYNC)
+    except Exception as e:
+        logger.error(f"artifact index 写入失败: {e}")
 
 
 def append_event(event: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> None:
@@ -520,6 +564,15 @@ def save_image_artifact(
         payload=artifact_payload,
         cfg=cfg,
     )
+    
+    _append_to_artifact_index({
+        "artifact_id": artifact_id,
+        "workflow_run_id": workflow_run_id,
+        "file_path": file_path,
+        "symbol": symbol,
+        "interval": interval,
+        "image_id": image_id,
+    }, cfg)
     
     return {
         "artifact_id": artifact_id,

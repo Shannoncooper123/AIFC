@@ -10,6 +10,15 @@ export interface BacktestStartRequest {
   fixed_margin_usdt: number;
   fixed_leverage: number;
   reverse_mode: boolean;
+  enable_reinforcement: boolean;
+}
+
+export interface ReinforcementStats {
+  total_sessions: number;
+  improved_count: number;
+  improvement_rate: number;
+  outcome_distribution: Record<string, number>;
+  avg_rounds: number;
 }
 
 export interface BacktestStartResponse {
@@ -87,6 +96,7 @@ export interface BacktestResult {
     initial_balance: number;
     concurrency: number;
     reverse_mode?: boolean;
+    enable_reinforcement?: boolean;
   };
   status: string;
   start_timestamp: string;
@@ -109,6 +119,7 @@ export interface BacktestResult {
   cancelled_orders: CancelledLimitOrder[];
   workflow_runs: string[];
   error_message?: string;
+  reinforcement_stats?: ReinforcementStats;
 }
 
 export interface BacktestListItem {
@@ -121,6 +132,7 @@ export interface BacktestListItem {
     interval: string;
     initial_balance: number;
     reverse_mode?: boolean;
+    enable_reinforcement?: boolean;
   };
   start_timestamp: string;
   end_timestamp?: string;

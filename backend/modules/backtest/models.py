@@ -27,6 +27,7 @@ class BacktestConfig:
     fixed_margin_usdt: float = 50.0
     fixed_leverage: int = 10
     reverse_mode: bool = False
+    enable_reinforcement: bool = False
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -40,6 +41,7 @@ class BacktestConfig:
             "fixed_margin_usdt": self.fixed_margin_usdt,
             "fixed_leverage": self.fixed_leverage,
             "reverse_mode": self.reverse_mode,
+            "enable_reinforcement": self.enable_reinforcement,
         }
     
     @classmethod
@@ -55,6 +57,7 @@ class BacktestConfig:
             fixed_margin_usdt=data.get("fixed_margin_usdt", 50.0),
             fixed_leverage=data.get("fixed_leverage", 10),
             reverse_mode=data.get("reverse_mode", False),
+            enable_reinforcement=data.get("enable_reinforcement", False),
         )
 
 
@@ -329,3 +332,199 @@ class BacktestResult:
             "workflow_runs": self.workflow_runs,
             "error_message": self.error_message,
         }
+
+
+@dataclass
+class NodeFeedback:
+    """单节点的注意事项反馈
+    
+    用于强化学习中向特定节点注入复盘得出的注意事项。
+    """
+    node_name: str
+    issues: List[str] = field(default_factory=list)
+    attention_points: List[str] = field(default_factory=list)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "node_name": self.node_name,
+            "issues": self.issues,
+            "attention_points": self.attention_points,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "NodeFeedback":
+        return cls(
+            node_name=data.get("node_name", ""),
+            issues=data.get("issues", []),
+            attention_points=data.get("attention_points", []),
+        )
+
+
+@dataclass
+class ReinforcementFeedback:
+    """完整的强化学习反馈（分节点）
+    
+    包含对分析节点和决策节点的分别反馈，以及整体复盘总结。
+    """
+    analysis_node_feedback: Optional[NodeFeedback] = None
+    decision_node_feedback: Optional[NodeFeedback] = None
+    summary: str = ""
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "analysis_node_feedback": self.analysis_node_feedback.to_dict() if self.analysis_node_feedback else None,
+            "decision_node_feedback": self.decision_node_feedback.to_dict() if self.decision_node_feedback else None,
+            "summary": self.summary,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ReinforcementFeedback":
+        analysis_fb = None
+        if data.get("analysis_node_feedback"):
+            analysis_fb = NodeFeedback.from_dict(data["analysis_node_feedback"])
+        decision_fb = None
+        if data.get("decision_node_feedback"):
+            decision_fb = NodeFeedback.from_dict(data["decision_node_feedback"])
+        return cls(
+            analysis_node_feedback=analysis_fb,
+            decision_node_feedback=decision_fb,
+            summary=data.get("summary", ""),
+        )
+
+
+@dataclass
+class LossAnalysisResult:
+    """亏损分析结果
+    
+    LossAnalysisAgent的输出，包含问题分析和改进建议。
+    """
+    feedback: ReinforcementFeedback
+    raw_response: str = ""
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "feedback": self.feedback.to_dict(),
+            "raw_response": self.raw_response,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LossAnalysisResult":
+        return cls(
+            feedback=ReinforcementFeedback.from_dict(data.get("feedback", {})),
+            raw_response=data.get("raw_response", ""),
+        )
+
+
+@dataclass
+class ReinforcementRound:
+    """单轮强化学习记录
+    
+    记录一轮workflow执行的完整上下文，用于追溯和复盘。
+    """
+    round_number: int
+    workflow_run_id: str
+    injected_feedback: Optional[ReinforcementFeedback] = None
+    analysis_output: str = ""
+    decision_output: str = ""
+    kline_images: Dict[str, str] = field(default_factory=dict)
+    trade_result: Optional[BacktestTradeResult] = None
+    loss_analysis: Optional[LossAnalysisResult] = None
+    outcome: str = "unknown"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "round_number": self.round_number,
+            "workflow_run_id": self.workflow_run_id,
+            "injected_feedback": self.injected_feedback.to_dict() if self.injected_feedback else None,
+            "analysis_output": self.analysis_output,
+            "decision_output": self.decision_output,
+            "kline_images": self.kline_images,
+            "trade_result": self.trade_result.to_dict() if self.trade_result else None,
+            "loss_analysis": self.loss_analysis.to_dict() if self.loss_analysis else None,
+            "outcome": self.outcome,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ReinforcementRound":
+        trade_result = None
+        if data.get("trade_result"):
+            tr_data = data["trade_result"]
+            trade_result = BacktestTradeResult(
+                trade_id=tr_data.get("trade_id", ""),
+                kline_time=datetime.fromisoformat(tr_data["kline_time"]),
+                symbol=tr_data.get("symbol", ""),
+                side=tr_data.get("side", ""),
+                entry_price=tr_data.get("entry_price", 0),
+                exit_price=tr_data.get("exit_price", 0),
+                tp_price=tr_data.get("tp_price", 0),
+                sl_price=tr_data.get("sl_price", 0),
+                size=tr_data.get("size", 0),
+                exit_time=datetime.fromisoformat(tr_data["exit_time"]),
+                exit_type=tr_data.get("exit_type", ""),
+                realized_pnl=tr_data.get("realized_pnl", 0),
+                pnl_percent=tr_data.get("pnl_percent", 0),
+                holding_bars=tr_data.get("holding_bars", 0),
+                workflow_run_id=tr_data.get("workflow_run_id", ""),
+            )
+        
+        loss_analysis = None
+        if data.get("loss_analysis"):
+            loss_analysis = LossAnalysisResult.from_dict(data["loss_analysis"])
+        
+        injected_feedback = None
+        if data.get("injected_feedback"):
+            injected_feedback = ReinforcementFeedback.from_dict(data["injected_feedback"])
+        
+        return cls(
+            round_number=data.get("round_number", 0),
+            workflow_run_id=data.get("workflow_run_id", ""),
+            injected_feedback=injected_feedback,
+            analysis_output=data.get("analysis_output", ""),
+            decision_output=data.get("decision_output", ""),
+            kline_images=data.get("kline_images", {}),
+            trade_result=trade_result,
+            loss_analysis=loss_analysis,
+            outcome=data.get("outcome", "unknown"),
+        )
+
+
+@dataclass
+class ReinforcementSession:
+    """完整的强化学习会话
+    
+    记录针对单个时间点的多轮强化学习尝试。
+    """
+    session_id: str
+    symbol: str
+    kline_time: datetime
+    backtest_id: str
+    rounds: List[ReinforcementRound] = field(default_factory=list)
+    final_outcome: str = "unknown"
+    improvement_achieved: bool = False
+    total_rounds: int = 0
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "symbol": self.symbol,
+            "kline_time": self.kline_time.isoformat(),
+            "backtest_id": self.backtest_id,
+            "rounds": [r.to_dict() for r in self.rounds],
+            "final_outcome": self.final_outcome,
+            "improvement_achieved": self.improvement_achieved,
+            "total_rounds": self.total_rounds,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ReinforcementSession":
+        rounds = [ReinforcementRound.from_dict(r) for r in data.get("rounds", [])]
+        return cls(
+            session_id=data.get("session_id", ""),
+            symbol=data.get("symbol", ""),
+            kline_time=datetime.fromisoformat(data["kline_time"]),
+            backtest_id=data.get("backtest_id", ""),
+            rounds=rounds,
+            final_outcome=data.get("final_outcome", "unknown"),
+            improvement_achieved=data.get("improvement_achieved", False),
+            total_rounds=data.get("total_rounds", 0),
+        )

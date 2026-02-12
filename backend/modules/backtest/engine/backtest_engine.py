@@ -28,11 +28,18 @@ from modules.backtest.models import (
     BacktestProgress,
     BacktestResult,
     BacktestStatus,
+    BacktestTradeResult,
     CancelledLimitOrder,
 )
 from modules.backtest.providers.kline_provider import BacktestKlineProvider
 from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
+
+try:
+    from modules.backtest.engine.reinforcement_learning_engine import ReinforcementLearningEngine
+    _REINFORCEMENT_AVAILABLE = True
+except ImportError:
+    _REINFORCEMENT_AVAILABLE = False
 
 logger = get_logger('backtest.engine')
 
@@ -84,10 +91,12 @@ class BacktestEngine:
         config: BacktestConfig,
         on_progress: Optional[Callable[[BacktestProgress], None]] = None,
         on_complete: Optional[Callable[[BacktestResult], None]] = None,
+        enable_reinforcement: bool = False,
     ):
         self.config = config
         self.on_progress = on_progress
         self.on_complete = on_complete
+        self.enable_reinforcement = enable_reinforcement and _REINFORCEMENT_AVAILABLE
         
         self.backtest_id = f"bt_{int(time.time() * 1000)}"
         self._stop_requested = False
@@ -105,6 +114,7 @@ class BacktestEngine:
         self._semaphore: Optional[DynamicSemaphore] = None
         self._executor_max_workers = max(1, self.config.concurrency)
         self._executor_resize_target: Optional[int] = None
+        self._reinforcement_engine: Optional["ReinforcementLearningEngine"] = None
         
         self._base_dir = get_config().get("agent", {}).get("data_dir", "modules/data")
         self._total_steps = 0
@@ -116,7 +126,8 @@ class BacktestEngine:
             start_timestamp=datetime.now(timezone.utc),
         )
         
-        logger.info(f"回测引擎创建: backtest_id={self.backtest_id}, concurrency={config.concurrency}")
+        reinforcement_info = " (强化学习已启用)" if self.enable_reinforcement else ""
+        logger.info(f"回测引擎创建: backtest_id={self.backtest_id}, concurrency={config.concurrency}{reinforcement_info}")
     
     def _get_interval_minutes(self, interval: str) -> int:
         """将K线周期转换为分钟数"""
@@ -193,6 +204,16 @@ class BacktestEngine:
         self._total_steps = self._calculate_total_steps()
         self._stats = BacktestStatsCollector(self._total_steps)
         self._result_collector = ResultCollector(self.result)
+        
+        if self.enable_reinforcement and _REINFORCEMENT_AVAILABLE:
+            self._reinforcement_engine = ReinforcementLearningEngine(
+                config=self.config,
+                kline_provider=self.kline_provider,
+                backtest_id=self.backtest_id,
+                base_dir=self._base_dir,
+            )
+            self._reinforcement_engine.set_workflow_executor(self._executor)
+            logger.info("强化学习引擎已初始化")
         
         logger.info(f"回测环境初始化完成, 仓位记录文件: {self._position_logger.positions_file_path}")
     
@@ -551,3 +572,21 @@ class BacktestEngine:
         
         logger.warning("信号量未初始化，无法调整并发")
         return False
+    
+    def get_reinforcement_statistics(self) -> Optional[Dict[str, Any]]:
+        """获取强化学习统计信息
+        
+        Returns:
+            强化学习统计字典，如果未启用强化学习则返回 None
+        """
+        if self._reinforcement_engine:
+            return self._reinforcement_engine.get_statistics()
+        return None
+    
+    def get_reinforcement_engine(self) -> Optional["ReinforcementLearningEngine"]:
+        """获取强化学习引擎实例
+        
+        Returns:
+            ReinforcementLearningEngine 实例，如果未启用则返回 None
+        """
+        return self._reinforcement_engine

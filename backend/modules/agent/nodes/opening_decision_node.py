@@ -1,6 +1,6 @@
 """工作流节点：开仓决策"""
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -87,8 +87,26 @@ def _generate_kline_images(symbol: str, intervals: List[str]) -> tuple[List[Dict
     return images, image_metas
 
 
-def _build_multimodal_content(symbol: str, account_info: str, analysis_result: str, images: List[Dict[str, Any]], max_margin: float, current_price: float | None) -> List[Dict[str, Any]]:
-    """构建多模态消息内容"""
+def _build_multimodal_content(
+    symbol: str,
+    account_info: str,
+    analysis_result: str,
+    images: List[Dict[str, Any]],
+    max_margin: float,
+    current_price: float | None,
+    decision_attention_points: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """构建多模态消息内容
+    
+    Args:
+        symbol: 交易对
+        account_info: 账户信息
+        analysis_result: 前序分析结论
+        images: K线图像列表
+        max_margin: 最大保证金
+        current_price: 当前价格
+        decision_attention_points: 强化学习注入的决策节点注意事项（可选）
+    """
     content = []
     
     margin_info = f"本次开仓可用最大保证金: ${max_margin:.2f} USDT" if max_margin > 0 else "保证金信息不可用"
@@ -100,8 +118,18 @@ def _build_multimodal_content(symbol: str, account_info: str, analysis_result: s
 【账户状态】
 {account_info}
 {margin_info}
+"""
 
-【前序分析结论】
+    if decision_attention_points and len(decision_attention_points) > 0:
+        text_part += """
+【⚠️ 注意事项（基于上轮复盘）】
+请在决策时务必关注以下要点：
+"""
+        for i, point in enumerate(decision_attention_points, 1):
+            text_part += f"{i}. {point}\n"
+        text_part += "\n"
+
+    text_part += f"""【前序分析结论】
 {analysis_result}
 
 【多周期K线图像】
@@ -128,6 +156,35 @@ def _build_multimodal_content(symbol: str, account_info: str, analysis_result: s
     return content
 
 
+def _extract_decision_attention_points(config: RunnableConfig) -> Optional[List[str]]:
+    """从config中提取决策节点的注意事项
+    
+    Args:
+        config: workflow 配置
+        
+    Returns:
+        注意事项列表，如果没有则返回 None
+    """
+    configurable = config.get("configurable", {})
+    reinforcement_feedback = configurable.get("reinforcement_feedback")
+    
+    if not reinforcement_feedback:
+        return None
+    
+    decision_fb = getattr(reinforcement_feedback, "decision_node_feedback", None)
+    if decision_fb is None:
+        if isinstance(reinforcement_feedback, dict):
+            decision_fb = reinforcement_feedback.get("decision_node_feedback")
+    
+    if decision_fb:
+        if hasattr(decision_fb, "attention_points"):
+            return decision_fb.attention_points
+        elif isinstance(decision_fb, dict):
+            return decision_fb.get("attention_points", [])
+    
+    return None
+
+
 @traced_node("opening_decision")
 def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig) -> Dict[str, Any]:
     """
@@ -137,6 +194,8 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
     - state.current_symbol: 当前分析的币种
     - state.analysis_results[symbol]: 前序节点的分析结论
     - state.account_summary: 账户状态
+    
+    支持强化学习反馈注入：如果 config 中包含 reinforcement_feedback，会提取决策节点的注意事项并注入到消息中。
         
     输出：
     - {"opening_decision_results": {symbol: decision_output}}
@@ -145,8 +204,14 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
     if not symbol:
         return {"error": "opening_decision_node: 缺少 current_symbol，跳过决策。"}
 
+    decision_attention_points = _extract_decision_attention_points(config)
+    has_feedback = decision_attention_points and len(decision_attention_points) > 0
+
     logger.info("=" * 60)
-    logger.info(f"开仓决策节点执行: {symbol}")
+    feedback_info = " (带强化学习反馈)" if has_feedback else ""
+    logger.info(f"开仓决策节点执行{feedback_info}: {symbol}")
+    if has_feedback:
+        logger.info(f"注入注意事项: {decision_attention_points}")
     logger.info("=" * 60)
 
     analysis_result = state.analysis_results.get(symbol)
@@ -204,7 +269,10 @@ def opening_decision_node(state: SymbolAnalysisState, *, config: RunnableConfig)
         else:
             logger.info(f"{symbol} 生成 {len(images)} 个周期的复核图像")
             account_info = _format_account_summary(state.account_summary)
-            multimodal_content = _build_multimodal_content(symbol, account_info, analysis_result, images, max_margin, current_price)
+            multimodal_content = _build_multimodal_content(
+                symbol, account_info, analysis_result, images, max_margin, current_price,
+                decision_attention_points=decision_attention_points,
+            )
             subagent_messages = [HumanMessage(
                 content=multimodal_content,
                 additional_kwargs={"_image_metas": image_metas}

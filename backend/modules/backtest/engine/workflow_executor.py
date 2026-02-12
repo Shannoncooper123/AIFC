@@ -20,7 +20,12 @@ from modules.agent.utils.workflow_trace_storage import (
     record_workflow_end,
 )
 from modules.backtest.engine.backtest_trade_engine import BacktestTradeEngine
-from modules.backtest.models import BacktestConfig, BacktestTradeResult, CancelledLimitOrder
+from modules.backtest.models import (
+    BacktestConfig,
+    BacktestTradeResult,
+    CancelledLimitOrder,
+    ReinforcementFeedback,
+)
 from modules.backtest.providers.kline_provider import BacktestKlineProvider, set_backtest_time
 from modules.config.settings import get_config
 from modules.monitor.utils.logger import get_logger
@@ -57,23 +62,26 @@ class WorkflowExecutor:
         self,
         current_time: datetime,
         step_index: int,
+        reinforcement_feedback: Optional[ReinforcementFeedback] = None,
     ) -> Tuple[str, List[BacktestTradeResult], List[CancelledLimitOrder], bool]:
         """执行单个回测步骤
         
         Args:
             current_time: 当前模拟时间
             step_index: 步骤索引
+            reinforcement_feedback: 强化学习反馈（可选），用于注入到workflow节点
         
         Returns:
             (workflow_run_id, 交易结果列表, 取消订单列表, 是否超时)
         """
         ctx = contextvars.copy_context()
-        return ctx.run(self._execute_step_isolated, current_time, step_index)
+        return ctx.run(self._execute_step_isolated, current_time, step_index, reinforcement_feedback)
     
     def _execute_step_isolated(
         self,
         current_time: datetime,
         step_index: int,
+        reinforcement_feedback: Optional[ReinforcementFeedback] = None,
     ) -> Tuple[str, List[BacktestTradeResult], List[CancelledLimitOrder], bool]:
         """在隔离上下文中执行步骤"""
         step_id = f"step_{step_index}_{int(time.time() * 1000)}"
@@ -81,7 +89,8 @@ class WorkflowExecutor:
         is_timeout = False
         thread_name = threading.current_thread().name
         
-        logger.debug(f"[{thread_name}] 步骤 {step_index} 开始: 目标时间={current_time}")
+        feedback_info = " (带强化学习反馈)" if reinforcement_feedback else ""
+        logger.debug(f"[{thread_name}] 步骤 {step_index}{feedback_info} 开始: 目标时间={current_time}")
         
         set_backtest_time(current_time)
         set_kline_provider(self.kline_provider, context_local=True)
@@ -100,7 +109,7 @@ class WorkflowExecutor:
             start_iso = datetime.now(timezone.utc).isoformat()
             
             success, error_msg = self._run_workflow(
-                workflow_run_id, mock_alert, current_time, step_index
+                workflow_run_id, mock_alert, current_time, step_index, reinforcement_feedback
             )
             
             if success:
@@ -190,6 +199,7 @@ class WorkflowExecutor:
         mock_alert: Dict[str, Any],
         current_time: datetime,
         step_index: int,
+        reinforcement_feedback: Optional[ReinforcementFeedback] = None,
     ) -> Tuple[bool, Optional[str]]:
         """执行 workflow
         
@@ -208,7 +218,7 @@ class WorkflowExecutor:
             with workflow_trace_context(workflow_run_id):
                 workflow_app.invoke(
                     AgentState(),
-                    config=self._wrap_config(mock_alert, workflow_run_id, current_time)
+                    config=self._wrap_config(mock_alert, workflow_run_id, current_time, reinforcement_feedback)
                 )
             return True, None
         except Exception as e:
@@ -220,15 +230,28 @@ class WorkflowExecutor:
         alert: Dict[str, Any],
         workflow_run_id: str,
         current_time: datetime,
+        reinforcement_feedback: Optional[ReinforcementFeedback] = None,
     ) -> RunnableConfig:
-        """包装 workflow 配置"""
+        """包装 workflow 配置
+        
+        Args:
+            alert: 模拟警报
+            workflow_run_id: workflow 运行ID
+            current_time: 当前时间
+            reinforcement_feedback: 强化学习反馈（可选）
+        """
+        configurable = {
+            "latest_alert": alert,
+            "workflow_run_id": workflow_run_id,
+            "backtest_time": current_time,
+            "is_backtest": True,
+        }
+        
+        if reinforcement_feedback:
+            configurable["reinforcement_feedback"] = reinforcement_feedback
+        
         return RunnableConfig(
-            configurable={
-                "latest_alert": alert,
-                "workflow_run_id": workflow_run_id,
-                "backtest_time": current_time,
-                "is_backtest": True,
-            },
+            configurable=configurable,
             run_id=workflow_run_id,
         )
     

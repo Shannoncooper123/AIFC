@@ -1,4 +1,4 @@
-import { CheckCircle, XCircle, Clock, Loader2, Trash2, Eye, RefreshCw } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Loader2, Trash2, Eye, RefreshCw, Brain } from 'lucide-react';
 import { Card } from '../../../components/ui';
 
 interface BacktestListItem {
@@ -11,6 +11,7 @@ interface BacktestListItem {
     interval: string;
     initial_balance: number;
     reverse_mode?: boolean;
+    enable_reinforcement?: boolean;
   };
   start_timestamp: string;
   end_timestamp?: string;
@@ -90,10 +91,16 @@ export function BacktestList({ backtests, onSelect, onDelete, selectedId }: Back
                 <div>
                   <div className="text-sm text-white flex items-center gap-2">
                     {bt.config.symbols.join(', ')}
+                    {bt.config.enable_reinforcement && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                        <Brain className="h-3 w-3" />
+                        RL
+                      </span>
+                    )}
                     {bt.config.reverse_mode && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-orange-500/20 text-orange-400 border border-orange-500/30">
                         <RefreshCw className="h-3 w-3" />
-                        Reverse
+                        Rev
                       </span>
                     )}
                   </div>

@@ -1,6 +1,6 @@
 """工作流节点：单币种深度分析（统一分析：先判断市场状态，再决定方向）"""
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -44,6 +44,7 @@ def _build_message_content(
     symbol: str,
     supplemental_context: str,
     current_price: float | None,
+    analysis_attention_points: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """构建消息内容
     
@@ -51,6 +52,7 @@ def _build_message_content(
         symbol: 交易对
         supplemental_context: 补充上下文（账户信息）
         current_price: 当前价格
+        analysis_attention_points: 强化学习注入的分析节点注意事项（可选）
         
     Returns:
         消息内容列表
@@ -63,8 +65,18 @@ def _build_message_content(
 【当前价格】{price_str}
 
 {supplemental_context}
-
-请利用 get_kline_image 工具，严格按照 1h -> 15m -> 3m 的顺序，逐个获取K线图像并进行分析。
+"""
+    
+    if analysis_attention_points and len(analysis_attention_points) > 0:
+        text_part += """
+【⚠️ 注意事项（基于上轮复盘）】
+请在分析时务必关注以下要点：
+"""
+        for i, point in enumerate(analysis_attention_points, 1):
+            text_part += f"{i}. {point}\n"
+        text_part += "\n"
+    
+    text_part += """请利用 get_kline_image 工具，严格按照 1h -> 15m -> 3m 的顺序，逐个获取K线图像并进行分析。
 分析完成后，基于市场状态判断最优方向（做多 / 做空 / 观望），并给出具体的交易计划或观望理由。"""
     content.append({"type": "text", "text": text_part})
     
@@ -101,6 +113,35 @@ def _create_analysis_agent():
     return agent, node_name
 
 
+def _extract_analysis_attention_points(config: RunnableConfig) -> Optional[List[str]]:
+    """从config中提取分析节点的注意事项
+    
+    Args:
+        config: workflow 配置
+        
+    Returns:
+        注意事项列表，如果没有则返回 None
+    """
+    configurable = config.get("configurable", {})
+    reinforcement_feedback = configurable.get("reinforcement_feedback")
+    
+    if not reinforcement_feedback:
+        return None
+    
+    analysis_fb = getattr(reinforcement_feedback, "analysis_node_feedback", None)
+    if analysis_fb is None:
+        if isinstance(reinforcement_feedback, dict):
+            analysis_fb = reinforcement_feedback.get("analysis_node_feedback")
+    
+    if analysis_fb:
+        if hasattr(analysis_fb, "attention_points"):
+            return analysis_fb.attention_points
+        elif isinstance(analysis_fb, dict):
+            return analysis_fb.get("attention_points", [])
+    
+    return None
+
+
 @traced_node("single_symbol_analysis")
 def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableConfig) -> Dict[str, Any]:
     """
@@ -113,6 +154,7 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
     4. 输出分析结论传递给下游的开仓决策节点
     
     核心改进：先判断市场状态，再决定方向，避免双向分析的冲突问题。
+    支持强化学习反馈注入：如果 config 中包含 reinforcement_feedback，会提取分析节点的注意事项并注入到消息中。
     
     返回部分状态更新字典：{"analysis_results": {symbol: analysis_result}}
     """
@@ -120,8 +162,14 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
     if not symbol:
         return {"error": "single_symbol_analysis_node: 缺少 current_symbol，跳过分析。"}
 
+    analysis_attention_points = _extract_analysis_attention_points(config)
+    has_feedback = analysis_attention_points and len(analysis_attention_points) > 0
+
     logger.info("=" * 60)
-    logger.info(f"单币种统一分析节点执行: {symbol}")
+    feedback_info = " (带强化学习反馈)" if has_feedback else ""
+    logger.info(f"单币种统一分析节点执行{feedback_info}: {symbol}")
+    if has_feedback:
+        logger.info(f"注入注意事项: {analysis_attention_points}")
     logger.info("=" * 60)
 
     try:
@@ -140,6 +188,7 @@ def single_symbol_analysis_node(state: SymbolAnalysisState, *, config: RunnableC
             symbol=symbol,
             supplemental_context=supplemental_context_str,
             current_price=current_price,
+            analysis_attention_points=analysis_attention_points,
         )
 
         agent, _ = _create_analysis_agent()
