@@ -220,14 +220,14 @@ class ReinforcementLearningEngine:
                 outcome="error",
             )
         
-        workflow_run_id, trade_results, _, is_timeout = self._workflow_executor.execute_step(
+        workflow_run_id, trade_results, _, is_timeout, analysis_outputs, decision_outputs = self._workflow_executor.execute_step(
             current_time=kline_time,
             step_index=-round_num,
             reinforcement_feedback=feedback,
         )
         
-        analysis_output = ""
-        decision_output = ""
+        analysis_output = analysis_outputs.get(symbol, "") if analysis_outputs else ""
+        decision_output = decision_outputs.get(symbol, "") if decision_outputs else ""
         kline_images = self._collect_kline_images(workflow_run_id)
         
         trade_result = None
