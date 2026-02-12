@@ -63,7 +63,7 @@ class WorkflowExecutor:
         current_time: datetime,
         step_index: int,
         reinforcement_feedback: Optional[ReinforcementFeedback] = None,
-    ) -> Tuple[str, List[BacktestTradeResult], List[CancelledLimitOrder], bool]:
+    ) -> Tuple[str, List[BacktestTradeResult], List[CancelledLimitOrder], bool, Dict[str, str], Dict[str, str]]:
         """执行单个回测步骤
         
         Args:
@@ -72,7 +72,7 @@ class WorkflowExecutor:
             reinforcement_feedback: 强化学习反馈（可选），用于注入到workflow节点
         
         Returns:
-            (workflow_run_id, 交易结果列表, 取消订单列表, 是否超时)
+            (workflow_run_id, 交易结果列表, 取消订单列表, 是否超时, 分析输出字典, 决策输出字典)
         """
         ctx = contextvars.copy_context()
         return ctx.run(self._execute_step_isolated, current_time, step_index, reinforcement_feedback)
@@ -82,11 +82,13 @@ class WorkflowExecutor:
         current_time: datetime,
         step_index: int,
         reinforcement_feedback: Optional[ReinforcementFeedback] = None,
-    ) -> Tuple[str, List[BacktestTradeResult], List[CancelledLimitOrder], bool]:
+    ) -> Tuple[str, List[BacktestTradeResult], List[CancelledLimitOrder], bool, Dict[str, str], Dict[str, str]]:
         """在隔离上下文中执行步骤"""
         step_id = f"step_{step_index}_{int(time.time() * 1000)}"
         trade_results = []
         is_timeout = False
+        analysis_outputs: Dict[str, str] = {}
+        decision_outputs: Dict[str, str] = {}
         thread_name = threading.current_thread().name
         
         feedback_info = " (带强化学习反馈)" if reinforcement_feedback else ""
@@ -108,25 +110,28 @@ class WorkflowExecutor:
             record_workflow_start(workflow_run_id, mock_alert, cfg)
             start_iso = datetime.now(timezone.utc).isoformat()
             
-            success, error_msg = self._run_workflow(
+            success, error_msg, final_state = self._run_workflow(
                 workflow_run_id, mock_alert, current_time, step_index, reinforcement_feedback
             )
             
             if success:
                 record_workflow_end(workflow_run_id, start_iso, "success", cfg=cfg)
+                if final_state:
+                    analysis_outputs = final_state.get("analysis_results", {}) if isinstance(final_state, dict) else getattr(final_state, "analysis_results", {})
+                    decision_outputs = final_state.get("opening_decision_results", {}) if isinstance(final_state, dict) else getattr(final_state, "opening_decision_results", {})
             elif error_msg and "超时" in error_msg:
                 is_timeout = True
                 record_workflow_end(workflow_run_id, start_iso, "timeout", error=error_msg, cfg=cfg)
-                return workflow_run_id, [], [], is_timeout
+                return workflow_run_id, [], [], is_timeout, {}, {}
             else:
                 record_workflow_end(workflow_run_id, start_iso, "error", error=error_msg, cfg=cfg)
-                return workflow_run_id, [], [], is_timeout
+                return workflow_run_id, [], [], is_timeout, {}, {}
             
             trade_results, cancelled_orders = self._collect_trade_results(
                 trade_engine, current_time, workflow_run_id, step_index
             )
             
-            return workflow_run_id, trade_results, cancelled_orders, is_timeout
+            return workflow_run_id, trade_results, cancelled_orders, is_timeout, analysis_outputs, decision_outputs
             
         finally:
             clear_thread_local_engine()
@@ -200,7 +205,7 @@ class WorkflowExecutor:
         current_time: datetime,
         step_index: int,
         reinforcement_feedback: Optional[ReinforcementFeedback] = None,
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> Tuple[bool, Optional[str], Optional[AgentState]]:
         """执行 workflow
         
         注意：移除了内部的 ThreadPoolExecutor 超时控制，因为：
@@ -209,6 +214,9 @@ class WorkflowExecutor:
         3. workflow 超时由外层的 as_completed(timeout=600) 控制
         
         如果需要更精细的超时控制，应该在 LangGraph 层面配置。
+        
+        Returns:
+            (success, error_message, final_state)
         """
         cfg = get_config()
         graph = create_workflow(cfg)
@@ -216,14 +224,14 @@ class WorkflowExecutor:
         
         try:
             with workflow_trace_context(workflow_run_id):
-                workflow_app.invoke(
+                final_state = workflow_app.invoke(
                     AgentState(),
                     config=self._wrap_config(mock_alert, workflow_run_id, current_time, reinforcement_feedback)
                 )
-            return True, None
+            return True, None, final_state
         except Exception as e:
             logger.error(f"步骤 {step_index} workflow失败: {e}", exc_info=True)
-            return False, str(e)
+            return False, str(e), None
     
     def _wrap_config(
         self,

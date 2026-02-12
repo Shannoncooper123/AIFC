@@ -344,7 +344,7 @@ class BacktestEngine:
                         future_executor.shutdown(wait=False)
                     
                     try:
-                        workflow_run_id, trade_results, cancelled_orders, is_timeout = future.result(timeout=1)
+                        workflow_run_id, trade_results, cancelled_orders, is_timeout, analysis_outputs, decision_outputs = future.result(timeout=1)
                         
                         self._stats.record_step(StepMetrics(
                             step_index=step_index,
@@ -358,6 +358,15 @@ class BacktestEngine:
                         self._result_collector.add_trades(trade_results)
                         if cancelled_orders:
                             self._result_collector.add_cancelled_orders(cancelled_orders)
+                        
+                        if trade_results and self.enable_reinforcement:
+                            self._handle_trade_results(
+                                workflow_run_id=workflow_run_id,
+                                trade_results=trade_results,
+                                kline_time=current_time,
+                                analysis_outputs=analysis_outputs,
+                                decision_outputs=decision_outputs,
+                            )
                         
                         if self._stats.should_log():
                             self._stats.log_stats(len(pending_futures))
@@ -590,3 +599,49 @@ class BacktestEngine:
             ReinforcementLearningEngine 实例，如果未启用则返回 None
         """
         return self._reinforcement_engine
+    
+    def _handle_trade_results(
+        self,
+        workflow_run_id: str,
+        trade_results: List[BacktestTradeResult],
+        kline_time: datetime,
+        analysis_outputs: Dict[str, str],
+        decision_outputs: Dict[str, str],
+    ) -> None:
+        """处理交易结果，并在需要时触发强化学习
+        
+        Args:
+            workflow_run_id: workflow 运行ID
+            trade_results: 交易结果列表
+            kline_time: K线时间
+            analysis_outputs: 分析节点输出字典 {symbol: output}
+            decision_outputs: 决策节点输出字典 {symbol: output}
+        """
+        if not self.enable_reinforcement or not self._reinforcement_engine:
+            return
+        
+        for trade_result in trade_results:
+            if self._reinforcement_engine.should_run_reinforcement(trade_result):
+                symbol = trade_result.symbol
+                analysis_output = analysis_outputs.get(symbol, "")
+                decision_output = decision_outputs.get(symbol, "")
+                
+                logger.info(
+                    f"检测到亏损交易，启动强化学习: symbol={symbol}, "
+                    f"pnl={trade_result.realized_pnl:.2f}, exit_type={trade_result.exit_type}"
+                )
+                
+                try:
+                    session = self._reinforcement_engine.run_reinforcement_loop(
+                        original_workflow_run_id=workflow_run_id,
+                        original_trade_result=trade_result,
+                        analysis_output=analysis_output,
+                        decision_output=decision_output,
+                        kline_time=kline_time,
+                    )
+                    logger.info(
+                        f"强化学习完成: session_id={session.session_id}, "
+                        f"rounds={session.total_rounds}, improved={session.improvement_achieved}"
+                    )
+                except Exception as e:
+                    logger.error(f"强化学习执行失败: {e}", exc_info=True)
